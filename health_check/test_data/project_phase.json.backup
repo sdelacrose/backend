@@ -1,0 +1,35 @@
+[
+  {
+    "url": "/api/project_management/project-phase/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/project-phase/",
+    "method": "POST",
+    "payload_name": "project_phase_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/project_management/project-phase/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/project-phase/{id}/",
+    "method": "PUT",
+    "payload_name": "project_phase_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/project-phase/{id}/",
+    "method": "PATCH",
+    "payload_name": "project_phase_patch_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/project-phase/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

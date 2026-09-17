@@ -1,0 +1,11 @@
+services:
+  matrix:
+    image: matrixdotorg/synapse:latest
+    container_name: sharemundo_matrix
+    restart: unless-stopped
+    ports:
+      - "8008:8008"
+    environment:
+      SYNAPSE_CONFIG_PATH: /data/homeserver.yaml
+    volumes:
+      - ./matrix/data:/data

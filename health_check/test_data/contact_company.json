@@ -1,0 +1,40 @@
+[
+  {
+    "url": "/api/project_management/contact-company/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/contact-company/",
+    "method": "POST",
+    "payload_name": "contact_company_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/project_management/contact-company/export_csv/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/contact-company/import_excel_file/",
+    "method": "POST",
+    "payload_name": "contact_company_import_payload",
+    "expected_status": 415
+  },
+  {
+    "url": "/api/project_management/contact-company/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/contact-company/{id}/",
+    "method": "PATCH",
+    "payload_name": "contact_company_patch_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/contact-company/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

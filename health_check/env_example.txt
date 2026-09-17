@@ -1,0 +1,19 @@
+# Health Check Environment Configuration
+# Copy this to your .env file and update the values
+
+# Base URL for health check endpoints
+# This will be prepended to all endpoint paths in the JSON files
+HEALTH_CHECK_BASE_URL=http://localhost:8000
+
+# For different environments, use:
+# Development: HEALTH_CHECK_BASE_URL=http://localhost:8000
+# Staging: HEALTH_CHECK_BASE_URL=https://staging-api.sharemundo.com
+# Production: HEALTH_CHECK_BASE_URL=https://api.sharemundo.com
+
+# API Key for health check authentication
+HEALTH_CHECK_API_KEY=your_health_check_api_key_here
+
+# Auth0 credentials for testing (if needed)
+HEALTH_CHECK_AUTH0_USERNAME=your_auth0_username
+HEALTH_CHECK_AUTH0_PASSWORD=your_auth0_password
+HEALTH_CHECK_AUTH0_REALM=DEVELOPMENT-DATABASE 

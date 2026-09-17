@@ -1,0 +1,644 @@
+{
+  "company_profile_payload": {
+    "sharemundo_links_id": "linkscid_B9813B9AFADF462F",
+    "company_searchable": true,
+    "company_name": "TechNova Ltd",
+    "company_address": "221B Baker Street",
+    "post_code": "NW1 6XE",
+    "company_town": "London",
+    "company_country": "United Kingdom",
+    "company_tell_no": "+44 20 7946 0958",
+    "company_mob_no": "+44 7700 900123",
+    "company_web_address": "www.technova.co.uk",
+    "company_email_address": "contact@technova.co.uk",
+    "company_profile_image": "https://example.com/images/company_logo.png",
+    "products": "Cloud Platform, Mobile App Suite",
+    "services": "IT Consulting, Cloud Migration",
+    "expertise": "AI/ML, DevOps, Cybersecurity",
+    "is_freetrial_availed": true,
+    "currency": "\u00a3",
+    "admin_user": 1,
+    "company_tax_reference": "UKTAX-99887766",
+    "company_iban": "GB29NWBK60161331926819"
+  },
+  "notice_board_payload": {
+    "title": "Test Notice",
+    "content": "This is a test notice for health check",
+    "expires_at": "2025-12-31T23:59:59Z"
+  },
+  "project_payload": {
+    "name": "Test Project",
+    "description": "Test project for health check",
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31"
+  },
+  "company_config_create_payload": {
+    "solution": "Energy Consultant Solution",
+    "contract_type": [
+      "Fixed Price",
+      "Time and Materials",
+      "EPC/EPCM",
+      "Subcontract",
+      "Framework Agreement",
+      "Professional Services",
+      "Technical Assistance (TA)",
+      "Turnkey",
+      "Call-Off Contract",
+      "Other"
+    ],
+    "team_members_roles": [
+      "consultant",
+      "project manager",
+      "customer",
+      "supplier",
+      "notified body"
+    ],
+    "area_of_expertise": [
+      "HVAC services company",
+      "carpenter",
+      "energy consultancy"
+    ],
+    "funding_strategy": [
+      "GEG Energy efficient Building 40",
+      "GEG Energy efficient Building 40 EE"
+    ],
+    "status_options": [
+      "open:#99dce8",
+      "in progress:#fff3ad",
+      "closed:#bdefe0"
+    ],
+    "reminder_settings": [
+      "none",
+      "1 day",
+      "2 days",
+      "1 week",
+      "2 weeks"
+    ],
+    "invoice_status": [
+      "open",
+      "issued",
+      "due",
+      "overdue",
+      "paid",
+      "closed"
+    ],
+    "expense_types": [
+      "milage",
+      "car",
+      "hotel",
+      "transport",
+      "parking",
+      "gasoline",
+      "food",
+      "taxi",
+      "phone",
+      "hardware",
+      "software",
+      "other"
+    ],
+    "project_types": [
+      "Engineering, Design & Studies",
+      "EPC / Turnkey Project",
+      "Construction & Installation",
+      "Commissioning & Start-up",
+      "Operations & Maintenance",
+      "Industrial Improvement",
+      "Digital, Data & IT Project",
+      "Transformation & Change",
+      "Energy & Transition Project",
+      "Infrastructure Project",
+      "Program / Multi-Project",
+      "Compliance & Regulatory Project"
+    ],
+    "document_types": [
+      "Bonds",
+      "Calculation",
+      "Cash Flow Statement",
+      "Change/Variation",
+      "Claims/extension",
+      "Collateral Warranty",
+      "Contractor Initiated Changes",
+      "Contractual Correspondence and Notices",
+      "Coordination Meetings",
+      "CTS",
+      "Data Sheet",
+      "Drawing",
+      "Employer's Instructions",
+      "Final Payment",
+      "General",
+      "Hand-over",
+      "HES - PD",
+      "Insurance",
+      "Interim Payment App. / Payment Notice",
+      "Letter",
+      "Loss and Expense Claim",
+      "MOM",
+      "MSDS",
+      "Programme",
+      "Progress Reports",
+      "Punch list",
+      "Quality Control Surv.",
+      "Rectification Period",
+      "RFI",
+      "Schedule",
+      "Single Line Diagram",
+      "Specification",
+      "Statutory Approval or Permissions",
+      "Steering Committee Meeting"
+    ],
+    "document_status": [
+      "Draft",
+      "Under review",
+      "Submitted",
+      "To be updated",
+      "For construction (IFC)",
+      "Issued",
+      "Revised",
+      "Final",
+      "As-Built",
+      "On Hold",
+      "Cancelled",
+      "Archived",
+      "Other"
+    ],
+    "document_internal_review_status": [
+      "In progress",
+      "Approved",
+      "Commented",
+      "Rejected"
+    ],
+    "document_external_review_status": [
+      "In progress",
+      "Approved",
+      "Reviewed",
+      "Commented",
+      "Rejected",
+      "For information",
+      "Superseded"
+    ],
+    "transmittal_category": [
+      "Not sent",
+      "Available",
+      "For review",
+      "For information"
+    ],
+    "priority_levels": [
+      "Low",
+      "Medium",
+      "High"
+    ],
+    "project_priority_levels": [
+      "Very Low",
+      "Low",
+      "Medium",
+      "High",
+      "Very High"
+    ],
+    "calendar_event_status_options": [
+      "open",
+      "in progress",
+      "closed"
+    ],
+    "leave_types": [
+      "Paid",
+      "Sick",
+      "Unpaid",
+      "Casual"
+    ],
+    "opportunity_sales_phase": [
+      "Identification",
+      "Qualification",
+      "Offer Preparation"
+    ]
+  },
+  "company_config_update_payload": {
+    "solution": "Energy Consultant Solution",
+    "contract_type": [
+      "Fixed Price",
+      "Time and Materials",
+      "EPC/EPCM",
+      "Subcontract",
+      "Framework Agreement",
+      "Professional Services",
+      "Technical Assistance (TA)",
+      "Turnkey",
+      "Call-Off Contract",
+      "Other",
+      "Custom Contract"
+    ],
+    "team_members_roles": [
+      "consultant",
+      "project manager",
+      "customer",
+      "supplier",
+      "notified body",
+      "designer"
+    ],
+    "area_of_expertise": [
+      "HVAC services company",
+      "carpenter",
+      "energy consultancy",
+      "solar installation"
+    ],
+    "funding_strategy": [
+      "GEG Energy efficient Building 40",
+      "GEG Energy efficient Building 40 EE",
+      "Custom Funding"
+    ],
+    "status_options": [
+      "open:#99dce8",
+      "in progress:#fff3ad",
+      "closed:#bdefe0",
+      "on hold:#FFA500"
+    ],
+    "reminder_settings": [
+      "none",
+      "1 day",
+      "2 days",
+      "1 week",
+      "2 weeks",
+      "1 month"
+    ],
+    "invoice_status": [
+      "open",
+      "issued",
+      "due",
+      "overdue",
+      "paid",
+      "closed",
+      "cancelled"
+    ],
+    "expense_types": [
+      "milage",
+      "car",
+      "hotel",
+      "transport",
+      "parking",
+      "gasoline",
+      "food",
+      "taxi",
+      "phone",
+      "hardware",
+      "software",
+      "other",
+      "meals"
+    ],
+    "project_types": [
+      "Engineering, Design & Studies",
+      "EPC / Turnkey Project",
+      "Construction & Installation",
+      "Commissioning & Start-up",
+      "Operations & Maintenance",
+      "Industrial Improvement",
+      "Digital, Data & IT Project",
+      "Transformation & Change",
+      "Energy & Transition Project",
+      "Infrastructure Project",
+      "Program / Multi-Project",
+      "Compliance & Regulatory Project",
+      "Renovation"
+    ],
+    "document_types": [
+      "Bonds",
+      "Calculation",
+      "Cash Flow Statement",
+      "Change/Variation",
+      "Claims/extension",
+      "Collateral Warranty",
+      "Contractor Initiated Changes",
+      "Contractual Correspondence and Notices",
+      "Coordination Meetings",
+      "CTS",
+      "Data Sheet",
+      "Drawing",
+      "Employer's Instructions",
+      "Final Payment",
+      "General",
+      "Hand-over",
+      "HES - PD",
+      "Insurance",
+      "Interim Payment App. / Payment Notice",
+      "Letter",
+      "Loss and Expense Claim",
+      "MOM",
+      "MSDS",
+      "Programme",
+      "Progress Reports",
+      "Punch list",
+      "Quality Control Surv.",
+      "Rectification Period",
+      "RFI",
+      "Schedule",
+      "Single Line Diagram",
+      "Specification",
+      "Statutory Approval or Permissions",
+      "Steering Committee Meeting",
+      "Custom Document Type"
+    ],
+    "document_status": [
+      "Draft",
+      "Under review",
+      "Submitted",
+      "To be updated",
+      "For construction (IFC)",
+      "Issued",
+      "Revised",
+      "Final",
+      "As-Built",
+      "On Hold",
+      "Cancelled",
+      "Archived",
+      "Other"
+    ],
+    "document_internal_review_status": [
+      "In progress",
+      "Approved",
+      "Commented",
+      "Rejected"
+    ],
+    "document_external_review_status": [
+      "In progress",
+      "Approved",
+      "Reviewed",
+      "Commented",
+      "Rejected",
+      "For information",
+      "Superseded"
+    ],
+    "transmittal_category": [
+      "Not sent",
+      "Available",
+      "For review",
+      "For information"
+    ],
+    "priority_levels": [
+      "Low",
+      "Medium",
+      "High",
+      "Critical"
+    ],
+    "project_priority_levels": [
+      "Very Low",
+      "Low",
+      "Medium",
+      "High",
+      "Very High",
+      "Emergency"
+    ],
+    "calendar_event_status_options": [
+      "open",
+      "in progress",
+      "closed",
+      "cancelled"
+    ],
+    "leave_types": [
+      "Paid",
+      "Sick",
+      "Unpaid",
+      "Casual",
+      "Maternity"
+    ],
+    "opportunity_sales_phase": [
+      "Identification",
+      "Qualification",
+      "Offer Preparation",
+      "Negotiation"
+    ]
+  },
+  "company_config_partial_update_payload": {
+    "contract_type": [
+      "Fixed Price",
+      "Time and Materials",
+      "EPC/EPCM",
+      "Subcontract",
+      "Framework Agreement",
+      "Professional Services",
+      "Technical Assistance (TA)",
+      "Turnkey",
+      "Call-Off Contract",
+      "Other",
+      "Premium Contract"
+    ],
+    "team_members_roles": [
+      "consultant",
+      "project manager",
+      "customer",
+      "supplier",
+      "notified body"
+    ],
+    "status_options": [
+      "open:#99dce8",
+      "in progress:#fff3ad",
+      "closed:#bdefe0",
+      "completed:#00FF00"
+    ]
+  },
+  "notice_board_create_payload": {
+    "text": "This is a test notice for health check. Please read this important announcement.",
+    "expires_at": "2025-12-31"
+  },
+  "notice_board_update_payload": {
+    "text": "Updated notice for health check. This notice has been modified for testing purposes.",
+    "expires_at": "2025-12-31"
+  },
+  "notice_board_partial_update_payload": {
+    "text": "Partially updated notice text for health check testing."
+  },
+  "opportunity_create_payload": {
+    "title": "Test Opportunity for Health Check",
+    "details": "This is a test opportunity created by the health check system to verify API functionality.",
+    "status": "open",
+    "country": "Germany",
+    "revenue": 50000.0,
+    "probability": 75.0,
+    "contract_date": "2025-06-15",
+    "planned_delivery_start_date": "2025-07-01",
+    "planned_delivery_end_date": "2025-09-30",
+    "purchase_order": "PO-2025-001",
+    "sales_phase": "Identification",
+    "customer_user": null
+  },
+  "opportunity_partial_update_payload": {
+    "title": "Partially Updated Test Opportunity",
+    "probability": 90.0
+  },
+  "staff_update_payload": {
+    "annual_leaves_allowed": 25,
+    "wfh_leaves_allowed": 10,
+    "salary": 50000,
+    "hourly_rate": 25.0,
+    "weekly_hours": 40
+  },
+  "staff_partial_update_payload": {
+    "annual_leaves_allowed": 30,
+    "weekly_hours": 35
+  },
+  "staff_observation_create_payload": {
+    "title": "Test Staff Observation",
+    "description": "This is a test staff observation created by the health check system.",
+    "staff": null
+  },
+  "staff_observation_partial_update_payload": {
+    "title": "Partially Updated Staff Observation",
+    "description": "This staff observation has been partially updated for testing."
+  },
+  "leave_request_create_payload": {
+    "type": "Paid",
+    "start_date": "2025-08-01",
+    "end_date": "2025-08-06",
+    "reason": "Test leave request created by health check system",
+    "is_working_from_home": false
+  },
+  "leave_request_update_payload": {
+    "type": "Paid",
+    "start_date": "2025-08-03",
+    "end_date": "2025-08-04",
+    "reason": "Updated leave request for health check testing",
+    "is_working_from_home": false
+  },
+  "leave_request_partial_update_payload": {
+    "reason": "Partially updated leave request reason for testing"
+  },
+  "project_create_payload": {
+    "project_name": "HealthCheck Project",
+    "contract_value": 1000,
+    "address": "Test Address",
+    "town": "Test Town",
+    "postcode": "12345",
+    "company_profile": null,
+    "user": null,
+    "project_start_date": "2030-01-01",
+    "project_end_date": "2030-12-31"
+  },
+  "project_patch_payload": {
+    "project_name": "HealthCheck Project Updated"
+  },
+  "project_phase_payload": {
+    "name": "Test Project Phase",
+    "project": null,
+    "date": "2030-01-01T10:00:00Z",
+    "status": "open",
+    "amount": 5000.0
+  },
+  "project_phase_patch_payload": {
+    "name": "Updated Project Phase",
+    "status": "in progress"
+  },
+  "milestone_payload": {
+    "name": "Test Milestone",
+    "project": null,
+    "description": "This is a test milestone created by the health check system",
+    "colour": "#FF5733",
+    "status": "open",
+    "reminder_setting": "2 days",
+    "allocated_budget": 10000.0,
+    "allocated_time": 40,
+    "phase_title": "Development Phase",
+    "start_date": "2030-01-02",
+    "due_date": "2030-01-31"
+  },
+  "milestone_patch_payload": {
+    "name": "Updated Test Milestone",
+    "status": "in progress",
+    "allocated_budget": 12000.0
+  },
+  "contact_company_payload": {
+    "company_name": "HealthCheck Test Company",
+    "contact_email": "testcompany_12345@example.com",
+    "address": "123 Test St, Test City"
+  },
+  "contact_company_patch_payload": {
+    "company_name": "HealthCheck Updated Company"
+  },
+  "contact_company_import_payload": {
+    "file": null
+  },
+  "contact_user_payload": {
+    "name": "John",
+    "surname": "Doe",
+    "email": "john.doe_12345@example.com"
+  },
+  "contact_user_patch_payload": {
+    "name": "Jane"
+  },
+  "contact_user_import_payload": {
+    "file": null
+  },
+  "action_items_payload": {
+    "name": "Test Action Item",
+    "target_date": "2030-01-04",
+    "status": "open",
+    "milestone": null
+  },
+  "action_items_patch_payload": {
+    "name": "Updated Action Item"
+  },
+  "expense_card_payload": {
+    "name": "Test Expense Card",
+    "description": "This is a test expense card created by the health check system",
+    "category": "milage",
+    "rate": 25.0,
+    "quantity": 2.0,
+    "expense_date": "2025-06-15",
+    "project": null
+  },
+  "expense_card_patch_payload": {
+    "name": "Updated Test Expense Card",
+    "description": "This expense card has been updated for testing",
+    "rate": 30.0,
+    "quantity": 3.0
+  },
+  "time_card_payload": {
+    "name": "Test Time Card",
+    "description": "This is a test time card created by the health check system",
+    "hours": 8.0,
+    "date": "2025-06-15",
+    "project": null
+  },
+  "time_card_patch_payload": {
+    "name": "Updated Test Time Card",
+    "description": "This time card has been updated for testing",
+    "hours": 6.5
+  },
+  "events_create_payload": {
+    "name": "Test Calendar Event",
+    "description": "This is a test calendar event created by the health check system",
+    "start_date": "2030-01-01T10:00:00Z",
+    "end_date": "2030-01-01T11:00:00Z",
+    "meeting_link": "https://meet.google.com/test-link",
+    "assignees": []
+  },
+  "events_patch_payload": {
+    "name": "Updated Test Calendar Event",
+    "description": "This calendar event has been updated for testing",
+    "meeting_link": "https://meet.google.com/updated-test-link"
+  },
+  "feedback_create_payload": {
+    "feedback_type": "suggestion",
+    "description": "This is a test feedback created by the health check system to verify API functionality.",
+    "answer_required": true,
+    "project": null
+  },
+  "feedback_update_payload": {
+    "feedback_type": "improvement",
+    "description": "Updated feedback for health check testing",
+    "answer_required": false,
+    "project": null
+  },
+  "feedback_patch_payload": {
+    "description": "Partially updated feedback description for testing"
+  },
+  "invoice_create_payload": {
+    "invoice_date": "2025-06-15",
+    "due_date": "2025-07-15",
+    "status": "open",
+    "grand_total": 1000.0,
+    "notes": "Test invoice created by health check system",
+    "vat_rate": 12.0,
+    "project": null,
+    "reciepient_user": null
+  },
+  "invoice_patch_payload": {
+    "notes": "Updated invoice notes for testing"
+  }
+}

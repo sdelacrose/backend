@@ -1,0 +1,50 @@
+from django.urls import path
+
+from . import services
+from .views import (
+    AIContractHealthView,
+    BusinessQueryExecuteView,
+    BusinessQueryPreviewView,
+    BusinessQueryRunView,
+    BusinessQuerySchemaView,
+    tool_view,
+)
+
+
+urlpatterns = [
+    path("health/", AIContractHealthView.as_view(), name="ai-contract-health"),
+    path("business-query/schema/", BusinessQuerySchemaView.as_view(), name="ai-business-query-schema"),
+    path("business-query/preview/", BusinessQueryPreviewView.as_view(), name="ai-business-query-preview"),
+    path("business-query/execute/", BusinessQueryExecuteView.as_view(), name="ai-business-query-execute"),
+    path("business-query/run/", BusinessQueryRunView.as_view(), name="ai-business-query-run"),
+    path("action-items/count/", tool_view("action_items_count", services.count_action_items), name="ai-action-items-count"),
+    path("action-items/search/", tool_view("action_items_search", services.search_action_items), name="ai-action-items-search"),
+    path("action-items/biggest-delay/", tool_view("action_items_biggest_delay", services.biggest_action_item_delay), name="ai-action-items-biggest-delay"),
+    path("action-items/group-by-project/", tool_view("action_items_group_by_project", services.action_items_group_by_project), name="ai-action-items-group-by-project"),
+    path("action-items/group-by-milestone/", tool_view("action_items_group_by_milestone", services.action_items_group_by_milestone), name="ai-action-items-group-by-milestone"),
+    path("action-items/financial-summary/", tool_view("action_items_financial_summary", services.action_items_financial_summary), name="ai-action-items-financial-summary"),
+    path("action-items/closure-list/", tool_view("action_items_closure_list", services.action_items_closure_list), name="ai-action-items-closure-list"),
+    path("action-items/progress/", tool_view("action_items_progress", services.action_items_progress_summary), name="ai-action-items-progress"),
+    path("action-items/invoice-candidates/", tool_view("action_items_invoice_candidates", services.action_items_invoice_candidates), name="ai-action-items-invoice-candidates"),
+    path("phases/financial-summary/", tool_view("phase_milestone_financial_summary", services.phase_milestone_financial_summary), name="ai-phases-financial-summary"),
+    path("purchase-orders/summary/", tool_view("purchase_orders_summary", services.purchase_orders_summary), name="ai-purchase-orders-summary"),
+    path("purchase-orders/balance/", tool_view("purchase_order_balance", services.purchase_order_balance), name="ai-purchase-orders-balance"),
+    path("invoices/search/", tool_view("invoices_search", services.search_invoices), name="ai-invoices-search"),
+    path("documents/count/", tool_view("documents_count", services.count_documents), name="ai-documents-count"),
+    path("documents/search/", tool_view("documents_search", services.search_documents), name="ai-documents-search"),
+    path("documents/group-by-status/", tool_view("documents_group_by_status", services.documents_group_by_status), name="ai-documents-group-by-status"),
+    path("object-assessments/count/", tool_view("object_assessments_count", services.count_object_assessments), name="ai-object-assessments-count"),
+    path("object-assessments/search/", tool_view("object_assessments_search", services.search_object_assessments), name="ai-object-assessments-search"),
+    path("calendar/search/", tool_view("calendar_search", services.search_calendar), name="ai-calendar-search"),
+    path("calendar/free-slot/", tool_view("calendar_free_slot", services.find_free_calendar_slot), name="ai-calendar-free-slot"),
+    path("calendar/resolve-attendees/", tool_view("calendar_attendee_resolver", services.resolve_calendar_attendees), name="ai-calendar-resolve-attendees"),
+    path("calendar/create-event/", tool_view("calendar_create_event", services.create_calendar_event), name="ai-calendar-create-event"),
+    path("projects/summary/", tool_view("projects_summary", services.projects_summary), name="ai-projects-summary"),
+    path("projects/email-context/", tool_view("project_email_context", services.project_email_context), name="ai-project-email-context"),
+    path("matrix/gaps/", tool_view("matrix_gaps", services.matrix_gap_analysis), name="ai-matrix-gaps"),
+    path("matrix/search/", tool_view("matrix_search", services.search_matrix_or_parts), name="ai-matrix-search"),
+    path("profiles/users/search/", tool_view("public_user_profile_search", services.public_user_profile_search), name="ai-profiles-users-search"),
+    path("profiles/companies/search/", tool_view("public_company_profile_search", services.public_company_profile_search), name="ai-profiles-companies-search"),
+    path("profiles/search/", tool_view("public_profile_search", services.public_profile_search), name="ai-profiles-search"),
+    path("network/search/", tool_view("network_search", services.search_network), name="ai-network-search"),
+]

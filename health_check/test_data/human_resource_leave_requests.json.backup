@@ -1,0 +1,7 @@
+[
+  {
+    "url": "/api/human_resource_management/leave-requests/",
+    "method": "GET",
+    "expected_status": 200
+  }
+]

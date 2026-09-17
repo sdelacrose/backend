@@ -1,0 +1,20 @@
+[
+  {
+    "url": "/api/company/profile/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/profile/users/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/role/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  }
+]

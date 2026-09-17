@@ -1,0 +1,869 @@
+from project_management.models.constants import COLLABORATIVE_SOLUTION
+from project_management.serializers.time_expense import get_valid_choices
+from rest_framework import serializers
+from django.conf import settings
+from django.db import transaction
+
+from models.models import CompanyConfig, CompanyProfile
+from models.hierarchical_configurations import (
+    DOCUMENT_DISCIPLINES_KEY,
+    resolve_nested_configurations,
+)
+from project_management.models import Document, DocumentSearchIndex, Folder, Project
+from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
+from project_management.models import ECPMPConfig
+from project_management.serializers.file_name import validate_display_file_name
+from project_management.services.document_numbering import (
+    allocate_document_sequence,
+    resolve_document_library_scope,
+)
+
+class DocumentHistorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Document.history.model
+        fields = [
+            'id',
+            'history_date',
+            'history_change_reason',
+            'history_type',
+            'history_user',
+            'file_name',
+            'document_type',
+            'identification_number',
+            'status',
+            'internal_review_status',
+            'external_review_status',
+            'transmittal_category',
+            'author'
+        ]
+        read_only_fields = fields
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        
+        if instance.history_user:
+            representation['history_user'] = {
+                "id": instance.history_user.id,
+                "name": instance.history_user.full_name
+            }
+        
+        if instance.author:
+            representation['author'] = {
+                "id": instance.author.id,
+                "name": instance.author.full_name
+            }
+        
+        return representation
+
+class DocumentSerializer(serializers.ModelSerializer):
+    history = serializers.SerializerMethodField()
+    linked_items = serializers.SerializerMethodField()
+    index_status = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Document
+        fields = [
+            'id',
+            'folder',
+            'author',
+            'file',
+            'file_name',
+            'document_type',
+            'status',
+            'internal_review_status',
+            'external_review_status',
+            'transmittal_category',
+            'uploaded_at',
+            'updated_at',
+            'identification_number',
+            'category',
+            'discipline',
+            'discipline_group',
+            'discipline_group_id',
+            'discipline_option_id',
+            'discipline_code',
+            'sequence_number',
+            'revision',
+            'history',
+            'linked_items',
+            'full_document_number',
+            'index_status',
+        ]
+        read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
+
+    def validate_revision(self, value):
+        """
+        Validate that the revision is an integer between 0 and 99 (inclusive).
+        """
+        if value is None:
+            return value
+        if not isinstance(value, int):
+            raise serializers.ValidationError("Revision number must be an integer.")
+        if value < 0 or value > 99:
+            raise serializers.ValidationError("Revision number must be between 0 and 99.")
+        return value
+
+    def validate_file_name(self, value):
+        incoming_file = self.initial_data.get('file') if hasattr(self, 'initial_data') else None
+        current_file_name = self.instance.file_name if self.instance else None
+        source_file = incoming_file or (self.instance.file if self.instance else None)
+        return validate_display_file_name(
+            value,
+            source_file=source_file,
+            current_file_name=current_file_name,
+        )
+
+    def validate_folder(self, value):
+        request_user = self.context.get('user')
+        if value.project:
+            request = self.context.get("request")
+            product_name = get_product_name_from_request(request)
+            if product_name in COLLABORATIVE_SOLUTION:
+                products = COLLABORATIVE_SOLUTION
+            else:
+                products = [product_name]
+            if value.project.user == request_user and value.project.solution in products:
+                return value
+            return value
+            # TODO: Adjust as per new permission system
+            # if has_project_permission("PUT", request_user, value.project, product_name):
+            #     return value
+        if value.company_profile and value.company_profile == request_user.company:
+            return value
+        
+        if value.freelancer and value.freelancer == request_user:
+            return value
+
+        raise serializers.ValidationError(f"Folder {value} does not belong to this user or you don't have access to this project/company.")
+
+    def get_project_freelancer_and_company_from_folder(self, folder):
+        project_id = None
+        company_id = None
+        freelancer_id = None
+        if folder.project:
+            project_id = folder.project.id
+        elif folder.company_profile:
+            company_id = folder.company_profile_id
+        elif folder.freelancer:
+            freelancer_id = folder.freelancer.id
+        return project_id, company_id, freelancer_id
+
+    def get_project_id_and_company_id(self):
+        project_id = None
+        company_id = None
+        freelancer_id = None
+        if self.instance:
+            folder = self.instance.folder
+            project_id, company_id, freelancer_id = self.get_project_freelancer_and_company_from_folder(folder)
+        else:
+            folder_id = self.initial_data.get('folder')
+            folder_instance = Folder.objects.filter(id=folder_id).first()
+            if not folder_instance:
+                raise serializers.ValidationError("Invalid folder specified.")
+            project_id, company_id, freelancer_id = self.get_project_freelancer_and_company_from_folder(folder_instance)
+        return project_id, company_id, freelancer_id
+
+    def _is_unchanged_value(self, field_name, value):
+        return self.instance is not None and getattr(
+            self.instance, field_name, None
+        ) == value
+
+    def _get_valid_choices_for_config_key(self, config_key):
+        request = self.context.get('request')
+        project_id, company_id, freelancer_id = self.get_project_id_and_company_id()
+        if project_id:
+            return get_valid_choices(config_key, project_id, request)
+        if company_id:
+            return get_valid_choices(config_key, company_id, request, is_company=True)
+        if freelancer_id:
+            return get_valid_choices(config_key, freelancer_id, request, is_freelancer=True)
+        return []
+
+    def _validate_optional_choice_field(
+        self, value, config_key, error_label, field_name
+    ):
+        if value in (None, ""):
+            return value
+
+        valid_choices = self._get_valid_choices_for_config_key(config_key)
+        valid_values = {choice.split(":")[0] for choice in valid_choices}
+        if (
+            valid_values
+            and value not in valid_values
+            and not self._is_unchanged_value(field_name, value)
+        ):
+            raise serializers.ValidationError(
+                f"Invalid {error_label}. Allowed choices are: {', '.join(valid_values)}"
+            )
+        return value
+
+    def validate_status(self, value):
+        return self._validate_optional_choice_field(
+            value, "document_status", "document status", "status"
+        )
+
+    def validate_internal_review_status(self, value):
+        return self._validate_optional_choice_field(
+            value,
+            "document_internal_review_status",
+            "document internal review status",
+            "internal_review_status",
+        )
+
+    def validate_external_review_status(self, value):
+        return self._validate_optional_choice_field(
+            value,
+            "document_external_review_status",
+            "document external review status",
+            "external_review_status",
+        )
+
+    def validate_transmittal_category(self, value):
+        return self._validate_optional_choice_field(
+            value,
+            "transmittal_category",
+            "transmittal category",
+            "transmittal_category",
+        )
+
+    def validate_author(self, value):
+        """
+        Validate that the author is a valid team member and belongs to the same project as the folder.
+        """
+        request_user = self.context.get('user')
+        folder_instance = self.instance.folder if self.instance else None
+        if hasattr(self, 'initial_data') and 'folder' in self.initial_data:
+            folder_id = self.initial_data.get('folder')
+            folder_instance = Folder.objects.filter(id=folder_id).select_related('project').first()
+        
+        if not folder_instance:
+            raise serializers.ValidationError("Invalid folder specified.")
+
+        if not value:
+            raise serializers.ValidationError("Author cannot be null.")
+
+        # Check if the author belongs to the same project/company as the folder
+        project_id, company_id, freelancer_id = self.get_project_freelancer_and_company_from_folder(folder_instance)
+        
+        # TODO: Adjust as per new permission system
+        # if project_id:
+        #     if not has_project_permission("PUT", value, folder_instance.project, get_product_name_from_request(self.context.get('request'))):
+        #         raise serializers.ValidationError("The author must belong to the same project as the folder.")
+        if project_id:
+            return value
+        if company_id:
+            if value.is_freelancer or folder_instance.company_profile != value.company:
+                raise serializers.ValidationError("The author must belong to the same company as the folder.")
+        elif freelancer_id:
+            if not request_user.is_freelancer or folder_instance.freelancer != value or value != request_user:
+                raise serializers.ValidationError("The author must be the same freelancer as the folder.")
+        else:
+            raise serializers.ValidationError("The related folder must belong to a company/project.")
+
+        return value
+    
+
+    def validate_document_type(self, value):
+        if not value:
+            return value
+        
+        request = self.context.get('request')
+        project_id, company_id, freelancer_id = self.get_project_id_and_company_id()
+
+        if project_id:
+            valid_choices = get_valid_choices("document_types", project_id, request)
+        elif company_id:
+            valid_choices = get_valid_choices("document_types", company_id, request, is_company=True)
+        elif freelancer_id:
+            valid_choices = get_valid_choices("document_types", freelancer_id, request, is_freelancer=True)
+        else:
+            from models import constants
+            valid_choices = constants.GC_COMPANY_DOCUMENT_TYPES
+        valid_choices = {choice.split(":")[0] for choice in valid_choices}
+        if value not in valid_choices and not self._is_unchanged_value(
+            "document_type", value
+        ):
+            raise serializers.ValidationError(f"Invalid document type. Allowed choices are: {', '.join(valid_choices)}")
+        
+        return value
+
+    def validate_category(self, value):
+        if not value:
+            return value
+        
+        request = self.context.get('request')
+        project_id, company_id, freelancer_id = self.get_project_id_and_company_id()
+        
+        if project_id:
+            valid_choices = get_valid_choices("document_categories", project_id, request)
+        elif company_id:
+            valid_choices = get_valid_choices("document_categories", company_id, request, is_company=True)
+        elif freelancer_id:
+            valid_choices = get_valid_choices("document_categories", freelancer_id, request, is_freelancer=True)
+        else:
+            from project_management.models.constants import GC_DOCUMENT_CATEGORIES
+            valid_choices = GC_DOCUMENT_CATEGORIES
+        valid_choices = {choice.split(":")[0] for choice in valid_choices}
+        if value not in valid_choices and not self._is_unchanged_value(
+            "category", value
+        ):
+            raise serializers.ValidationError(f"Invalid document category. Allowed choices are: {', '.join(valid_choices)}")
+        
+        return value
+
+    def validate_discipline(self, value):
+        if not value:
+            return value
+
+        # Hierarchical submissions are validated against the selected group and
+        # option IDs in validate(), including company-defined custom options.
+        initial_data = getattr(self, "initial_data", {})
+        if initial_data.get("discipline_option_id"):
+            return value
+        
+        request = self.context.get('request')
+        project_id, company_id, freelancer_id = self.get_project_id_and_company_id()
+        
+        if project_id:
+            valid_choices = get_valid_choices("document_disciplines", project_id, request)
+        elif company_id:
+            valid_choices = get_valid_choices("document_disciplines", company_id, request, is_company=True)
+        elif freelancer_id:
+            valid_choices = get_valid_choices("document_disciplines", freelancer_id, request, is_freelancer=True)
+        else:
+            from project_management.models.constants import GC_DOCUMENT_DISCIPLINES
+            valid_choices = GC_DOCUMENT_DISCIPLINES
+        valid_choices = {choice.split(":")[0] for choice in valid_choices}
+        if value not in valid_choices and not self._is_unchanged_value(
+            "discipline", value
+        ):
+            raise serializers.ValidationError(f"Invalid discipline. Allowed choices are: {', '.join(valid_choices)}")
+        
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+
+        status = attrs.get("status")
+        internal_review_status = attrs.get("internal_review_status")
+        external_review_status = attrs.get("external_review_status")
+        if self.instance:
+            if "status" not in attrs:
+                status = self.instance.status
+            if "internal_review_status" not in attrs:
+                internal_review_status = self.instance.internal_review_status
+            if "external_review_status" not in attrs:
+                external_review_status = self.instance.external_review_status
+
+        if status == "Submitted" and not (
+            internal_review_status or external_review_status
+        ):
+            raise serializers.ValidationError(
+                "As the document is submitted, please add a review status."
+            )
+
+        discipline_fields = {
+            "discipline",
+            "discipline_group_id",
+            "discipline_option_id",
+        }
+        initial_data = getattr(self, "initial_data", attrs)
+        if not discipline_fields.intersection(initial_data.keys()):
+            return attrs
+
+        requested_group_id = attrs.get("discipline_group_id")
+        requested_option_id = attrs.get("discipline_option_id")
+        requested_label = attrs.get("discipline")
+
+        if not requested_group_id and not requested_option_id and not requested_label:
+            attrs["discipline_group"] = ""
+            attrs["discipline_group_id"] = ""
+            attrs["discipline_option_id"] = ""
+            attrs["discipline_code"] = ""
+            return attrs
+
+        if requested_group_id and not requested_option_id and not requested_label:
+            raise serializers.ValidationError(
+                {
+                    "discipline_option_id": (
+                        "A discipline is required for the selected group."
+                    )
+                }
+            )
+
+        config = self.get_config()
+        if not config:
+            return attrs
+        hierarchy = resolve_nested_configurations(
+            config.nested_configurations
+        )[DOCUMENT_DISCIPLINES_KEY]
+
+        match = None
+        for group in hierarchy["groups"]:
+            for child in group["children"]:
+                option_matches = (
+                    requested_option_id and child["id"] == requested_option_id
+                )
+                label_matches = requested_label and child["label"] == requested_label
+                if option_matches or (not requested_option_id and label_matches):
+                    match = (group, child)
+                    break
+            if match:
+                break
+
+        if not match:
+            if requested_option_id:
+                raise serializers.ValidationError(
+                    {"discipline_option_id": "Invalid document discipline option."}
+                )
+            return attrs
+
+        group, child = match
+        if requested_group_id and requested_group_id != group["id"]:
+            raise serializers.ValidationError(
+                {
+                    "discipline_option_id": (
+                        "The discipline does not belong to the selected group."
+                    )
+                }
+            )
+
+        attrs["discipline"] = child["label"]
+        attrs["discipline_group"] = group["label"]
+        attrs["discipline_group_id"] = group["id"]
+        attrs["discipline_option_id"] = child["id"]
+        attrs["discipline_code"] = child.get("code", "")
+        return attrs
+
+    def get_config(self):
+        request = self.context.get('request')
+        project_id, company_id, freelancer_id = self.get_project_id_and_company_id()
+        product_name = get_product_name_from_request(request) if request else "Energy Consultant Solution"
+        
+        if company_id:
+            config = CompanyConfig.objects.filter(
+                company_profile=company_id,
+                solution=product_name
+            ).first()
+        elif freelancer_id:
+            config = CompanyConfig.objects.filter(
+                user=freelancer_id, 
+                solution=product_name
+            ).first()
+        else:
+            config = ECPMPConfig.objects.filter(project_id=project_id).first()
+        
+        return config
+
+    def create(self, validated_data):
+        # Ensure author is set to the current user if not provided
+        request_user = self.context.get('user')
+        config = self.get_config()
+        if not validated_data.get('author'):
+            validated_data['author'] = request_user
+
+        with transaction.atomic():
+            validated_data['sequence_number'] = allocate_document_sequence(
+                validated_data['folder']
+            )
+            validated_data['full_document_number'] = self._get_full_document_number(validated_data, config)
+            validated_data['created_by'] = request_user
+            validated_data['assignee'] = validated_data.get('author')
+            instance = super().create(validated_data)
+            return instance
+
+    def update(self, instance, validated_data):
+        next_folder = validated_data.get('folder')
+        if (
+            next_folder is not None
+            and next_folder.pk != instance.folder_id
+            and resolve_document_library_scope(instance.folder)
+            != resolve_document_library_scope(next_folder)
+        ):
+            raise serializers.ValidationError(
+                {
+                    'folder': (
+                        'Documents cannot be moved between company, project, '
+                        'or freelancer libraries.'
+                    )
+                }
+            )
+        config = self.get_config()
+        validated_data['sequence_number'] = instance.sequence_number
+        # Use user-provided revision or keep existing revision
+        if 'revision' not in validated_data:
+            validated_data['revision'] = instance.revision
+        numbering_data = {
+            'folder': instance.folder,
+            'document_type': instance.document_type,
+            'category': instance.category,
+            'discipline': instance.discipline,
+            'discipline_code': getattr(instance, 'discipline_code', ''),
+            'sequence_number': instance.sequence_number,
+            'revision': instance.revision,
+        }
+        numbering_data.update(validated_data)
+        validated_data['full_document_number'] = self._get_full_document_number(numbering_data, config)
+        validated_data['assignee'] = instance.author if "author" not in validated_data else validated_data.get('author')
+        return super().update(instance, validated_data)
+
+    def _get_code(self, validated_data):
+        """Get the code for the given combination"""
+        folder_id = validated_data.get('folder').id if validated_data.get('folder') else None
+        if folder_id:
+            folder = Folder.objects.get(id=folder_id)
+            if folder.project:
+                name = ""
+                if folder.project.user.is_freelancer:
+                    name += folder.project.user.full_name.upper()[:3]
+                else:
+                    name += folder.project.user.company.company_name.upper()[:3]
+                
+                if folder.project.project_name :
+                    name += "-" + folder.project.project_name.upper()[:3]
+                return name
+            elif folder.company_profile:
+                return folder.company_profile.company_name.upper()[:3] if folder.company_profile.company_name else None
+            elif folder.freelancer:
+                return folder.freelancer.full_name.upper()[:3] if folder.freelancer.full_name else None
+        
+        return None
+
+    def _get_full_document_number(self, validated_data, config):
+        """Get the full document number for the given combination"""
+        document_number = ""
+        folder_id = validated_data.get('folder').id if validated_data.get('folder') else None
+        code = self._get_code(validated_data)
+        document_type_code = get_abbreviation(validated_data.get('document_type'), config, "document_types")
+        document_category_code = get_abbreviation(validated_data.get('category'), config, "document_categories")
+        discipline_code = validated_data.get('discipline_code') or get_abbreviation(validated_data.get('discipline'), config, "document_disciplines")
+        sequence_number = validated_data.get('sequence_number')
+        revision = validated_data.get('revision')
+
+        if code:
+            document_number += code
+        if document_type_code:
+            document_number += "-" + document_type_code
+        if document_category_code:
+            document_number += "-" + document_category_code
+        if discipline_code:
+            document_number += "-" + discipline_code
+        if sequence_number:
+            document_number += "-" + str(sequence_number).zfill(5)
+        document_number += "-" + str(revision).zfill(2)
+        return document_number
+
+    def get_history(self, obj):
+        include_history = self.context.get('include_history', False)
+        if not include_history:
+            return None
+            
+        history = obj.history.all().order_by('-history_date')
+        return DocumentHistorySerializer(history, many=True).data
+
+    def get_index_status(self, obj):
+        try:
+            return obj.search_index.status
+        except DocumentSearchIndex.DoesNotExist:
+            return "not_indexed"
+
+    def get_linked_items(self, obj):
+        """
+        Returns all items linked to this document including:
+        - Action Items
+        - Milestones
+        - Object Assessments
+        - Project Funding
+        - Billing
+        - Invoices
+        - Opportunities
+        - Calendar Events
+        """
+        include_linked_items = self.context.get('include_linked_items', True)
+        if not include_linked_items:
+            return None
+            
+        linked_items = {
+            'action_items': [],
+            'milestones': [],
+            'object_assessments': [],
+            'project_funding': [],
+            'invoices': [],
+            'opportunities': [],
+            'calendar_events': []
+        }
+        
+        # Get action items
+        if obj.action_items.exists():
+            linked_items['action_items'] = [
+                {
+                    'id': item.id,
+                    'name': item.name,
+                    'status': item.status,
+                    'milestone': {
+                        'id': item.milestone.id,
+                        'name': item.milestone.name
+                    } if item.milestone else None,
+                    'created_by': {
+                        'id': item.created_by.id,
+                        'name': item.created_by.full_name
+                    } if item.created_by else None,
+                    'assignees': [
+                        {
+                            'id': assignee.id,
+                            'name': assignee.full_name
+                        }
+                        for assignee in item.assignees.all()
+                    ],
+                    'company_profile': {
+                        'id': item.company_profile.id,
+                        'name': item.company_profile.company_name
+                    } if item.company_profile else None,
+                    'freelancer': {
+                        'id': item.freelancer.id,
+                        'name': item.freelancer.full_name
+                    } if item.freelancer else None
+                }
+                for item in obj.action_items.all()
+            ]
+        
+        # Get milestones
+        if obj.milestones.exists():
+            linked_items['milestones'] = [
+                {
+                    'id': milestone.id,
+                    'name': milestone.name,
+                    'status': milestone.status,
+                    'due_date': milestone.due_date,
+                    'project': {
+                        'id': milestone.project.id,
+                        'name': milestone.project.project_name
+                    } if milestone.project else None
+                }
+                for milestone in obj.milestones.all()
+            ]
+        
+        # Get object assessments
+        if obj.object_assesments.exists():
+            linked_items['object_assessments'] = [
+                {
+                    'id': assessment.id,
+                    'record_title': assessment.record_title,
+                    'record_type': assessment.record_type,
+                    'project': {
+                        'id': assessment.project.id,
+                        'name': assessment.project.project_name
+                    } if assessment.project else None
+                }
+                for assessment in obj.object_assesments.all()
+            ]
+        
+        # Get project funding
+        if obj.fundings.exists():
+            linked_items['project_funding'] = [
+                {
+                    'id': funding.id,
+                    'name': funding.name,
+                    'budget': funding.budget,
+                    'created_by': {
+                        'id': funding.created_by.id,
+                        'name': funding.created_by.full_name
+                    } if funding.created_by else None,
+                    'project': {
+                        'id': funding.project.id,
+                        'name': funding.project.project_name
+                    } if funding.project else None
+                }
+                for funding in obj.fundings.all()
+            ]
+        
+        # Get invoices
+        if obj.billing_invoices.exists():
+            linked_items['invoices'] = [
+                {
+                    'id': invoice.id,
+                    'reference_number': invoice.reference_number,
+                    'document_type': invoice.document_type,
+                    'invoice_date': invoice.invoice_date,
+                    'due_date': invoice.due_date,
+                    'status': invoice.status,
+                    'grand_total': invoice.grand_total,
+                    'project': {
+                        'id': invoice.project.id,
+                        'name': invoice.project.project_name
+                    } if invoice.project else None,
+                    'company_profile': {
+                        'id': invoice.company_profile.id,
+                        'name': invoice.company_profile.company_name
+                    } if invoice.company_profile else None,
+                    'freelancer': {
+                        'id': invoice.freelancer.id,
+                        'name': invoice.freelancer.full_name
+                    } if invoice.freelancer else None
+                }
+                for invoice in obj.billing_invoices.all()
+            ]
+        
+        # Get opportunities
+        if obj.opportunities.exists():
+            linked_items['opportunities'] = [
+                {
+                    'id': opportunity.id,
+                    'title': opportunity.title,
+                    'created_by': {
+                        'id': opportunity.created_by.id,
+                        'name': opportunity.created_by.full_name
+                    } if opportunity.created_by else None,
+                    'company_profile': {
+                        'id': opportunity.company_profile.id,
+                        'name': opportunity.company_profile.company_name
+                    } if opportunity.company_profile else None,
+                    'freelancer': {
+                        'id': opportunity.freelancer.id,
+                        'name': opportunity.freelancer.full_name
+                    } if opportunity.freelancer else None
+                }
+                for opportunity in obj.opportunities.all()
+            ]
+        
+        # Get calendar events
+        if obj.attachments.exists():
+            linked_items['calendar_events'] = [
+                {
+                    'id': event.id,
+                    'name': event.name,
+                    'start_date': event.start_date,
+                    'end_date': event.end_date,
+                    'user': {
+                        'id': event.user.id,
+                        'name': event.user.full_name
+                    } if event.user else None,
+                    'company_profile': {
+                        'id': event.company_profile.id,
+                        'name': event.company_profile.company_name
+                    } if event.company_profile else None,
+                    'freelancer': {
+                        'id': event.freelancer.id,
+                        'name': event.freelancer.full_name
+                    } if event.freelancer else None,
+                    'assignees': [
+                        {
+                            'id': assignee.id,
+                            'name': assignee.full_name
+                        } for assignee in event.assignees.all()
+                    ]
+                }
+                for event in obj.attachments.all()
+            ]
+        
+        return linked_items
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        
+        representation['revision'] = instance.revision if instance.revision is not None else 0
+        
+        if instance.author:
+            representation['author'] = {
+                "id": instance.author.id,
+                "name": instance.author.full_name
+            }
+        if instance.created_by:
+            representation['created_by'] = {
+                "id": instance.created_by.id,
+                "name": instance.created_by.full_name
+            }
+        
+        if instance.assignee:
+            representation['assignee'] = {
+                "id": instance.assignee.id,
+                "name": instance.assignee.full_name
+            }
+        if instance.folder:
+            representation["folder"]={
+                "id" : instance.folder.id,
+                "name": instance.folder.name
+            }
+        return representation
+
+class FolderSerializer(serializers.ModelSerializer):
+    documents = serializers.SerializerMethodField()
+    subfolders = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Folder
+        fields = ['id', 'project', 'company_profile', 'freelancer', 'name', 'system_key', 'parent', 'created_at', 'updated_at', 'documents', 'subfolders']
+        read_only_fields = ['system_key']
+
+    def get_subfolders(self, obj):
+        # Serialize subfolders using the same serializer
+        subfolders = Folder.objects.filter(parent=obj)
+        return FolderSerializer(subfolders, many=True, context=self.context).data
+
+    def get_documents(self, obj):
+        return DocumentSerializer(obj.documents.all(), many=True, context=self.context).data
+
+    def validate(self, attrs):
+        if self.instance and self.instance.system_key:
+            protected_fields = {
+                "name",
+                "parent",
+                "project",
+                "company_profile",
+                "freelancer",
+            }
+            changed_fields = {
+                field
+                for field in protected_fields.intersection(attrs)
+                if getattr(self.instance, f"{field}_id", getattr(self.instance, field, None))
+                != (
+                    getattr(attrs[field], "id", attrs[field])
+                    if field != "name"
+                    else attrs[field]
+                )
+            }
+            if changed_fields:
+                raise serializers.ValidationError(
+                    "System folders cannot be renamed, moved, or repurposed."
+                )
+        return attrs
+
+    # TODO: Adjust as per new permission system
+    # def validate_project(self, value):
+    #     if value is None:
+    #         return value
+    #     request_user = self.context.get('user')
+    #     request = self.context.get("request")
+    #     product_name = get_product_name_from_request(request)
+    #     if product_name in COLLABORATIVE_SOLUTION:
+    #         products = COLLABORATIVE_SOLUTION
+    #     else:
+    #         products = [product_name]
+    #     if value.user == request_user and value.solution in products:
+    #         return value
+    #     if has_project_permission("PUT", request_user, value, product_name):
+    #         return value
+    #     raise serializers.ValidationError(f"Project {value} does not belong to this user")
+    
+    def validate_company_profile(self, value):
+        if value is None:
+            return value
+        request_user = self.context.get('user')
+        if value and value == request_user.company:
+            return value
+        raise serializers.ValidationError(f"Current user does not belong to this {value} company")
+    
+    def validate_freelancer(self, value):
+        if value is None:
+            return value
+        request_user = self.context.get('user')
+        if value and value == request_user and value.is_freelancer:
+            return value
+        raise serializers.ValidationError(f"Only freelancer can directly associate folder with themselves")
+        
+    def create(self, validated_data):
+        related_fields = ["project", "company_profile", "freelancer"]
+        provided_fields = [field for field in related_fields if validated_data.get(field)]
+        if len(provided_fields) > 1:
+            raise serializers.ValidationError("Folder can only be linked to one of project, company profile, or freelancer.")
+        return super().create(validated_data)

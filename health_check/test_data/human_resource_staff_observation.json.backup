@@ -1,0 +1,29 @@
+[
+  {
+    "url": "/api/human_resource_management/staff-observation/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/human_resource_management/staff-observation/",
+    "method": "POST",
+    "payload_name": "staff_observation_create_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/human_resource_management/staff-observation/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/human_resource_management/staff-observation/{id}/",
+    "method": "PATCH",
+    "payload_name": "staff_observation_partial_update_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/human_resource_management/staff-observation/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

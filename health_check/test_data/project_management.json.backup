@@ -1,0 +1,14 @@
+[
+  {
+    "url": "/api/project_management/projects/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/action-items/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  }
+]

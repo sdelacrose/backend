@@ -1,0 +1,210 @@
+name: Deploy
+on:
+    push:
+        branches:
+            - 'main'
+
+jobs:
+    build_test:
+        environment: ecpmp-api-build
+        name: Build Image
+        runs-on: ubuntu-latest
+        permissions:
+            packages: write
+            contents: read
+            id-token: write
+        outputs:
+            IMAGE_NAME: ${{ steps.build-and-push.outputs.IMAGE_NAME }}
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v2
+              with:
+                  fetch-depth: 1
+
+            - name: Replace <username> and <repo> in Dockerfile
+              env:
+                username: ${{ secrets.GH_USERNAME }}
+                repo: ${{ secrets.REPO_NAME }}
+                token: ${{ secrets.GH_TOKEN }}
+              run: |
+                sed -i "s|<username>|${{ secrets.GH_USERNAME }}|g" Dockerfile
+                sed -i "s|<repo>|${{ secrets.REPO_NAME }}|g" Dockerfile
+                sed -i "s|<token>|${{ secrets.GH_TOKEN }}|g" Dockerfile
+
+            - name: Setup Django
+              uses: actions/setup-python@v2
+
+            - name: Prepare document worker build context
+              env:
+                  GH_USERNAME: ${{ secrets.GH_USERNAME }}
+                  GH_TOKEN: ${{ secrets.GH_TOKEN }}
+                  REPO_NAME: ${{ secrets.REPO_NAME }}
+              run: |
+                  git clone --depth 1 "https://${GH_USERNAME}:${GH_TOKEN}@github.com/EC-PMP/${REPO_NAME}.git" ../admin-server-models
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v1
+              with:
+                  aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                  aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                  aws-region: ${{ secrets.AWS_REGION }}
+            - name: Login to Amazon ECR
+              id: login-ecr
+              uses: aws-actions/amazon-ecr-login@v1
+
+            - name: Build, tag, and push image to Amazon ECR
+              id: build-and-push
+              env:
+                  ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+                  IMAGE_NAME: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, github.sha) }}
+                  IMAGE_NAME_LATEST: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, 'latest') }}
+                  WORKER_IMAGE_NAME: ${{ format('{0}/{1}:{2}-document-worker', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, github.sha) }}
+                  WORKER_IMAGE_NAME_LATEST: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, 'document-worker-latest') }}
+              run: |
+                docker build -t $IMAGE_NAME -f Dockerfile .
+                docker tag  $IMAGE_NAME $IMAGE_NAME_LATEST
+                docker build -t "$WORKER_IMAGE_NAME" -f Dockerfile.document-worker ..
+                docker tag "$WORKER_IMAGE_NAME" "$WORKER_IMAGE_NAME_LATEST"
+
+            - name: Push To ECR
+              if: ${{ github.ref_name == 'main' }}
+              env:
+                ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+                IMAGE_NAME: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, github.sha) }}
+                IMAGE_NAME_LATEST: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, 'latest') }}
+                WORKER_IMAGE_NAME: ${{ format('{0}/{1}:{2}-document-worker', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, github.sha) }}
+                WORKER_IMAGE_NAME_LATEST: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, 'document-worker-latest') }}
+              run: |
+                docker push $IMAGE_NAME
+                docker push $IMAGE_NAME_LATEST
+                docker push "$WORKER_IMAGE_NAME"
+                docker push "$WORKER_IMAGE_NAME_LATEST"
+  
+            - name: Update kube config
+              if: ${{ github.ref_name == 'main' }}
+              env:
+                CLUSTER_NAME: ${{ secrets.PROD_EKS_CLUSTER_NAME }}
+              run: aws eks --region eu-west-3 update-kubeconfig --name $CLUSTER_NAME
+
+            - name: Deploy To EKS
+              if: ${{ github.ref_name == 'main' }}
+              env:
+                IMAGE_NAME: ${{ format('{0}/{1}:{2}', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, github.sha) }}
+                WORKER_IMAGE_NAME: ${{ format('{0}/{1}:{2}-document-worker', steps.login-ecr.outputs.registry, secrets.PROD_ECR_REPOSITORY_NAME, github.sha) }}
+                DB_NAME: ${{ secrets.PROD_DB_NAME }}
+                DB_USER: ${{ secrets.PROD_DB_USER }}
+                DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+                DB_HOST: ${{ secrets.PROD_DB_HOST }}
+                DB_PORT: ${{ secrets.PROD_DB_PORT }}
+                AUTH0_SECRET: ${{ secrets.PROD_AUTH0_SECRET }}
+                AUTH0_ISSUER_BASE_URL: ${{ secrets.PROD_AUTH0_ISSUER_BASE_URL }}
+                AUTH0_CLIENT_ID: ${{ secrets.PROD_AUTH0_CLIENT_ID }}
+                AUTH0_CLIENT_SECRET: ${{ secrets.PROD_AUTH0_CLIENT_SECRET }}
+                AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                AWS_STORAGE_BUCKET_NAME: ${{ secrets.PROD_AWS_STORAGE_BUCKET_NAME }}
+                CLUSTER_NAME: ${{ secrets.PROD_EKS_CLUSTER_NAME }}
+                ACM_CERTIFICATE_ARN: ${{ secrets.PROD_ACM_CERTIFICATE_ARN }}
+                DJANGO_SETTINGS_MODULE: ${{ secrets.PROD_DJANGO_SETTINGS_MODULE }}
+                AZURE_CLIENT_ID: ${{ secrets.PROD_AZURE_CLIENT_ID }}
+                AZURE_TENANT_ID: ${{ secrets.PROD_AZURE_TENANT_ID }}
+                AZURE_CLIENT_SECRET: ${{ secrets.PROD_AZURE_CLIENT_SECRET }}
+                BACKEND_URL: ${{ secrets.PROD_BACKEND_URL }}
+                CELERY_ENV: ${{ secrets.PROD_CELERY_ENV }}
+                EMAIL_HOST_USER: ${{ secrets.PROD_EMAIL_HOST_USER }}
+                EMAIL_HOST_PASSWORD: ${{ secrets.PROD_EMAIL_HOST_PASSWORD }}
+                FRONTEND_URL: ${{ secrets.PROD_FRONTEND_URL }}
+                AUTH0_M2M_CLIENT_ID: ${{ secrets.PROD_AUTH0_M2M_CLIENT_ID }}
+                AUTH0_M2M_CLIENT_SECRET: ${{ secrets.PROD_AUTH0_M2M_CLIENT_SECRET }}
+                AUTH0_DOMAIN: ${{ secrets.PROD_AUTH0_DOMAIN }}
+                AUTH0_AUDIENCE: ${{ secrets.PROD_AUTH0_AUDIENCE }}
+                PRODUCT_NAME: ${{ secrets.PROD_PRODUCT_NAME }}
+                API_SECRET_KEY: ${{ secrets.PROD_API_SECRET_KEY }}
+                MS_CLIENT_ID: ${{ secrets.PROD_MS_CLIENT_ID }}
+                MS_CLIENT_SECRET: ${{ secrets.PROD_MS_CLIENT_SECRET }}
+                MS_TENANT_ID: ${{ secrets.PROD_MS_TENANT_ID }}
+                MS_REDIRECT_URI: ${{ secrets.PROD_MS_REDIRECT_URI }}
+                ENV: ${{ secrets.PROD_ENV }}
+                MATRIX_ENABLED: "True"
+                MATRIX_BASE_URL: "http://matrix:8008"
+                MATRIX_ACCESS_TOKEN: ${{ secrets.PROD_MATRIX_ACCESS_TOKEN }}
+                MATRIX_REQUEST_TIMEOUT: "10"
+                MATRIX_RETRY_ATTEMPTS: "5"
+                MATRIX_READ_FROM_PROVIDER: "True"
+                CHAT_PUSH_NOTIFICATIONS_ENABLED: "true"
+                CHAT_PUSH_USE_CELERY: "false"
+                FIREBASE_SERVICE_ACCOUNT_JSON_BASE64: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON_BASE64 }}
+                FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY: "BA75I8Yp5Lu2RPWGHzrhau3qmLfp_dE64JlsdsO16OHzInvlpyNgeGT-M9p5jMNDv0ShTwnpJrc4a8WRcQ4Ckx8"
+                FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY: ${{ secrets.FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY }}
+                AI_TOOLS_SERVICE_API_KEY: ${{ secrets.AI_TOOLS_SERVICE_API_KEY }}
+                PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL: "http://ai-chat-specification-extraction.ai-chat.svc.cluster.local:8011"
+                PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY: ${{ secrets.AI_TOOLS_SERVICE_API_KEY }}
+                LINKS_AI_CONTRACT_VERSION: "2"
+                GIT_SHA: ${{ github.sha }}
+                IMAGE_VERSION: ${{ github.sha }}
+              run: |
+                sed -i "s|DOCUMENT_WORKER_ECR_IMAGE|$WORKER_IMAGE_NAME|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|ECR_IMAGE|$IMAGE_NAME|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"DB_NAME\"|value: \"$DB_NAME\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"DB_USER\"|value: \"$DB_USER\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"DB_PASSWORD\"|value: \"$DB_PASSWORD\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"DB_HOST\"|value: \"$DB_HOST\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"DB_PORT\"|value: \"$DB_PORT\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_SECRET\"|value: \"$AUTH0_SECRET\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_ISSUER_BASE_URL\"|value: \"$AUTH0_ISSUER_BASE_URL\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_CLIENT_ID\"|value: \"$AUTH0_CLIENT_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_CLIENT_SECRET\"|value: \"$AUTH0_CLIENT_SECRET\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AWS_ACCESS_KEY_ID\"|value: \"$AWS_ACCESS_KEY_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AWS_SECRET_ACCESS_KEY\"|value: \"$AWS_SECRET_ACCESS_KEY\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AWS_STORAGE_BUCKET_NAME\"|value: \"$AWS_STORAGE_BUCKET_NAME\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"CLUSTER_NAME\"|value: \"$CLUSTER_NAME\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|ACM_CERTIFCATE|$ACM_CERTIFICATE_ARN|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"DJANGO_SETTINGS_MODULE\"|value: \"$DJANGO_SETTINGS_MODULE\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AZURE_CLIENT_ID\"|value: \"$AZURE_CLIENT_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AZURE_TENANT_ID\"|value: \"$AZURE_TENANT_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AZURE_CLIENT_SECRET\"|value: \"$AZURE_CLIENT_SECRET\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"BACKEND_URL\"|value: \"$BACKEND_URL\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"CELERY_ENV\"|value: \"$CELERY_ENV\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"EMAIL_HOST_USER\"|value: \"$EMAIL_HOST_USER\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"EMAIL_HOST_PASSWORD\"|value: \"$EMAIL_HOST_PASSWORD\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"FRONTEND_URL\"|value: \"$FRONTEND_URL\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_M2M_CLIENT_ID\"|value: \"$AUTH0_M2M_CLIENT_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_M2M_CLIENT_SECRET\"|value: \"$AUTH0_M2M_CLIENT_SECRET\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_DOMAIN\"|value: \"$AUTH0_DOMAIN\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AUTH0_AUDIENCE\"|value: \"$AUTH0_AUDIENCE\"|g" manifests/ecpmp-api-deployment-prod.yaml 
+                sed -i "s|value: \"PRODUCT_NAME\"|value: \"$PRODUCT_NAME\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MS_CLIENT_ID\"|value: \"$MS_CLIENT_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MS_CLIENT_SECRET\"|value: \"$MS_CLIENT_SECRET\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MS_TENANT_ID\"|value: \"$MS_TENANT_ID\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MS_REDIRECT_URI\"|value: \"$MS_REDIRECT_URI\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"ENV\"|value: \"$ENV\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                normalized_matrix_access_token=$(printf '%s' "$MATRIX_ACCESS_TOKEN" | tr -d '\r\n')
+                normalized_firebase_service_account_json_base64=$(printf '%s' "$FIREBASE_SERVICE_ACCOUNT_JSON_BASE64" | tr -d '\r\n')
+                normalized_firebase_web_push_public_vapid_key=$(printf '%s' "$FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY" | tr -d '\r\n')
+                normalized_firebase_web_push_private_vapid_key=$(printf '%s' "$FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY" | tr -d '\r\n')
+                escaped_key=$(printf '%s' "$API_SECRET_KEY" | sed 's/[&|]/\\&/g')
+                escaped_matrix_access_token=$(printf '%s' "$normalized_matrix_access_token" | sed 's/[&|]/\\&/g')
+                escaped_firebase_service_account_json_base64=$(printf '%s' "$normalized_firebase_service_account_json_base64" | sed 's/[&|]/\\&/g')
+                escaped_firebase_web_push_public_vapid_key=$(printf '%s' "$normalized_firebase_web_push_public_vapid_key" | sed 's/[&|]/\\&/g')
+                escaped_firebase_web_push_private_vapid_key=$(printf '%s' "$normalized_firebase_web_push_private_vapid_key" | sed 's/[&|]/\\&/g')
+                sed -i "s|value: \"API_SECRET_KEY\"|value: \"$escaped_key\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MATRIX_ENABLED\"|value: \"$MATRIX_ENABLED\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MATRIX_BASE_URL\"|value: \"$MATRIX_BASE_URL\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MATRIX_ACCESS_TOKEN\"|value: \"$escaped_matrix_access_token\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MATRIX_REQUEST_TIMEOUT\"|value: \"$MATRIX_REQUEST_TIMEOUT\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MATRIX_RETRY_ATTEMPTS\"|value: \"$MATRIX_RETRY_ATTEMPTS\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"MATRIX_READ_FROM_PROVIDER\"|value: \"$MATRIX_READ_FROM_PROVIDER\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"CHAT_PUSH_NOTIFICATIONS_ENABLED\"|value: \"$CHAT_PUSH_NOTIFICATIONS_ENABLED\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"CHAT_PUSH_USE_CELERY\"|value: \"$CHAT_PUSH_USE_CELERY\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"FIREBASE_SERVICE_ACCOUNT_JSON_BASE64\"|value: \"$escaped_firebase_service_account_json_base64\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY\"|value: \"$escaped_firebase_web_push_public_vapid_key\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY\"|value: \"$escaped_firebase_web_push_private_vapid_key\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"AI_TOOLS_SERVICE_API_KEY\"|value: \"$AI_TOOLS_SERVICE_API_KEY\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL\"|value: \"$PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY\"|value: \"$PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"LINKS_AI_CONTRACT_VERSION\"|value: \"$LINKS_AI_CONTRACT_VERSION\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"GIT_SHA\"|value: \"$GIT_SHA\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                sed -i "s|value: \"IMAGE_VERSION\"|value: \"$IMAGE_VERSION\"|g" manifests/ecpmp-api-deployment-prod.yaml
+                kubectl apply --dry-run=server -f manifests/ecpmp-api-deployment-prod.yaml >/dev/null
+                kubectl apply -f manifests/ecpmp-api-deployment-prod.yaml
+                

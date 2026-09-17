@@ -1,0 +1,568 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&display=swap"
+      rel="stylesheet"
+    />
+    <title>{{ document_label }} {{ po_reference }}</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 12mm;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: "Poppins", sans-serif;
+        font-size: 14px;
+        color: #333;
+      }
+
+      .po-document {
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        padding: 0;
+        background: #fff;
+        box-shadow: none;
+        border-radius: 0;
+        position: relative;
+      }
+
+      h1 {
+        font-size: 26px;
+        margin-bottom: 20px;
+        color: #222;
+      }
+
+      .po-columns {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 25px;
+        border-bottom: 2px solid #ddd;
+        padding-bottom: 10px;
+      }
+
+      .top-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 15px;
+      }
+
+      .logo-and-meta {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+      }
+
+      .company-logo {
+        max-width: 100px;
+        height: auto;
+      }
+
+      .po-meta p {
+        margin: 2px 0;
+      }
+
+      .po-details,
+      .issuer-panel {
+        width: 48%;
+      }
+
+      .po-details p,
+      .issuer-panel p {
+        margin: 4px 0;
+      }
+
+      .issuer-panel {
+        text-align: right;
+      }
+
+      .issuer-block {
+        margin-bottom: 10px;
+      }
+
+      .line-items-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 20px;
+        font-size: 12px;
+      }
+
+      .line-items-table th,
+      .line-items-table td {
+        padding: 8px 4px;
+      }
+
+      .line-items-table th {
+        border-bottom: 1px solid #000;
+        font-weight: normal;
+        text-align: left;
+      }
+
+      .line-items-table th.num-cell,
+      .line-items-table td.num-cell {
+        text-align: right;
+      }
+
+      .line-items-table td {
+        border-bottom: 1px solid #eee;
+        vertical-align: top;
+      }
+
+      .description-cell {
+        width: 28%;
+      }
+
+      .qty-cell {
+        width: 8%;
+      }
+
+      .price-cell {
+        width: 14%;
+      }
+
+      .vat-rate-cell {
+        width: 10%;
+      }
+
+      .amount-excl-cell {
+        width: 14%;
+      }
+
+      .vat-amount-cell {
+        width: 12%;
+      }
+
+      .amount-incl-cell {
+        width: 14%;
+      }
+
+      .milestones-section {
+        margin-top: 20px;
+        padding: 12px;
+        background: #f9fafb;
+        border: 1px solid #d0d5dd;
+        border-radius: 12px;
+      }
+
+      .milestones-section h2 {
+        margin: 0 0 10px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #101828;
+      }
+
+      .milestones-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 10px;
+      }
+
+      .milestones-table col {
+        width: 33.3333%;
+      }
+
+      .milestones-table th,
+      .milestones-table td {
+        box-sizing: border-box;
+        padding: 8px 6px;
+        vertical-align: middle;
+        border-bottom: 1px solid #eaecf0;
+      }
+
+      .milestones-table thead th {
+        font-weight: 500;
+        color: #667085;
+        border-bottom: 1px solid #101828;
+        line-height: 1.25;
+      }
+
+      .milestones-table tbody td {
+        color: #101828;
+        line-height: 1.35;
+      }
+
+      .milestones-table .text-left {
+        text-align: left;
+      }
+
+      .milestones-table .text-right {
+        text-align: right;
+      }
+
+      .totals-section {
+        margin-top: 20px;
+        width: 100%;
+      }
+
+      .totals-row {
+        display: flex;
+        justify-content: flex-end;
+        padding: 5px 0;
+      }
+
+      .totals-label {
+        text-align: right;
+        padding-right: 10px;
+        width: 200px;
+      }
+
+      .totals-amount {
+        text-align: right;
+        width: 150px;
+      }
+
+      .amount-due {
+        font-weight: bold;
+      }
+
+      .section-divider {
+        margin: 28px 0 0;
+        border: 0;
+        border-top: 1px solid #d0d5dd;
+      }
+
+      .po-history-section {
+        margin-top: 20px;
+        padding: 12px;
+        background: #f9fafb;
+        border: 1px solid #d0d5dd;
+        border-radius: 12px;
+      }
+
+      .po-history-section h2 {
+        margin: 0 0 10px;
+        font-size: 14px;
+        font-weight: 600;
+        color: #101828;
+      }
+
+      .po-history-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 10px;
+      }
+
+      .po-history-table col {
+        width: 16.6667%;
+      }
+
+      .po-history-table-source col {
+        width: 33.3333%;
+      }
+
+      .po-history-table th,
+      .po-history-table td {
+        box-sizing: border-box;
+        padding: 8px 6px;
+        vertical-align: middle;
+        border-bottom: 1px solid #eaecf0;
+      }
+
+      .po-history-table thead th {
+        font-weight: 500;
+        color: #667085;
+        border-bottom: 1px solid #101828;
+        line-height: 1.25;
+      }
+
+      .po-history-table tbody td {
+        color: #101828;
+        line-height: 1.35;
+      }
+
+      .po-history-table .text-left {
+        text-align: left;
+      }
+
+      .po-history-table .text-right {
+        text-align: right;
+      }
+
+      .po-history-table .is-strong {
+        font-weight: 600;
+      }
+
+      .po-history-table tfoot td {
+        border-bottom: none;
+        padding-top: 12px;
+        font-size: 10px;
+      }
+
+      .po-history-table tfoot .footer-label {
+        text-align: right;
+        color: #667085;
+        font-weight: 500;
+      }
+
+      .po-history-table tfoot .footer-value {
+        text-align: right;
+        color: #101828;
+        font-weight: 600;
+      }
+
+      .po-history-table tfoot tr + tr td {
+        padding-top: 6px;
+      }
+
+      .footer {
+        font-size: 12px;
+        color: #777;
+        margin-top: 20px;
+        border-top: 1px solid #ddd;
+        padding-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="po-document">
+      <div class="top-header">
+        <div class="logo-and-meta">
+          {% if logo_path %}
+          <img src="{{ logo_path }}" alt="" class="company-logo" />
+          {% endif %}
+          <div class="po-meta">
+            <p>Date of issue: <strong>{{ issue_date }}</strong></p>
+            {% if po_date %}
+            <p>PO date: <strong>{{ po_date }}</strong></p>
+            {% endif %} {% if status %}
+            <p>Status: <strong>{{ status }}</strong></p>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <h1>{{ document_label }}</h1>
+
+      <div class="po-columns">
+        <div class="po-details">
+          <p><strong>{{ document_label }} #{{ po_reference }}</strong></p>
+          {% if project_name %}
+          <p>Project: <strong>{{ project_name }}</strong></p>
+          {% endif %} {% if source_po_reference %}
+          <p>
+            Linked purchase order:
+            <strong>#{{ source_po_reference }}</strong>
+          </p>
+          {% endif %}
+        </div>
+
+        <div class="issuer-panel">
+          <div class="issuer-block">
+            <p><strong>Issuing organisation</strong></p>
+            {% if company_name %}
+            <p><strong>{{ company_name }}</strong></p>
+            {% endif %} {% if address %}
+            <p>{{ address }}</p>
+            {% endif %} {% if city %}
+            <p>{{ city }}</p>
+            {% endif %} {% if country %}
+            <p>{{ country }}</p>
+            {% endif %}
+          </div>
+
+          <div class="issuer-block">
+            <p><strong>Contact</strong></p>
+            {% if company_contact_person %}
+            <p>{{ company_contact_person }}</p>
+            {% endif %} {% if company_contact_email %}
+            <p>{{ company_contact_email }}</p>
+            {% endif %} {% if company_contact_phone %}
+            <p>{{ company_contact_phone }}</p>
+            {% endif %}
+          </div>
+
+          {% if recipient_company_name or recipient_name %}
+          <p><strong>Counterparty</strong></p>
+          {% if recipient_company_name %}
+          <p>{{ recipient_company_name }}</p>
+          {% elif recipient_name or surname %}
+          <p>{{ recipient_name }} {{ surname }}</p>
+          {% endif %}
+          <p>{{ recipient_address }}</p>
+          <p>{{ recipient_town }}</p>
+          <p>{{ recipient_country }}</p>
+          <p>{{ recipient_number }}</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <table class="line-items-table">
+        <tr>
+          <th class="description-cell">Description</th>
+          <th class="qty-cell num-cell">Qty</th>
+          <th class="price-cell num-cell">Unit price</th>
+          <th class="vat-rate-cell num-cell">VAT %</th>
+          <th class="amount-excl-cell num-cell">Amount (excl. VAT)</th>
+          <th class="vat-amount-cell num-cell">VAT</th>
+          <th class="amount-incl-cell num-cell">Total (incl. VAT)</th>
+        </tr>
+        {% for item in line_items %}
+        <tr>
+          <td class="description-cell">{{ item.description }}</td>
+          <td class="qty-cell num-cell">{{ item.quantity }}</td>
+          <td class="price-cell num-cell">{{ item.unit_price }}</td>
+          <td class="vat-rate-cell num-cell">
+            {% if item.vat_rate is not None %}{{ item.vat_rate }}%{% endif %}
+          </td>
+          <td class="amount-excl-cell num-cell">{{ item.amount_excl_vat }}</td>
+          <td class="vat-amount-cell num-cell">{{ item.vat_amount }}</td>
+          <td class="amount-incl-cell num-cell">{{ item.amount_incl_vat }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="7">No line items</td>
+        </tr>
+        {% endfor %}
+      </table>
+
+      <div class="totals-section">
+        <div class="totals-row">
+          <div class="totals-label">Subtotal (excl. VAT)</div>
+          <div class="totals-amount">{{ subtotal }}</div>
+        </div>
+
+        <div class="totals-row">
+          <div class="totals-label">
+            VAT{% if vat_rate %} ({{ vat_rate }}%){% endif %}
+          </div>
+          <div class="totals-amount">{{ vat_amount }}</div>
+        </div>
+
+        <div class="totals-row amount-due">
+          <div class="totals-label">
+            {% if grand_total_label %}{{ grand_total_label }}{% else %}Total (incl. VAT){% endif %}
+          </div>
+          <div class="totals-amount">{{ grand_total }}</div>
+        </div>
+      </div>
+
+      {% if payment_milestones %}
+      <hr class="section-divider" />
+      <div class="milestones-section">
+        <h2>Linked payment milestones</h2>
+        <table class="milestones-table">
+          <colgroup>
+            <col /><col /><col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="text-left">Name</th>
+              <th class="text-left">Due</th>
+              <th class="text-right">Amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in payment_milestones %}
+            <tr>
+              <td class="text-left">{{ m.name }}</td>
+              <td class="text-left">{{ m.due_date }}</td>
+              <td class="text-right">{{ m.amount }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+
+      {% if po_history %}
+      <hr class="section-divider" />
+
+      <div class="po-history-section">
+        <h2>{{ po_history.title }}</h2>
+        {% if po_history.mode == "full" %}
+        <table class="po-history-table">
+          <colgroup>
+            <col /><col /><col /><col /><col /><col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="text-left">Reference</th>
+              <th class="text-left">Status</th>
+              <th class="text-right">Change excl. VAT</th>
+              <th class="text-right">CN VAT</th>
+              <th class="text-right">CN total incl. VAT</th>
+              <th class="text-right">Revised incl. VAT</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in po_history.rows %}
+            <tr>
+              <td class="text-left">{{ row.reference }}</td>
+              <td class="text-left">{{ row.status }}</td>
+              <td class="text-right">{{ row.change_excl }}</td>
+              <td class="text-right">{{ row.change_vat }}</td>
+              <td class="text-right">{{ row.change_incl }}</td>
+              <td class="text-right is-strong">{{ row.revised_incl }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            {% if po_history.show_sum_cn %}
+            <tr>
+              <td colspan="5" class="footer-label">
+                Total sum of change notice amounts (incl. VAT)
+              </td>
+              <td class="footer-value">{{ po_history.sum_cn_incl }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+              <td colspan="5" class="footer-label">
+                Total revised amount for original PO (incl. VAT)
+              </td>
+              <td class="footer-value">{{ po_history.revised_total }}</td>
+            </tr>
+          </tfoot>
+        </table>
+        {% else %}
+        <table class="po-history-table po-history-table-source">
+          <colgroup>
+            <col /><col /><col />
+          </colgroup>
+          <thead>
+            <tr>
+              <th class="text-left">Reference</th>
+              <th class="text-left">Status</th>
+              <th class="text-right">Original PO amount</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in po_history.rows %}
+            <tr>
+              <td class="text-left">{{ row.reference }}</td>
+              <td class="text-left">{{ row.status }}</td>
+              <td class="text-right is-strong">{{ row.original_po_amount }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      <div class="footer">
+        <!-- prettier-ignore -->
+        {% if footer_company_name or footer_company_reg_no or footer_company_tax_no %}
+        <p>
+          <!-- prettier-ignore-start -->
+          {% if footer_company_name %}{{ footer_company_name }}{% endif %}
+          {% if footer_company_reg_no %} | Company registration N° {{ footer_company_reg_no }}{% endif %}
+          {% if footer_company_tax_no %} | Company Tax N° {{ footer_company_tax_no }}{% endif %}
+          <!-- prettier-ignore-end -->
+        </p>
+        {% endif %}
+        <p>Notes: {{ notes }}</p>
+      </div>
+    </div>
+  </body>
+</html>

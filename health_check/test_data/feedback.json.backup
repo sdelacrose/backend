@@ -1,0 +1,35 @@
+[
+  {
+    "url": "/api/user/feedback/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/user/feedback/",
+    "method": "POST",
+    "payload_name": "feedback_create_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/user/feedback/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/user/feedback/{id}/",
+    "method": "PUT",
+    "payload_name": "feedback_update_payload",
+    "expected_status": 405
+  },
+  {
+    "url": "/api/user/feedback/{id}/",
+    "method": "PATCH",
+    "payload_name": "feedback_patch_payload",
+    "expected_status": 405
+  },
+  {
+    "url": "/api/user/feedback/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "url": "/api/user/events/?start_date=2024-01-01T00:00:00&end_date=2024-12-31T23:59:59",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/user/events/",
+    "method": "POST",
+    "payload_name": "events_create_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/user/events/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/user/events/{id}/",
+    "method": "PATCH",
+    "payload_name": "events_patch_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/user/events/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

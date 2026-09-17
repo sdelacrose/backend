@@ -1,0 +1,26 @@
+[
+  {
+    "url": "/api/company/company-config/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/company-config/",
+    "method": "POST",
+    "payload_name": "company_config_create_payload",
+    "expected_status": 405
+  },
+  {
+    "url": "/api/company/company-config/reset/",
+    "method": "POST",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/company-config/sync/",
+    "method": "POST",
+    "payload": {},
+    "expected_status": 200
+  }
+]

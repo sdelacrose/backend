@@ -1,0 +1,14 @@
+admin-server-backend/
+admin-server-models/.git/
+admin-server-models/**/__pycache__/
+admin-server-models/**/*.py[cod]
+backend/.git/
+backend/.env*
+backend/backend-env/
+backend/media/
+backend/static/
+backend/staticfiles/
+backend/test-reports/
+backend/**/__pycache__/
+backend/**/*.py[cod]
+backend/*.log

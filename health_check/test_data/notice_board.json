@@ -1,0 +1,38 @@
+[
+  {
+    "url": "/api/company/notice-board/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/notice-board/",
+    "method": "POST",
+    "payload_name": "notice_board_create_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/company/notice-board/{id}/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/notice-board/{id}/",
+    "method": "PUT",
+    "payload_name": "notice_board_update_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/notice-board/{id}/",
+    "method": "PATCH",
+    "payload_name": "notice_board_partial_update_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/notice-board/{id}/",
+    "method": "DELETE",
+    "payload": {},
+    "expected_status": 204
+  }
+]

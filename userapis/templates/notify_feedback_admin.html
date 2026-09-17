@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Feedback Received</title>
+        <style>
+            @import url("https://fonts.googleapis.com/css2?family=Muli:wght@400;600&display=swap");
+            body {
+                font-family: "Muli", sans-serif;
+                margin: 0;
+                padding: 0;
+                background-color: #f8f9fc;
+                color: #333;
+                height: 100%;
+            }
+
+            .email-container {
+                display: flex;
+                max-width: 1200px;
+                margin: 20px auto;
+                background: #ffffff;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                overflow: hidden;
+                height: 100%;
+            }
+
+            /* Sidebar table styling */
+            #email-sidebar-table {
+                min-width: 250px;
+                max-width: 250px;
+                background-color: #0057b7;
+                color: #ffffff;
+            }
+
+            #email-sidebar-table {
+                width: 100%;
+                height: auto;
+                min-height: 100%;
+            }
+            .sidebar-logo {
+                padding: 30px 10px 20px;
+                text-align: center;
+            }
+
+            .sidebar-logo img {
+                max-width: 150px;
+                display: block;
+                margin: 0 auto 20px;
+            }
+
+            .sidebar-footer {
+                padding: 10px 10px 30px;
+                text-align: center;
+                font-size: 13px;
+                color: #ffffff;
+            }
+
+            .sidebar-footer a {
+                color: #ffffff;
+                text-decoration: underline;
+                margin: 0 4px;
+                font-size: 13px;
+            }
+            .email-sidebar img {
+                max-width: 150px;
+                margin-bottom: 20px;
+            }
+            .email-body {
+                flex: 1;
+                padding: 20px;
+            }
+            .email-body h1 {
+                font-size: 15px;
+                margin-bottom: 10px;
+                color: #54595f;
+            }
+            .email-body p {
+                font-size: 15px;
+                line-height: 1.5;
+                color: #54595f;
+            }
+            .email-body ul {
+                font-size: 15px;
+                margin-top: 10px;
+                padding-left: 20px;
+                color: #54595f;
+            }
+            .email-body ul li {
+                margin-bottom: 5px;
+            }
+            .email-footer {
+                padding: 15px;
+                text-align: center;
+                font-size: 15px;
+                color: #777;
+                background: #f1f1f1;
+            }
+            .btn {
+                display: inline-block;
+                margin: 10px 0;
+                padding: 10px 20px;
+                background: #0057b7;
+                color: #ffffff !important;
+                text-decoration: none;
+                border-radius: 35px;
+                font-weight: bold;
+                text-align: center;
+            }
+            .btn:hover {
+                color: #ffffff;
+                background: #009cbd;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <table
+                role="presentation"
+                cellpadding="0"
+                cellspacing="0"
+                border="0"
+                id="email-sidebar-table"
+            >
+                <tr>
+                    <td class="sidebar-logo">
+                        <img style="width: 150px; max-width: 150px;"
+                            src="https://res.cloudinary.com/dllvojxqw/image/upload/v1768836171/sharemundo_logo.png"
+                            alt="sharemundo Logo"
+                        />
+                    </td>
+                </tr>
+                <tr>
+                    <td height="100%">&nbsp;</td>
+                </tr>
+                <tr>
+                    <td class="sidebar-footer">
+                        <a
+                            href="https://sharemundo.com/en/cgv-terms-conditions-sharemundolinks/"
+                            target="_blank"
+                            >Terms of Use</a
+                        >
+                        |
+                        <a
+                            href="https://sharemundo.com/en/protection-donnees-sharemundolinks/"
+                            target="_blank"
+                            >Privacy Policy</a
+                        >
+                    </td>
+                </tr>
+            </table>
+
+            <div class="email-body">
+                <h1>Dear administrators,</h1>
+                <p>
+                    Some feedback on <strong>sharemundo links®</strong> has
+                    been added.
+                </p>
+                <p><strong>Quick Details:</strong></p>
+                <ul>
+                    <li>User name: {{ user_name }}</li>
+                    <li>Name of the solution: {{ solution_name }}</li>
+                    <li>Type of feedback: {{ feedback_type }}</li>
+                </ul>
+                <p>
+                    Please click <a href="{{ feedback_link }}">here</a> to see
+                    the complete feedback form and take necessary actions.
+                </p>
+                <div class="email-footer">
+                    Best Regards,<br />
+                    <strong>sharemundo team</strong>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

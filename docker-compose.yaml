@@ -1,0 +1,106 @@
+services:
+  server:
+    build:
+      context: ../
+      dockerfile: ./backend/Dockerfile-local
+    container_name: backend_server
+    entrypoint: [ ]
+    # command: daphne -b 0.0.0.0 -p 8000 ecpmpapp.asgi:application
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      DJANGO_SETTINGS_MODULE: ecpmpapp.settings.local
+      PYTHONUNBUFFERED: 1
+    ports:
+      - 8000:8000
+    networks:
+      - admin-server-backend_admin_center
+    volumes:
+      - ../backend:/app
+      - ../admin-server-models:/admin-server-models
+
+    # TODO: remove unwanted services.
+    # depends_on:
+    #   db:
+    #     condition: service_healthy
+  # db:
+  #   image: postgres
+  #   restart: always
+  #   user: postgres
+  #   volumes:
+  #     - db-data:/var/lib/postgresql/data
+  #   networks:
+  #     - ecpmpapp
+  #   environment:
+  #     - POSTGRES_DB=ecpmp
+  #     - POSTGRES_PASSWORD=test-password
+  #   expose:
+  #     - 5432
+  #   healthcheck:
+  #     test: ["CMD", "pg_isready"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  
+  redis:
+    image: redis:latest
+    networks:
+      - admin-server-backend_admin_center
+
+  celery:
+    build:
+      context: ../
+      dockerfile: ./backend/Dockerfile-local
+    container_name: celery_worker
+    entrypoint: [ ]
+    command: celery -A ecpmpapp worker --loglevel=info --queues=celery,business_search_indexing,product_assembly_extraction
+    networks:
+      - admin-server-backend_admin_center
+    depends_on:
+      - redis
+    environment:
+      DJANGO_SETTINGS_MODULE: ecpmpapp.settings.local
+    volumes:
+      - ../backend:/app
+
+  document_worker:
+    build:
+      context: ../
+      dockerfile: ./backend/Dockerfile.document-worker
+    container_name: document_indexing_worker
+    environment:
+      DJANGO_SETTINGS_MODULE: ecpmpapp.settings.local
+      REDIS_HOST: redis
+    networks:
+      - admin-server-backend_admin_center
+    depends_on:
+      - redis
+    volumes:
+      - ../backend:/app
+      - ../admin-server-models:/admin-server-models
+
+  project_content_worker:
+    build:
+      context: ../
+      dockerfile: ./backend/Dockerfile.document-worker
+    container_name: project_content_worker
+    entrypoint: [ ]
+    command: celery -A ecpmpapp worker --loglevel=info --queues=project_document_generation --concurrency=1
+    environment:
+      DJANGO_SETTINGS_MODULE: ecpmpapp.settings.local
+      REDIS_HOST: redis
+      TMPDIR: /tmp/project-content
+      PROJECT_DOCUMENT_GENERATION_ENABLED: "True"
+      PROJECT_DOCUMENT_AI_ENABLED: "True"
+      ACCEPTANCE_CHECKLISTS_ENABLED: "True"
+      PROJECT_CONTENT_QUEUE: project_document_generation
+    networks:
+      - admin-server-backend_admin_center
+    depends_on:
+      - redis
+    volumes:
+      - ../backend:/app
+      - ../admin-server-models:/admin-server-models
+
+networks:
+  admin-server-backend_admin_center:
+    external: true

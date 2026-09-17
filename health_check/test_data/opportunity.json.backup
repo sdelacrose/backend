@@ -1,0 +1,32 @@
+[
+  {
+    "url": "/api/company/opportunity/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/opportunity/",
+    "method": "POST",
+    "payload_name": "opportunity_create_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/company/opportunity/{id}/",
+    "method": "GET",
+    "payload": {},
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/opportunity/{id}/",
+    "method": "PATCH",
+    "payload_name": "opportunity_partial_update_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/company/opportunity/{id}/",
+    "method": "DELETE",
+    "payload": {},
+    "expected_status": 204
+  }
+]

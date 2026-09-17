@@ -1,0 +1,40 @@
+[
+  {
+    "url": "/api/project_management/billing-invoice/",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "project_management_billing-invoice_list"
+  },
+  {
+    "url": "/api/project_management/billing-invoice/",
+    "method": "POST",
+    "payload_name": "invoice_create_payload",
+    "expected_status": 201,
+    "description": "project_management_billing-invoice_create"
+  },
+  {
+    "url": "/api/project_management/billing-invoice/sum/",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "project_management_billing-invoice_sum"
+  },
+  {
+    "url": "/api/project_management/billing-invoice/{id}/",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "project_management_billing-invoice_read"
+  },
+  {
+    "url": "/api/project_management/billing-invoice/{id}/",
+    "method": "PATCH",
+    "payload_name": "invoice_patch_payload",
+    "expected_status": 200,
+    "description": "project_management_billing-invoice_partial_update"
+  },
+  {
+    "url": "/api/project_management/billing-invoice/{id}/",
+    "method": "DELETE",
+    "expected_status": 204,
+    "description": "project_management_billing-invoice_delete"
+  }
+]

@@ -1,0 +1,7 @@
+[
+  {
+    "url": "/api/user/feedback/",
+    "method": "GET",
+    "expected_status": 200
+  }
+]

@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8"/>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&display=swap"
+          rel="stylesheet">
+    <title>{{ document_label }} {{ reference_number }}</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: "Poppins", sans-serif;
+            font-size: 14px;
+            color: #333;
+        }
+
+        .invoice-container {
+            width: 100%;
+            max-width: 800px;
+            margin: 30px auto;
+            padding: 20px;
+            background: #fff;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            position: relative;
+        }
+
+        h1 {
+            font-size: 26px;
+            margin-bottom: 20px;
+            color: #222;
+        }
+
+        .invoice-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 25px;
+            border-bottom: 2px solid #ddd;
+            padding-bottom: 10px;
+        }
+
+        .top-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .logo-and-meta {
+            display: flex;
+            flex-direction: column; /* stacks logo and text vertically */
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .company-logo {
+            max-width: 100px;
+            height: auto;
+        }
+
+        .offer-meta p {
+            margin: 2px 0;
+        }
+
+        .company-info, .client-info {
+            width: 48%;
+        }
+
+        .company-info p, .client-info p {
+            margin: 4px 0;
+        }
+
+        .client-info {
+            text-align: right;
+        }
+
+        .issuer-section {
+            margin-bottom: 10px;
+        }
+
+        /* Line Items Table - Exact Match Styling */
+        .line-items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        .line-items-table th, .line-items-table td {
+            padding: 10px 0;
+        }
+
+        .line-items-table th {
+            border-bottom: 1px solid #000;
+            font-weight: normal;
+            text-align: left;
+        }
+
+        .line-items-table th:nth-child(2) {
+            text-align: center;
+        }
+
+        .line-items-table th:nth-child(3),
+        .line-items-table th:nth-child(4),
+        .line-items-table th:nth-child(5) {
+            text-align: right;
+        }
+
+        .line-items-table td {
+            border-bottom: 1px solid #eee;
+        }
+
+        .line-items-table td:nth-child(2) {
+            text-align: center;
+        }
+
+        .line-items-table td:nth-child(3),
+        .line-items-table td:nth-child(4),
+        .line-items-table td:nth-child(5) {
+            text-align: right;
+        }
+
+        .description-cell {
+            width: 50%;
+        }
+
+        .qty-cell {
+            width: 10%;
+        }
+
+        .price-cell {
+            width: 15%;
+        }
+
+        .vat-cell {
+            width: 10%;
+        }
+
+        .amount-cell {
+            width: 15%;
+        }
+
+        .date-range {
+            display: block;
+            margin-top: 5px;
+            color: #555;
+        }
+
+        /* Totals Section - Exact Match Styling */
+        .totals-section {
+            margin-top: 20px;
+            width: 100%;
+        }
+
+        .totals-row {
+            display: flex;
+            justify-content: flex-end;
+            padding: 5px 0;
+        }
+
+        .totals-label {
+            text-align: right;
+            padding-right: 10px;
+            width: 150px;
+        }
+
+        .totals-amount {
+            text-align: right;
+            width: 150px;
+        }
+
+        .totals-divider {
+            border-top: 1px solid #eee;
+            margin: 5px 0;
+            width: 100%;
+        }
+
+        .amount-due {
+            font-weight: bold;
+        }
+
+        .footer {
+            font-size: 12px;
+            color: #777;
+            margin-top: 20px;
+            border-top: 1px solid #ddd;
+            padding-top: 10px;
+        }
+
+        .margin-top {
+            padding-top: 8px;
+            display: block;
+        }
+
+        .credit-note-list {
+            margin-top: 16px;
+            padding: 12px 16px;
+            background: #f8fafc;
+            border: 1px solid #e4e7ec;
+            border-radius: 12px;
+        }
+
+        .credit-note-list h2 {
+            margin: 0 0 10px;
+            font-size: 16px;
+        }
+
+        .credit-note-entry {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 6px 0;
+            border-bottom: 1px solid #e4e7ec;
+        }
+
+        .credit-note-entry:last-child {
+            border-bottom: 0;
+        }
+    </style>
+</head>
+<body>
+<div class="invoice-container">
+
+    <!-- Logo, Offer Reference and Dates -->
+    <div class="top-header">
+        <div class="logo-and-meta">
+            {% if logo_path %}
+            <img src="{{ logo_path }}" alt="Company Logo" class="company-logo" />
+            {% endif %}
+            <div class="offer-meta">
+                {% if offer_reference %}
+                <p><strong>Offer ref.: {{ offer_reference }}</strong></p>
+                {% endif %}
+                <p>Date of issue: <strong>{{ issue_date }}</strong></p>
+                <p>Due date: <strong>{{ due_date }}</strong></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Invoice Title -->
+    <h1>{{ document_label }}</h1>
+
+    <!-- Invoice Header -->
+    <div class="invoice-header">
+        <!-- Left Column: Invoice Details & Sender -->
+        <div class="company-info">
+            <p><strong>{{ document_label }} #{{ reference_number }}</strong></p>
+            {% if project_name %}
+                <p>Project: <strong>{{ project_name }}</strong></p>
+            {% endif %}
+            {% if purchase_order_reference %}
+                <p>Purchase Order: <strong>{{ purchase_order_reference }}</strong></p>
+            {% endif %}
+            {% if collaborator_names %}
+                <p>Collaborator{% if collaborator_names|length > 1 %}s{% endif %}: <strong>{{ collaborator_names|join:", " }}</strong></p>
+            {% endif %}
+            {% if source_invoice_reference %}
+                <p>Linked Invoice: <strong>{{ source_invoice_reference }}</strong></p>
+            {% endif %}
+            {% if linked_credit_notes %}
+                <p>Credit Note{% if linked_credit_notes|length > 1 %}s{% endif %}: <strong>{% for credit_note in linked_credit_notes %}{{ credit_note.reference_number }}{% if not forloop.last %}, {% endif %}{% endfor %}</strong></p>
+            {% endif %}
+            <br/>
+            <p><strong>Bank Details:</strong></p>
+            <p>{{ bank_details.bank_name }}</p>
+            {% if bank_details.bank_iban %}
+                <p>{{ bank_details.bank_iban }}</p>
+            {% endif %}
+            <p>{{ bank_details.bank_bic }}</p>
+            <p>{{ bank_details.bank_address }}</p>
+            {% if bank_details.bank_city %}
+                <p>{{ bank_details.bank_city }}</p>
+            {% endif %}
+
+        </div>
+
+        <!-- Right Column: Client Details -->
+        <div class="client-info">
+            <div class="issuer-section">
+                <p><strong>Company information</strong></p>
+                {% if company_name %}
+                    <p><strong>{{ company_name }}</strong></p>
+                {% endif %}
+                {% if address %}
+                    <p>{{ address }}</p>
+                {% endif %}
+                {% if city %}
+                    <p>{{ city }}</p>
+                {% endif %}
+                {% if country %}
+                    <p>{{ country }}</p>
+                {% endif %}
+            </div>
+
+            <div class="issuer-section">
+                <p><strong>Contact information</strong></p>
+                {% if company_contact_person %}
+                    <p>{{ company_contact_person }}</p>
+                {% endif %}
+                {% if company_contact_email %}
+                    <p>{{ company_contact_email }}</p>
+                {% endif %}
+                {% if company_contact_phone %}
+                    <p>{{ company_contact_phone }}</p>
+                {% endif %}
+            </div>
+
+            <p><strong>Bill To:</strong></p>
+            {% if recipient_company_name %}
+                <p>{{ recipient_company_name }}</p>
+            {% elif recipient_name or surname %}
+                <p>{{ recipient_name }} {{ surname }}</p>
+            {% endif %}
+            <p>{{ recipient_address }}</p>
+            <p>{{ recipient_town }}</p>
+            <p>{{ recipient_country }}</p>
+            <p>{{ recipient_number }}</p>
+            {% if recipient_vat_no %}
+                <p>VAT: {{ recipient_vat_no }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Invoice Items Table - Exact Match Layout -->
+    <table class="line-items-table">
+        <tr>
+            <th class="description-cell">Services &amp; Products</th>
+            <th class="qty-cell">Qty</th>
+            <th class="price-cell">Unit price</th>
+            <th class="vat-cell">VAT %</th>
+            <th class="amount-cell">Amount</th>
+        </tr>
+        {% for item in line_items %}
+            <tr>
+                <td class="description-cell">
+                    {{ item.description }}
+                    {% if item.date_range %}
+                        <span class="date-range">{{ item.date_range }}</span>
+                    {% endif %}
+                </td>
+                <td class="qty-cell">{{ item.quantity }}</td>
+                <td class="price-cell">{{ item.rate }}</td>
+                <td class="vat-cell">
+                    {% if item.vat_rate is not None %}
+                        {{ item.vat_rate }}%
+                    {% endif %}
+                </td>
+                <td class="amount-cell">
+                    {{ item.total }}
+                    {% if item.vat_amount %}
+                        ({{ item.vat_amount }})
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        {% if linked_credit_notes %}
+            {% for credit_note in linked_credit_notes %}
+                <tr>
+                    <td class="description-cell">
+                        Credit note deduction {{ credit_note.reference_number }}
+                        <span class="date-range">{{ credit_note.invoice_date }}</span>
+                        {% if credit_note.notes %}
+                            <span class="date-range">{{ credit_note.notes }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="qty-cell">1</td>
+                    <td class="price-cell">{{ credit_note.grand_total }}</td>
+                    <td class="vat-cell">-</td>
+                    <td class="amount-cell">{{ credit_note.grand_total }}</td>
+                </tr>
+            {% endfor %}
+        {% endif %}
+    </table>
+
+    <!-- Totals - Exact Match Layout -->
+    <div class="totals-section">
+        <div class="totals-row">
+            <div class="totals-label">Subtotal</div>
+            <div class="totals-amount">{{ subtotal }}</div>
+        </div>
+
+        <div class="totals-row">
+            <div class="totals-label">
+                VAT{% if vat_rate %} ({{ vat_rate }}%){% endif %}
+            </div>
+            <div class="totals-amount">{{ vat_amount }}</div>
+        </div>
+
+        <div class="totals-row">
+            <div class="totals-label">Total</div>
+            <div class="totals-amount">{{ grand_total }}</div>
+        </div>
+
+        {% if linked_credit_notes %}
+            <div class="totals-row">
+                <div class="totals-label">Credit Notes</div>
+                <div class="totals-amount">{{ total_credit_notes_amount }}</div>
+            </div>
+
+            <div class="totals-row amount-due">
+                <div class="totals-label">Net Total</div>
+                <div class="totals-amount">{{ net_total_after_credit_notes }}</div>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        {% if footer_company_name or footer_company_type or footer_company_capital or footer_company_reg_no or footer_company_tax_no %}
+            <p>
+                {% if footer_company_name %}{{ footer_company_name }}{% endif %}
+                {% if footer_company_type %} | {{ footer_company_type }}{% endif %}
+                {% if footer_company_capital %} | {{ footer_company_capital }}{% endif %}
+                {% if footer_company_reg_no %} | Company registration N° {{ footer_company_reg_no }}{% endif %}
+                {% if footer_company_tax_no %} | Company Tax N° {{ footer_company_tax_no }}{% endif %}
+            </p>
+        {% endif %}
+        <p>Notes: {{ notes }}</p>
+    </div>
+
+</div>
+</body>
+</html>

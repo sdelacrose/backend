@@ -1,0 +1,29 @@
+[
+  {
+    "url": "/api/project_management/action_items/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/action_items/",
+    "method": "POST",
+    "payload_name": "action_items_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/project_management/action_items/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/action_items/{id}/",
+    "method": "PATCH",
+    "payload_name": "action_items_patch_payload",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/action_items/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

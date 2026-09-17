@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Offer {{ offer_reference }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 18mm 16mm 24mm;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            color: #263238;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 10.5pt;
+            line-height: 1.45;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            gap: 28px;
+            padding-bottom: 18px;
+            border-bottom: 2px solid #d8dee3;
+        }
+
+        .document-heading,
+        .party-details {
+            width: 48%;
+        }
+
+        .company-logo {
+            display: block;
+            max-width: 145px;
+            max-height: 70px;
+            margin-bottom: 16px;
+            object-fit: contain;
+        }
+
+        h1 {
+            margin: 0 0 10px;
+            color: #17242c;
+            font-size: 28pt;
+            font-weight: 600;
+        }
+
+        h2 {
+            margin: 0 0 5px;
+            color: #17242c;
+            font-size: 10pt;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        p {
+            margin: 2px 0;
+        }
+
+        .meta-label {
+            display: inline-block;
+            min-width: 102px;
+            margin-right: 6px;
+            color: #66747d;
+        }
+
+        .party-details {
+            text-align: right;
+        }
+
+        .party-block + .party-block {
+            margin-top: 15px;
+        }
+
+        .offer-summary {
+            margin: 24px 0 12px;
+        }
+
+        .offer-summary h2 {
+            font-size: 16pt;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .offer-description {
+            color: #53616a;
+            white-space: pre-wrap;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 18px;
+        }
+
+        th {
+            padding: 9px 7px;
+            border-bottom: 1px solid #263238;
+            color: #53616a;
+            font-size: 9pt;
+            font-weight: 600;
+            text-align: left;
+            text-transform: uppercase;
+        }
+
+        td {
+            padding: 13px 7px;
+            border-bottom: 1px solid #e3e7ea;
+            vertical-align: top;
+        }
+
+        tr {
+            page-break-inside: avoid;
+        }
+
+        .number {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .description-column {
+            width: 28%;
+        }
+
+        .totals {
+            width: 46%;
+            margin: 18px 0 0 auto;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+        }
+
+        .total-row.final {
+            margin-top: 4px;
+            padding-top: 9px;
+            border-top: 1px solid #263238;
+            font-size: 12pt;
+            font-weight: 700;
+        }
+
+        .signatures {
+            display: flex;
+            justify-content: space-between;
+            gap: 24px;
+            margin-top: 24px;
+            page-break-inside: avoid;
+        }
+
+        .signature-box {
+            width: 48%;
+            min-height: 70px;
+            padding-top: 8px;
+            border-top: 1px solid #aeb8be;
+        }
+
+        .signature-title {
+            font-weight: 600;
+        }
+
+        .signature-note {
+            margin-top: 5px;
+            color: #66747d;
+            font-size: 9pt;
+        }
+
+        .footer {
+            position: fixed;
+            right: 0;
+            bottom: -15mm;
+            left: 0;
+            padding-top: 7px;
+            border-top: 1px solid #d8dee3;
+            color: #66747d;
+            font-size: 8.5pt;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <section class="document-heading">
+            {% if logo_path %}
+                <img class="company-logo" src="{{ logo_path }}" alt="Company logo">
+            {% endif %}
+            <h1>Offer</h1>
+            <p><span class="meta-label">Offer ref.:</span><strong>{{ offer_reference }}</strong></p>
+            <p><span class="meta-label">Date of issue:</span>{{ issue_date }}</p>
+            <p><span class="meta-label">Offer expiry date :</span>{{ sign_before }}</p>
+        </section>
+
+        <section class="party-details">
+            <div class="party-block">
+                <h2>Company information</h2>
+                {% if company_name %}<p><strong>{{ company_name }}</strong></p>{% endif %}
+                {% if company_address %}<p>{{ company_address }}</p>{% endif %}
+                {% if company_city %}<p>{{ company_city }}</p>{% endif %}
+                {% if company_country %}<p>{{ company_country }}</p>{% endif %}
+            </div>
+
+            <div class="party-block">
+                <h2>Contact information</h2>
+                {% if contact_name %}<p>{{ contact_name }}</p>{% endif %}
+                {% if contact_email %}<p>{{ contact_email }}</p>{% endif %}
+                {% if contact_phone %}<p>{{ contact_phone }}</p>{% endif %}
+            </div>
+
+            <div class="party-block">
+                <h2>Bill to</h2>
+                {% if recipient_company_name %}
+                    <p><strong>{{ recipient_company_name }}</strong></p>
+                {% elif recipient_name %}
+                    <p><strong>{{ recipient_name }}</strong></p>
+                {% endif %}
+                {% if recipient_address %}<p>{{ recipient_address }}</p>{% endif %}
+                {% if recipient_city %}<p>{{ recipient_city }}</p>{% endif %}
+                {% if recipient_country %}<p>{{ recipient_country }}</p>{% endif %}
+                {% if recipient_phone %}<p>{{ recipient_phone }}</p>{% endif %}
+                {% if recipient_vat_number %}<p>VAT: {{ recipient_vat_number }}</p>{% endif %}
+            </div>
+        </section>
+    </header>
+
+    <section class="offer-summary">
+        <h2>{{ offer_title }}</h2>
+        {% if offer_description %}<p class="offer-description">{{ offer_description }}</p>{% endif %}
+    </section>
+
+    <table>
+        <thead>
+            <tr>
+                <th class="description-column">Services &amp; Products</th>
+                <th class="number">Qty</th>
+                <th class="number">Unit price</th>
+                <th class="number">VAT %</th>
+                <th class="number">Total excl. VAT</th>
+                <th class="number">VAT amount</th>
+                <th class="number">Total incl. VAT</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in line_items %}
+            <tr>
+                <td>{{ item.description }}</td>
+                <td class="number">{{ item.quantity }}</td>
+                <td class="number">{{ item.unit_price }}</td>
+                <td class="number">{{ item.vat_rate }}</td>
+                <td class="number">{{ item.amount_excl_vat }}</td>
+                <td class="number">{{ item.vat_amount }}</td>
+                <td class="number">{{ item.amount_incl_vat }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <section class="totals">
+        <div class="total-row"><span>Subtotal excl. VAT</span><span>{{ subtotal }}</span></div>
+        <div class="total-row"><span>VAT amount</span><span>{{ vat_amount }}</span></div>
+        <div class="total-row final"><span>Total incl. VAT</span><span>{{ total }}</span></div>
+    </section>
+
+    <section class="signatures">
+        <div class="signature-box">
+            <p class="signature-title">Company signature and stamp</p>
+        </div>
+        <div class="signature-box">
+            <p class="signature-title">Client signature</p>
+            <p class="signature-note">Read and approved, good for execution.</p>
+        </div>
+    </section>
+
+    {% if footer_company_name or footer_company_registration_number or footer_company_tax_number %}
+        <footer class="footer">
+            {% if footer_company_name %}{{ footer_company_name }}{% endif %}
+            {% if footer_company_registration_number %} | Company Registration No. {{ footer_company_registration_number }}{% endif %}
+            {% if footer_company_tax_number %} | Company Tax No. {{ footer_company_tax_number }}{% endif %}
+        </footer>
+    {% endif %}
+</body>
+</html>

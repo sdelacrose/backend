@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@100;200;300;400;500;600;700;800;900&display=swap"
+          rel="stylesheet">
+    <title>Site Visit Report</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 4mm;
+        }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            margin: 0;
+            padding: 15px;
+            background-color: #fff;
+            color: #333;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+	        position: relative;
+        }
+
+        .header img {
+            max-height: 60px;
+            object-fit: contain;
+        }
+
+        h2 {
+            text-align: center;
+            color: #2C3E50;
+            font-size: 26px;
+            margin-bottom: 10px;
+      		position: absolute;
+			left: 39%
+        }
+
+        .section-title {
+            text-align: center;
+            font-size: 22px;
+            font-weight: bold;
+            margin-bottom: 15px;
+            border-bottom: 3px solid #2C3E50;
+            padding-bottom: 5px;
+            display: block;
+            margin-top: 24px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+            background-color: #fff;
+            border: 1px solid #ddd;
+        }
+
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #2C3E50;
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8f8f8;
+        }
+
+        .info-section {
+            margin-bottom: 15px;
+            padding: 12px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        .info-section h3 {
+            color: #2C3E50;
+            font-size: 20px;
+            margin-bottom: 8px;
+            border-left: 4px solid #2980B9;
+            padding-left: 8px;
+        }
+
+        .info-section ul {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        .info-section ul li {
+            padding: 5px 0;
+            font-size: 16px;
+        }
+
+        .observation {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        .observation h3 {
+            color: #2C3E50;
+            font-size: 20px;
+            margin-bottom: 8px;
+            border-left: 4px solid #2980B9;
+            padding-left: 8px;
+        }
+
+        ul {
+            padding-left: 20px;
+            line-height: 1.6;
+        }
+
+        .images {
+            margin-top: 15px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .images div {
+            flex: 1 1 30%;
+            text-align: center;
+            padding: 10px;
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+        }
+
+        .images img {
+            max-width: 100%;
+            max-height: 100px;
+            display: block;
+            margin: auto;
+            border-radius: 4px;
+            object-fit: cover;
+        }
+
+        .images p {
+            margin-top: 5px;
+            font-size: 13px;
+            font-weight: bold;
+            color: #34495E;
+        }
+
+        @media print {
+            body {
+                background: none;
+                padding: 10mm;
+            }
+
+            .images img {
+                max-height: 150px;
+            }
+
+            .observation {
+                page-break-before: always;
+            }
+        }
+    </style>
+</head>
+
+<body>
+<div class="header">
+    <img src="https://staging-sharemundo.s3.eu-west-3.amazonaws.com/Logo+Links+White+Background+(1).png"
+         alt="Solution Logo">
+    <h2>Site Visit Report</h2>
+    {% if company_logo %}
+        <img src="{{ company_logo }}" alt="Company Logo">
+    {% endif %}
+</div>
+
+<h3 class="section-title">{{ project_name }}</h3>
+
+<table>
+    <tr>
+        <th>Visit Date</th>
+        <th>Observer</th>
+        <th>Weather Conditions</th>
+        <th>Created On</th>
+        <th>Last Updated</th>
+    </tr>
+    <tr>
+        <td>{{ date }}</td>
+        <td>{{ observer }}</td>
+        <td>{{ weather_condition }}</td>
+        <td>{{ created_at }}</td>
+        <td>{{ updated_at }}</td>
+    </tr>
+</table>
+
+<div class="info-section">
+    <h3>Attendees</h3>
+    <ul>
+        {% for present in presents %}
+            <li>{{ present }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="info-section">
+    <h3>Distribution List</h3>
+    <ul>
+        {% for distribution in distributions %}
+            <li>{{ distribution }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<div class="info-section">
+    <h3>Location/Coordinates</h3>
+    <ul>
+        <li>{{ location }}</li>
+    </ul>
+</div>
+
+<div class="observation">
+    {% for observation in observations %}
+        <h3>Observation {{ forloop.counter }}</h3>
+        <ul>
+            <li><strong>Observation:</strong> {{ observation.observation }}</li>
+            <li><strong>Role:</strong> {{ observation.role }}</li>
+            <li><strong>Rectification:</strong> {{ observation.rectification }}</li>
+            <li><strong>Contractors:</strong> {{ observation.contractor }}</li>
+            <li><strong>Deadline:</strong> {{ observation.deadline }}</li>
+            <li><strong>Agreed:</strong> {{ observation.agreed }}</li>
+        </ul>
+
+      <div class="images">
+    {% for p_index, photo_url in observation.photos %}
+        <div>
+            <img src="{{ photo_url }}" alt="Image {{ p_index }}">
+            <p>Image {{ p_index }}</p>
+        </div>
+    {% endfor %}
+</div>
+        {% if observation.other_files %}
+    <div class="info-section">
+        <h3>Attached Files</h3>
+        <ul>
+            {% for f_index, file_url in observation.other_files %}
+                <li>
+                    <a href="{{ file_url }}" target="_blank" style="display:inline-block; padding:6px 12px; background:#2980B9; color:#fff; text-decoration:none; border-radius:4px;">
+                        Download File {{ f_index }}
+                    </a>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+{% endif %}
+
+    {% endfor %}
+</div>
+</body>
+
+</html>

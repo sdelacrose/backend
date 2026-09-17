@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Invoice Overdue Reminder</title>
+        <style>
+            @import url("https://fonts.googleapis.com/css2?family=Muli:wght@400;600&display=swap");
+            body {
+                font-family: "Muli", sans-serif;
+                margin: 0;
+                padding: 0;
+                background-color: #f8f9fc;
+                color: #333;
+                height: 100%;
+            }
+
+            .email-container {
+                display: flex;
+                max-width: 1200px;
+                margin: 20px auto;
+                background: #ffffff;
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+                overflow: hidden;
+                height: 100%;
+            }
+
+            /* Sidebar table styling */
+            #email-sidebar-table {
+                min-width: 250px;
+                max-width: 250px;
+                background-color: #0057b7;
+                color: #ffffff;
+            }
+
+            #email-sidebar-table {
+                width: 100%;
+                height: auto;
+                min-height: 100%;
+            }
+
+            .sidebar-logo {
+                padding: 30px 10px 20px;
+                text-align: center;
+            }
+
+            .sidebar-logo img {
+                max-width: 150px;
+                display: block;
+                margin: 0 auto 20px;
+            }
+
+            .sidebar-footer {
+                padding: 10px 10px 30px;
+                text-align: center;
+                font-size: 13px;
+                color: #ffffff;
+            }
+
+            .sidebar-footer a {
+                color: #ffffff;
+                text-decoration: underline;
+                margin: 0 4px;
+                font-size: 13px;
+            }
+
+            .email-sidebar img {
+                max-width: 150px;
+                margin-bottom: 20px;
+            }
+            .email-body {
+                flex: 1;
+                padding: 20px;
+            }
+            .email-body h1 {
+                font-size: 15px;
+                margin-bottom: 10px;
+                color: #54595f;
+            }
+            .email-body p {
+                font-size: 15px;
+                line-height: 1.5;
+                color: #54595f;
+            }
+            .email-body table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 20px 0;
+                text-align: left;
+            }
+            .email-body table th,
+            .email-body table td {
+                font-size: 15px;
+                padding: 10px;
+                border: 1px solid #ddd;
+            }
+            .email-body table th {
+                font-size: 15px;
+                background-color: #f4f4f4;
+                font-weight: bold;
+            }
+            .email-body table tbody tr:nth-child(even) {
+                background-color: #f9f9f9;
+            }
+            .email-footer {
+                padding: 15px;
+                text-align: center;
+                font-size: 15px;
+                color: #777;
+                background: #f1f1f1;
+            }
+            .btn {
+                display: inline-block;
+                margin: 10px 0;
+                padding: 10px 20px;
+                background: #0057b7;
+                color: #ffffff !important;
+                text-decoration: none;
+                border-radius: 35px;
+                font-weight: bold;
+                text-align: center;
+            }
+            .btn:hover {
+                color: #ffffff;
+                background: #009cbd;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <table
+                role="presentation"
+                cellpadding="0"
+                cellspacing="0"
+                border="0"
+                id="email-sidebar-table"
+            >
+                <tr>
+                    <td class="sidebar-logo">
+                        <img
+                            src="https://staging-sharemundo.s3.eu-west-3.amazonaws.com/Logo+Links+White+Background+(1).png"
+                            alt="sharemundo Logo"
+                        />
+                    </td>
+                </tr>
+                <tr>
+                    <td height="100%">&nbsp;</td>
+                </tr>
+                <tr>
+                    <td class="sidebar-footer">
+                        <a
+                            href="https://sharemundo.com/en/cgv-terms-conditions-sharemundolinks/"
+                            target="_blank"
+                            >Terms of Use</a
+                        >
+                        |
+                        <a
+                            href="https://sharemundo.com/en/protection-donnees-sharemundolinks/"
+                            target="_blank"
+                            >Privacy Policy</a
+                        >
+                    </td>
+                </tr>
+            </table>
+
+            <div class="email-body">
+                <h1>Dear {{ contact_name }},</h1>
+                <p>
+                    This is a reminder that invoice
+                    <strong>#{{ invoice_no }}</strong> remains unpaid. The
+                    invoice was due on <strong>{{ due_date }}</strong> and is
+                    now <strong>{{ days_overdue }} days</strong> overdue.
+                </p>
+                <p>The outstanding amount is <strong>{{ amount }}</strong>.</p>
+                <p>
+                    Please ensure the payment is made to avoid any delays in
+                    service.
+                </p>
+                <p><a href="{{ invoice_url }}" class="btn">View Invoice</a></p>
+                <p>
+                    If the payment has already been made, could you please
+                    provide the payment details?
+                </p>
+                <p>Thank you for your attention to this matter.</p>
+                <div class="email-footer">
+                    Best regards<br />
+                    <strong>sharemundo team</strong>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

@@ -1,0 +1,62 @@
+ARG PYTHON_VERSION=3.10.19
+FROM python:${PYTHON_VERSION}-slim-bookworm
+
+ARG TIKA_VERSION=3.2.1
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV TIKA_JAR=/opt/tika/tika-app.jar
+ENV TMPDIR=/tmp/document-indexing
+
+WORKDIR /app
+
+RUN set -eux; \
+    mkdir -p "$TMPDIR" /tmp/project-content; \
+    chmod 1777 "$TMPDIR" /tmp/project-content; \
+    export DEBIAN_FRONTEND=noninteractive; \
+    for attempt in 1 2 3; do \
+      apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=30 && \
+      apt-get install -y --no-install-recommends --fix-missing \
+        curl \
+        default-jre-headless \
+        file \
+        ghostscript \
+        libmagic1 \
+        libreoffice-writer \
+        ocrmypdf \
+        qpdf \
+        tesseract-ocr \
+        tesseract-ocr-deu \
+        tesseract-ocr-eng \
+        tesseract-ocr-fra && break; \
+      if [ "$attempt" -eq 3 ]; then \
+        exit 1; \
+      fi; \
+      rm -rf /var/lib/apt/lists/*; \
+      sleep 5; \
+    done; \
+    mkdir -p /opt/tika; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      "https://archive.apache.org/dist/tika/${TIKA_VERSION}/tika-app-${TIKA_VERSION}.jar" -o "$TIKA_JAR"; \
+    expected_tika_sha="$(curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
+      "https://archive.apache.org/dist/tika/${TIKA_VERSION}/tika-app-${TIKA_VERSION}.jar.sha512")"; \
+    actual_tika_sha="$(sha512sum "$TIKA_JAR" | cut -d ' ' -f 1)"; \
+    test "$expected_tika_sha" = "$actual_tika_sha"; \
+    apt-get clean; \
+    rm -rf /var/lib/apt/lists/*
+
+COPY admin-server-models/ /admin-server-models
+RUN pip install --no-cache-dir -e /admin-server-models
+
+COPY backend/requirements.txt /app/requirements.txt
+COPY backend/requirements.document-worker.txt /app/requirements.document-worker.txt
+RUN pip install --no-cache-dir -r requirements.document-worker.txt
+
+COPY backend/ /app
+
+RUN useradd --create-home --uid 10001 document-worker \
+    && chown -R document-worker:document-worker /app "$TMPDIR" /tmp/project-content
+
+USER document-worker
+
+CMD ["celery", "-A", "ecpmpapp", "worker", "--loglevel=info", "--queues=document_indexing", "--concurrency=1"]

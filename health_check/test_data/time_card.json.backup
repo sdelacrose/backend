@@ -1,0 +1,23 @@
+[
+  {
+    "url": "/api/project_management/time-card/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/time-card/",
+    "method": "POST",
+    "payload_name": "time_card_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/project_management/time-card/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/time-card/{id}/",
+    "method": "DELETE",
+    "expected_status": 204
+  }
+]

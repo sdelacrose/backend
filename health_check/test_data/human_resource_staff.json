@@ -1,0 +1,33 @@
+[
+  {
+    "url": "/api/human_resource_management/staff/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/human_resource_management/staff/",
+    "method": "POST",
+    "expected_status": 405
+  },
+  {
+    "url": "/api/human_resource_management/staff/export_staff/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/human_resource_management/staff/export_staff_project_kpis/",
+    "method": "GET",
+    "expected_status": 400
+  },
+  {
+    "url": "/api/human_resource_management/staff/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/human_resource_management/staff/{id}/",
+    "method": "PATCH",
+    "payload_name": "staff_partial_update_payload",
+    "expected_status": 200
+  }
+]

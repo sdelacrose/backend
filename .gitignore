@@ -1,0 +1,17 @@
+venv/
+backend-env/
+**/.DS_Store
+**/__pycache__
+**/.backend-env
+**/.classpath
+static/
+staticfiles/
+.env*
+.idea/
+!static/logo.png
+*.log
+matrix/data/
+secrets/ 
+/media/
+/test-reports/
+/docs/

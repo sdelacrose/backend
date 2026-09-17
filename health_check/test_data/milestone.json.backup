@@ -1,0 +1,24 @@
+[
+  {
+    "url": "/api/project_management/milestone/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/milestone/",
+    "method": "POST",
+    "payload_name": "milestone_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/project_management/milestone/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/milestone/{id}/",
+    "method": "PATCH",
+    "payload_name": "milestone_patch_payload",
+    "expected_status": 200
+  }
+]

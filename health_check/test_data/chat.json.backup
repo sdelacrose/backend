@@ -1,0 +1,14 @@
+[
+  {
+    "url": "/api/chat/chatrooms/",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "chat_chatrooms_list"
+  },
+  {
+    "url": "/api/chat/messages/",
+    "method": "GET",
+    "expected_status": 200,
+    "description": "chat_messages_list"
+  }
+]

@@ -1,0 +1,612 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ecpmp-app
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: ecpmp-app
+  template:
+    metadata:
+      labels:
+        app: ecpmp-app
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+      - name: ecpmp-app
+        image: ECR_IMAGE
+        env:
+        - name: DB_NAME
+          value: "DB_NAME"
+        - name: DB_USER
+          value: "DB_USER"
+        - name: DB_PASSWORD
+          value: "DB_PASSWORD"
+        - name: DB_HOST
+          value: "DB_HOST"
+        - name: DB_PORT
+          value: "DB_PORT"
+        - name: AUTH0_SECRET
+          value: "AUTH0_SECRET"
+        - name: AUTH0_ISSUER_BASE_URL
+          value: "AUTH0_ISSUER_BASE_URL"
+        - name: AUTH0_CLIENT_ID
+          value: "AUTH0_CLIENT_ID"
+        - name: AUTH0_CLIENT_SECRET
+          value: "AUTH0_CLIENT_SECRET"
+        - name: AWS_ACCESS_KEY_ID
+          value: "AWS_ACCESS_KEY_ID"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "AWS_SECRET_ACCESS_KEY"
+        - name: AWS_STORAGE_BUCKET_NAME
+          value: "AWS_STORAGE_BUCKET_NAME"
+        - name: DJANGO_SETTINGS_MODULE
+          value: "DJANGO_SETTINGS_MODULE"
+        - name: AZURE_CLIENT_ID
+          value: "AZURE_CLIENT_ID"
+        - name: AZURE_TENANT_ID
+          value: "AZURE_TENANT_ID"
+        - name: AZURE_CLIENT_SECRET
+          value: "AZURE_CLIENT_SECRET"
+        - name: BACKEND_URL
+          value: "BACKEND_URL"
+        - name: CELERY_ENV
+          value: "CELERY_ENV"
+        - name: EMAIL_HOST_USER
+          value: "EMAIL_HOST_USER"
+        - name: EMAIL_HOST_PASSWORD
+          value: "EMAIL_HOST_PASSWORD"
+        - name: FRONTEND_URL
+          value: "FRONTEND_URL"
+        - name: AUTH0_DOMAIN
+          value: "AUTH0_DOMAIN"
+        - name: AUTH0_AUDIENCE
+          value: "AUTH0_AUDIENCE"
+        - name: AUTH0_M2M_CLIENT_ID
+          value: "AUTH0_M2M_CLIENT_ID"
+        - name: AUTH0_M2M_CLIENT_SECRET
+          value: "AUTH0_M2M_CLIENT_SECRET"
+        - name: API_SECRET_KEY
+          value: "API_SECRET_KEY"
+        - name: PRODUCT_NAME
+          value: "PRODUCT_NAME"
+        - name: MS_TENANT_ID
+          value: "MS_TENANT_ID"
+        - name: MS_REDIRECT_URI
+          value: "MS_REDIRECT_URI"
+        - name: ENV
+          value: "ENV"
+        - name: MATRIX_ENABLED
+          value: "MATRIX_ENABLED"
+        - name: MATRIX_BASE_URL
+          value: "MATRIX_BASE_URL"
+        - name: MATRIX_ACCESS_TOKEN
+          value: "MATRIX_ACCESS_TOKEN"
+        - name: MATRIX_REQUEST_TIMEOUT
+          value: "MATRIX_REQUEST_TIMEOUT"
+        - name: MATRIX_RETRY_ATTEMPTS
+          value: "MATRIX_RETRY_ATTEMPTS"
+        - name: MATRIX_READ_FROM_PROVIDER
+          value: "MATRIX_READ_FROM_PROVIDER"
+        - name: CHAT_PUSH_NOTIFICATIONS_ENABLED
+          value: "CHAT_PUSH_NOTIFICATIONS_ENABLED"
+        - name: CHAT_PUSH_USE_CELERY
+          value: "CHAT_PUSH_USE_CELERY"
+        - name: FIREBASE_SERVICE_ACCOUNT_JSON_BASE64
+          value: "FIREBASE_SERVICE_ACCOUNT_JSON_BASE64"
+        - name: FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY
+          value: "FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY"
+        - name: FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY
+          value: "FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY"
+        - name: AI_TOOLS_SERVICE_API_KEY
+          value: "AI_TOOLS_SERVICE_API_KEY"
+        - name: PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL
+          value: "PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL"
+        - name: PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY
+          value: "PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY"
+        - name: LINKS_AI_CONTRACT_VERSION
+          value: "LINKS_AI_CONTRACT_VERSION"
+        - name: GIT_SHA
+          value: "GIT_SHA"
+        - name: IMAGE_VERSION
+          value: "IMAGE_VERSION"
+        ports:
+        - containerPort: 8000
+        startupProbe:
+          tcpSocket:
+            port: 8000
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 60
+        readinessProbe:
+          httpGet:
+            path: /health/ready/
+            port: 8000
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health/live/
+            port: 8000
+          periodSeconds: 20
+          timeoutSeconds: 2
+          failureThreshold: 6
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      containers:
+      - name: celery-worker
+        image: ECR_IMAGE
+        command: ["celery", "-A", "ecpmpapp", "worker", "--loglevel=info", "--queues=celery,business_search_indexing,product_assembly_extraction"]
+        env:
+        - name: DB_NAME
+          value: "DB_NAME"
+        - name: DB_USER
+          value: "DB_USER"
+        - name: DB_PASSWORD
+          value: "DB_PASSWORD"
+        - name: DB_HOST
+          value: "DB_HOST"
+        - name: DB_PORT
+          value: "DB_PORT"
+        - name: AUTH0_SECRET
+          value: "AUTH0_SECRET"
+        - name: AUTH0_ISSUER_BASE_URL
+          value: "AUTH0_ISSUER_BASE_URL"
+        - name: AUTH0_CLIENT_ID
+          value: "AUTH0_CLIENT_ID"
+        - name: AUTH0_CLIENT_SECRET
+          value: "AUTH0_CLIENT_SECRET"
+        - name: AWS_ACCESS_KEY_ID
+          value: "AWS_ACCESS_KEY_ID"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "AWS_SECRET_ACCESS_KEY"
+        - name: AWS_STORAGE_BUCKET_NAME
+          value: "AWS_STORAGE_BUCKET_NAME"
+        - name: DJANGO_SETTINGS_MODULE
+          value: "DJANGO_SETTINGS_MODULE"
+        - name: AZURE_CLIENT_ID
+          value: "AZURE_CLIENT_ID"
+        - name: AZURE_TENANT_ID
+          value: "AZURE_TENANT_ID"
+        - name: AZURE_CLIENT_SECRET
+          value: "AZURE_CLIENT_SECRET"
+        - name: BACKEND_URL
+          value: "BACKEND_URL"
+        - name: CELERY_ENV
+          value: "CELERY_ENV"
+        - name: EMAIL_HOST_USER
+          value: "EMAIL_HOST_USER"
+        - name: EMAIL_HOST_PASSWORD
+          value: "EMAIL_HOST_PASSWORD"
+        - name: FRONTEND_URL
+          value: "FRONTEND_URL"
+        - name: AUTH0_DOMAIN
+          value: "AUTH0_DOMAIN"
+        - name: AUTH0_AUDIENCE
+          value: "AUTH0_AUDIENCE"
+        - name: AUTH0_M2M_CLIENT_ID
+          value: "AUTH0_M2M_CLIENT_ID"
+        - name: AUTH0_M2M_CLIENT_SECRET
+          value: "AUTH0_M2M_CLIENT_SECRET"
+        - name: PRODUCT_NAME
+          value: "PRODUCT_NAME"
+        - name: API_SECRET_KEY
+          value: "API_SECRET_KEY"
+        - name: MS_TENANT_ID
+          value: "MS_TENANT_ID"
+        - name: MS_REDIRECT_URI
+          value: "MS_REDIRECT_URI"
+        - name: ENV
+          value: "ENV"
+        - name: MATRIX_ENABLED
+          value: "MATRIX_ENABLED"
+        - name: MATRIX_BASE_URL
+          value: "MATRIX_BASE_URL"
+        - name: MATRIX_ACCESS_TOKEN
+          value: "MATRIX_ACCESS_TOKEN"
+        - name: MATRIX_REQUEST_TIMEOUT
+          value: "MATRIX_REQUEST_TIMEOUT"
+        - name: MATRIX_RETRY_ATTEMPTS
+          value: "MATRIX_RETRY_ATTEMPTS"
+        - name: MATRIX_READ_FROM_PROVIDER
+          value: "MATRIX_READ_FROM_PROVIDER"
+        - name: CHAT_PUSH_NOTIFICATIONS_ENABLED
+          value: "CHAT_PUSH_NOTIFICATIONS_ENABLED"
+        - name: CHAT_PUSH_USE_CELERY
+          value: "CHAT_PUSH_USE_CELERY"
+        - name: FIREBASE_SERVICE_ACCOUNT_JSON_BASE64
+          value: "FIREBASE_SERVICE_ACCOUNT_JSON_BASE64"
+        - name: FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY
+          value: "FIREBASE_WEB_PUSH_PUBLIC_VAPID_KEY"
+        - name: FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY
+          value: "FIREBASE_WEB_PUSH_PRIVATE_VAPID_KEY"
+        - name: PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL
+          value: "PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_URL"
+        - name: PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY
+          value: "PRODUCT_ASSEMBLY_EXTRACTION_SERVICE_KEY"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:latest
+        ports:
+        - containerPort: 6379
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: django-management-command-job
+spec:
+  schedule: "0 0 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: django-management-command
+              image: ECR_IMAGE
+              command: ["/bin/sh", "-c"]
+              args: ["python manage.py send_reminders_for_milestone; python manage.py send_open_invoice_reminder; python manage.py send_reminders_for_expiring_po;"]
+              env:
+                - name: DB_NAME
+                  value: "DB_NAME"
+                - name: DB_USER
+                  value: "DB_USER"
+                - name: DB_PASSWORD
+                  value: "DB_PASSWORD"
+                - name: DB_HOST
+                  value: "DB_HOST"
+                - name: DB_PORT
+                  value: "DB_PORT"
+                - name: AUTH0_SECRET
+                  value: "AUTH0_SECRET"
+                - name: AUTH0_ISSUER_BASE_URL
+                  value: "AUTH0_ISSUER_BASE_URL"
+                - name: AUTH0_CLIENT_ID
+                  value: "AUTH0_CLIENT_ID"
+                - name: AUTH0_CLIENT_SECRET
+                  value: "AUTH0_CLIENT_SECRET"
+                - name: AWS_ACCESS_KEY_ID
+                  value: "AWS_ACCESS_KEY_ID"
+                - name: AWS_SECRET_ACCESS_KEY
+                  value: "AWS_SECRET_ACCESS_KEY"
+                - name: AWS_STORAGE_BUCKET_NAME
+                  value: "AWS_STORAGE_BUCKET_NAME"
+                - name: DJANGO_SETTINGS_MODULE
+                  value: "DJANGO_SETTINGS_MODULE"
+                - name: AZURE_CLIENT_ID
+                  value: "AZURE_CLIENT_ID"
+                - name: AZURE_TENANT_ID
+                  value: "AZURE_TENANT_ID"
+                - name: AZURE_CLIENT_SECRET
+                  value: "AZURE_CLIENT_SECRET"
+                - name: BACKEND_URL
+                  value: "BACKEND_URL"
+                - name: CELERY_ENV
+                  value: "CELERY_ENV"
+                - name: EMAIL_HOST_USER
+                  value: "EMAIL_HOST_USER"
+                - name: EMAIL_HOST_PASSWORD
+                  value: "EMAIL_HOST_PASSWORD"
+                - name: FRONTEND_URL
+                  value: "FRONTEND_URL"
+                - name: AUTH0_DOMAIN
+                  value: "AUTH0_DOMAIN"
+                - name: AUTH0_AUDIENCE
+                  value: "AUTH0_AUDIENCE"
+                - name: AUTH0_M2M_CLIENT_ID
+                  value: "AUTH0_M2M_CLIENT_ID"
+                - name: AUTH0_M2M_CLIENT_SECRET
+                  value: "AUTH0_M2M_CLIENT_SECRET"
+                - name: PRODUCT_NAME
+                  value: "PRODUCT_NAME"
+                - name: API_SECRET_KEY
+                  value: "API_SECRET_KEY"
+                - name: MS_TENANT_ID
+                  value: "MS_TENANT_ID"
+                - name: MS_REDIRECT_URI
+                  value: "MS_REDIRECT_URI"
+                - name: ENV
+                  value: "ENV"
+              resources:
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: default
+  name: ecpmp-app-service-alb
+spec:
+  ports:
+  - name: http
+    protocol: TCP
+    port: 8000
+    targetPort: 8000
+  - name: https
+    protocol: TCP
+    port: 443
+    targetPort: 8000
+  type: NodePort
+  selector:
+     app: ecpmp-app
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+spec:
+  ports:
+  - port: 6379
+  selector:
+    app: redis
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: matrix-data-pvc
+spec:
+  storageClassName: gp3-csi
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: matrix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: matrix
+  template:
+    metadata:
+      labels:
+        app: matrix
+    spec:
+      initContainers:
+      - name: generate-synapse-config
+        image: matrixdotorg/synapse:latest
+        args: ["generate"]
+        env:
+        - name: SYNAPSE_SERVER_NAME
+          value: "localhost"
+        - name: SYNAPSE_REPORT_STATS
+          value: "no"
+        volumeMounts:
+        - name: matrix-data
+          mountPath: /data
+      - name: patch-synapse-config
+        image: alpine:3.20
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            set -e
+            sed -i 's/^enable_registration:.*/enable_registration: true/' /data/homeserver.yaml || true
+            if ! grep -q '^enable_registration_without_verification:' /data/homeserver.yaml; then
+              echo 'enable_registration_without_verification: true' >> /data/homeserver.yaml
+            else
+              sed -i 's/^enable_registration_without_verification:.*/enable_registration_without_verification: true/' /data/homeserver.yaml || true
+            fi
+        volumeMounts:
+        - name: matrix-data
+          mountPath: /data
+      containers:
+      - name: matrix
+        image: matrixdotorg/synapse:latest
+        env:
+        - name: SYNAPSE_CONFIG_PATH
+          value: "/data/homeserver.yaml"
+        ports:
+        - containerPort: 8008
+        readinessProbe:
+          httpGet:
+            path: /_matrix/client/versions
+            port: 8008
+          initialDelaySeconds: 20
+          periodSeconds: 15
+        livenessProbe:
+          httpGet:
+            path: /_matrix/client/versions
+            port: 8008
+          initialDelaySeconds: 40
+          periodSeconds: 20
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "2Gi"
+        volumeMounts:
+        - name: matrix-data
+          mountPath: /data
+      volumes:
+      - name: matrix-data
+        persistentVolumeClaim:
+          claimName: matrix-data-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: matrix
+spec:
+  ports:
+  - port: 8008
+    targetPort: 8008
+    protocol: TCP
+    name: http
+  selector:
+    app: matrix
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  namespace: default
+  name: ecpmp-app-ingress
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/certificate-arn: ACM_CERTIFCATE
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/actions.ssl-redirect: >
+      {"Type": "redirect", "RedirectConfig": { "Protocol": "HTTPS", "Port": "443", "StatusCode": "HTTP_301"}}
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=600
+
+spec:
+  ingressClassName: alb
+  rules:
+    - host: development.api.sharemundolinks.com
+      http:
+        paths:
+        - path: /api/
+          pathType: Prefix
+          backend:
+            service:
+              name: ecpmp-app-service-alb
+              port:
+                number: 8000
+    - host: development.api.admin.sharemundolinks.com
+      http:
+        paths:
+        - path: /admin-api/
+          pathType: Prefix
+          backend:
+            service:
+              name: admin-server-app-service-alb
+              port:
+                number: 8001
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: health-check-job
+spec:
+  schedule: "0 */3 * * *" 
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: health-check
+              image: ECR_IMAGE
+              command: ["/bin/sh", "-c"]
+              args: ["python manage.py health_check_job"]
+              env:
+                - name: DB_NAME
+                  value: "DB_NAME"
+                - name: DB_USER
+                  value: "DB_USER"
+                - name: DB_PASSWORD
+                  value: "DB_PASSWORD"
+                - name: DB_HOST
+                  value: "DB_HOST"
+                - name: DB_PORT
+                  value: "DB_PORT"
+                - name: AUTH0_SECRET
+                  value: "AUTH0_SECRET"
+                - name: AUTH0_ISSUER_BASE_URL
+                  value: "AUTH0_ISSUER_BASE_URL"
+                - name: AUTH0_CLIENT_ID
+                  value: "AUTH0_CLIENT_ID"
+                - name: AUTH0_CLIENT_SECRET
+                  value: "AUTH0_CLIENT_SECRET"
+                - name: AWS_ACCESS_KEY_ID
+                  value: "AWS_ACCESS_KEY_ID"
+                - name: AWS_SECRET_ACCESS_KEY
+                  value: "AWS_SECRET_ACCESS_KEY"
+                - name: AWS_STORAGE_BUCKET_NAME
+                  value: "AWS_STORAGE_BUCKET_NAME"
+                - name: DJANGO_SETTINGS_MODULE
+                  value: "DJANGO_SETTINGS_MODULE"
+                - name: AZURE_CLIENT_ID
+                  value: "AZURE_CLIENT_ID"
+                - name: AZURE_TENANT_ID
+                  value: "AZURE_TENANT_ID"
+                - name: AZURE_CLIENT_SECRET
+                  value: "AZURE_CLIENT_SECRET"
+                - name: BACKEND_URL
+                  value: "BACKEND_URL"
+                - name: CELERY_ENV
+                  value: "CELERY_ENV"
+                - name: EMAIL_HOST_USER
+                  value: "EMAIL_HOST_USER"
+                - name: EMAIL_HOST_PASSWORD
+                  value: "EMAIL_HOST_PASSWORD"
+                - name: FRONTEND_URL
+                  value: "FRONTEND_URL"
+                - name: AUTH0_DOMAIN
+                  value: "AUTH0_DOMAIN"
+                - name: AUTH0_AUDIENCE
+                  value: "AUTH0_AUDIENCE"
+                - name: AUTH0_M2M_CLIENT_ID
+                  value: "AUTH0_M2M_CLIENT_ID"
+                - name: AUTH0_M2M_CLIENT_SECRET
+                  value: "AUTH0_M2M_CLIENT_SECRET"
+                - name: PRODUCT_NAME
+                  value: "PRODUCT_NAME"
+                - name: API_SECRET_KEY
+                  value: "API_SECRET_KEY"
+                - name: MS_CLIENT_ID
+                  value: "MS_CLIENT_ID"
+                - name: MS_CLIENT_SECRET
+                  value: "MS_CLIENT_SECRET"
+                - name: MS_TENANT_ID
+                  value: "MS_TENANT_ID"
+                - name: MS_REDIRECT_URI
+                  value: "MS_REDIRECT_URI"
+                - name: ENV
+                  value: "ENV"
+              resources:
+                limits:
+                  memory: "256Mi"
+                  cpu: "250m"
+          restartPolicy: OnFailure

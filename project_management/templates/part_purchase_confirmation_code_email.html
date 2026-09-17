@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Purchase confirmation code</title>
+  </head>
+  <body
+    style="
+      margin: 0;
+      padding: 0;
+      background-color: #f8f9fc;
+      color: #54595f;
+      font-family: Muli, Arial, sans-serif;
+    "
+  >
+    <table
+      role="presentation"
+      cellpadding="0"
+      cellspacing="0"
+      border="0"
+      width="100%"
+      style="background-color: #f8f9fc"
+    >
+      <tr>
+        <td align="center" style="padding: 20px">
+          <table
+            role="presentation"
+            cellpadding="0"
+            cellspacing="0"
+            border="0"
+            width="100%"
+            style="
+              max-width: 760px;
+              background-color: #ffffff;
+              border-radius: 8px;
+              overflow: hidden;
+              box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            "
+          >
+            <tr>
+              <td
+                align="center"
+                style="padding: 24px; background-color: #0057b7"
+              >
+                <img
+                  src="https://staging-sharemundo.s3.eu-west-3.amazonaws.com/Logo+Links+White+Background+(1).png"
+                  alt="sharemundo links"
+                  width="150"
+                  style="
+                    display: block;
+                    width: 150px;
+                    max-width: 100%;
+                    height: auto;
+                  "
+                />
+              </td>
+            </tr>
+            <tr>
+              <td style="padding: 32px">
+                <h1
+                  style="
+                    margin: 0 0 18px;
+                    color: #1d2939;
+                    font-size: 22px;
+                    line-height: 1.35;
+                    font-weight: 600;
+                  "
+                >
+                  Confirm your purchase request
+                </h1>
+                <p
+                  style="
+                    margin: 0 0 16px;
+                    color: #54595f;
+                    font-size: 15px;
+                    line-height: 1.6;
+                  "
+                >
+                  Dear {{ buyer_name }},
+                </p>
+                <p
+                  style="
+                    margin: 0 0 20px;
+                    color: #54595f;
+                    font-size: 15px;
+                    line-height: 1.6;
+                  "
+                >
+                  Enter the following confirmation code in sharemundo
+                  links&reg; to continue with your supplier purchase request.
+                </p>
+
+                <table
+                  role="presentation"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="margin: 0 0 22px"
+                >
+                  <tr>
+                    <td
+                      align="center"
+                      style="
+                        padding: 22px;
+                        border: 1px solid #b2ddff;
+                        border-radius: 8px;
+                        background-color: #eff8ff;
+                      "
+                    >
+                      <div
+                        style="
+                          margin-bottom: 8px;
+                          color: #475467;
+                          font-size: 13px;
+                          font-weight: 600;
+                        "
+                      >
+                        Confirmation code
+                      </div>
+                      <div
+                        style="
+                          color: #0057b7;
+                          font-family: Arial, sans-serif;
+                          font-size: 34px;
+                          font-weight: 700;
+                          letter-spacing: 8px;
+                          line-height: 1.2;
+                        "
+                      >
+                        {{ confirmation_code }}
+                      </div>
+                      <div
+                        style="
+                          margin-top: 10px;
+                          color: #667085;
+                          font-size: 13px;
+                        "
+                      >
+                        Valid for {{ expiry_minutes }} minutes
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+
+                <table
+                  role="presentation"
+                  cellpadding="0"
+                  cellspacing="0"
+                  border="0"
+                  width="100%"
+                  style="
+                    margin: 0 0 22px;
+                    border-collapse: collapse;
+                    font-size: 14px;
+                  "
+                >
+                  <tr>
+                    <td
+                      style="
+                        width: 42%;
+                        padding: 11px 12px;
+                        border: 1px solid #eaecf0;
+                        background-color: #f9fafb;
+                        color: #475467;
+                        font-weight: 600;
+                      "
+                    >
+                      Purchase reference
+                    </td>
+                    <td
+                      style="
+                        padding: 11px 12px;
+                        border: 1px solid #eaecf0;
+                        color: #1d2939;
+                      "
+                    >
+                      {{ purchase_reference }}
+                    </td>
+                  </tr>
+                  {% if company_name %}
+                  <tr>
+                    <td
+                      style="
+                        padding: 11px 12px;
+                        border: 1px solid #eaecf0;
+                        background-color: #f9fafb;
+                        color: #475467;
+                        font-weight: 600;
+                      "
+                    >
+                      Company
+                    </td>
+                    <td
+                      style="
+                        padding: 11px 12px;
+                        border: 1px solid #eaecf0;
+                        color: #1d2939;
+                      "
+                    >
+                      {{ company_name }}
+                    </td>
+                  </tr>
+                  {% endif %}
+                </table>
+
+                <div
+                  style="
+                    margin: 0 0 20px;
+                    padding: 14px 16px;
+                    border-left: 4px solid #0057b7;
+                    background-color: #f2f4f7;
+                    color: #475467;
+                    font-size: 13px;
+                    line-height: 1.55;
+                  "
+                >
+                  Prototype mode: this process records a purchase intent only.
+                  No supplier order or payment is executed.
+                </div>
+
+                <p
+                  style="
+                    margin: 0 0 22px;
+                    color: #667085;
+                    font-size: 13px;
+                    line-height: 1.55;
+                  "
+                >
+                  If you did not request this code, you can safely ignore this
+                  email.
+                </p>
+                <p
+                  style="
+                    margin: 0;
+                    color: #54595f;
+                    font-size: 15px;
+                    line-height: 1.6;
+                  "
+                >
+                  Best regards,<br />
+                  <strong>sharemundo team</strong>
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td
+                align="center"
+                style="
+                  padding: 16px;
+                  background-color: #0057b7;
+                  color: #ffffff;
+                  font-size: 12px;
+                "
+              >
+                <a
+                  href="https://sharemundo.com/en/cgv-terms-conditions-sharemundolinks/"
+                  target="_blank"
+                  style="color: #ffffff; text-decoration: underline"
+                  >Terms of Use</a
+                >
+                <span style="padding: 0 8px">|</span>
+                <a
+                  href="https://sharemundo.com/en/protection-donnees-sharemundolinks/"
+                  target="_blank"
+                  style="color: #ffffff; text-decoration: underline"
+                  >Privacy Policy</a
+                >
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

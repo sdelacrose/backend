@@ -1,0 +1,7 @@
+[
+  {
+    "url": "/api/project_management/site-reporting/",
+    "method": "GET",
+    "expected_status": 200
+  }
+]

@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Monthly Timesheet</title>
+    <style>
+      @page {
+        size: A4 landscape;
+        margin: 8mm;
+      }
+      body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        color: #101828;
+      }
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .header img {
+        max-height: 56px;
+        object-fit: contain;
+      }
+      .title {
+        text-align: center;
+        flex: 1;
+      }
+      .title h1 {
+        margin: 0;
+        font-size: 24px;
+      }
+      .title p {
+        margin: 4px 0 0;
+        color: #667085;
+        font-size: 12px;
+      }
+      .summary {
+        border: 1px solid #d0d5dd;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 16px;
+        background: #f9fafb;
+      }
+      .summary-row {
+        margin: 4px 0;
+        font-size: 12px;
+      }
+      .summary-list {
+        margin-bottom: 18px;
+        border: 1px solid #d0d5dd;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .summary-list-header,
+      .summary-list-row,
+      .summary-list-total {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 180px 90px;
+        gap: 12px;
+        align-items: center;
+        padding: 8px 12px;
+        font-size: 11px;
+      }
+      .summary-list-header {
+        background: #f9fafb;
+        border-bottom: 1px solid #d0d5dd;
+        font-weight: 700;
+        color: #344054;
+      }
+      .summary-list-row {
+        border-bottom: 1px solid #eaecef;
+      }
+      .summary-list-total {
+        background: #f9fafb;
+        font-weight: 700;
+      }
+      .summary-list-code {
+        color: #667085;
+        font-size: 10px;
+        font-weight: 500;
+        margin-left: 6px;
+      }
+      .summary-list-hours {
+        text-align: right;
+      }
+      .week-section {
+        margin-bottom: 18px;
+      }
+      .week-section h3 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #344054;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      th,
+      td {
+        border: 1px solid #d0d5dd;
+        padding: 6px;
+        font-size: 10px;
+        vertical-align: top;
+        word-break: break-word;
+      }
+      th {
+        background: #f2f4f7;
+        text-align: center;
+      }
+      td:first-child,
+      th:first-child {
+        width: 28%;
+        text-align: left;
+      }
+      td:not(:first-child),
+      th:not(:first-child) {
+        text-align: center;
+      }
+      .totals-row td {
+        background: #f9fafb;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <img
+        src="https://staging-sharemundo.s3.eu-west-3.amazonaws.com/Logo+Links+White+Background+(1).png"
+        alt="Solution Logo"
+      />
+      <div class="title">
+        <h1>Monthly Timesheet</h1>
+        <p>{{ month_label }}</p>
+      </div>
+      {% if logo %}
+        <img src="{{ logo }}" alt="Company Logo" />
+      {% else %}
+        <div></div>
+      {% endif %}
+    </div>
+
+    <div class="summary">
+      <div class="summary-row"><strong>User:</strong> {{ user_name }}</div>
+      <div class="summary-row"><strong>Month:</strong> {{ month_label }}</div>
+      <div class="summary-row">
+        <strong>Submission scope:</strong> {{ preview.scope_summary|default:"-" }}
+      </div>
+      <div class="summary-row">
+        <strong>Total hours:</strong> {{ preview.month_total_hours }}
+      </div>
+      <div class="summary-row">
+        <strong>Status:</strong> {{ preview.submission.status|default:"draft"|title }}
+      </div>
+      <div class="summary-row">
+        <strong>Generated at:</strong> {{ generated_at }}
+      </div>
+    </div>
+
+    <div class="summary-list">
+      <div class="summary-list-header">
+        <div>Activity</div>
+        <div>Month</div>
+        <div class="summary-list-hours">Hours</div>
+      </div>
+      {% if summary_rows %}
+        {% for row in summary_rows %}
+          <div class="summary-list-row">
+            <div>
+              <strong>{{ row.activity_name }}</strong>
+              {% if row.activity_code and row.activity_code != "-" %}
+                <span class="summary-list-code">{{ row.activity_code }}</span>
+              {% endif %}
+            </div>
+            <div>{{ row.month_label }}</div>
+            <div class="summary-list-hours">{{ row.total_hours }}</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="summary-list-row">
+          <div>No activities</div>
+          <div></div>
+          <div class="summary-list-hours"></div>
+        </div>
+      {% endif %}
+      <div class="summary-list-total">
+        <div>Total</div>
+        <div></div>
+        <div class="summary-list-hours">{{ preview.month_total_hours }}</div>
+      </div>
+    </div>
+
+    {% for week in week_sections %}
+      <div class="week-section">
+        <h3>{{ week.detail_range_label }}</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Activity</th>
+              {% for day in week.day_headers %}
+                <th>{{ day.label }}</th>
+              {% endfor %}
+              <th>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if week.activity_rows %}
+              {% for activity in week.activity_rows %}
+                <tr>
+                  <td>
+                    <strong>{{ activity.activity_name }}</strong><br />
+                    <span style="color: #667085">{{ activity.activity_code }}</span>
+                  </td>
+                  {% for cell in activity.cells %}
+                    <td>{{ cell }}</td>
+                  {% endfor %}
+                  <td>{{ activity.row_total_hours }}</td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              <tr>
+                <td colspan="{{ week.empty_colspan }}">No activities</td>
+              </tr>
+            {% endif %}
+            <tr class="totals-row">
+              <td><strong>Week totals</strong></td>
+              {% for total in week.totals_row %}
+                <td><strong>{{ total }}</strong></td>
+              {% endfor %}
+              <td><strong>{{ week.week_total_hours }}</strong></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    {% endfor %}
+  </body>
+</html>

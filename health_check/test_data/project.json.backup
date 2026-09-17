@@ -1,0 +1,24 @@
+[
+  {
+    "url": "/api/project_management/projects/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/projects/",
+    "method": "POST",
+    "payload_name": "project_create_payload",
+    "expected_status": 201
+  },
+  {
+    "url": "/api/project_management/projects/{id}/",
+    "method": "GET",
+    "expected_status": 200
+  },
+  {
+    "url": "/api/project_management/projects/{id}/",
+    "method": "PATCH",
+    "payload_name": "project_patch_payload",
+    "expected_status": 200
+  }
+]
