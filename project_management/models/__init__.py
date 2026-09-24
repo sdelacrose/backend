@@ -1,5 +1,6 @@
 from .contact import Contact, ContactCompany, ContactUser
 from .document import Document, DocumentReferenceCounter, Folder
+from .document_control import DocumentControl
 from .document_search import (
     DocumentContentSegment,
     DocumentIndexAttempt,
