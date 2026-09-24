@@ -12,6 +12,7 @@ from project_management.views import ContactViewset, DocumentViewSet, FolderView
     UpdateFreelancerProjectOnConnectionRevoke, TimesheetWeekViewSet, MonthlyTimesheetViewSet, \
     CompanyPublicHolidayViewSet, ProjectMatrixConfigViewSet, SolutionDemandViewSet, RequirementViewSet, \
     TransportViewSet, PartsListConfigViewSet, SolutionSpaceConfigViewSet, MachineConfigViewSet, EquipmentConfigViewSet, AvailableProductPartViewSet, MachineViewSet, EquipmentViewSet, BillOfMaterialPartViewSet, CompanySolutionSpaceItemViewSet, ProjectSolutionSpaceItemViewSet, ProjectWorkstationViewSet, BomGenerationRunViewSet, ProcessAssemblyRecommendationRunViewSet, MatrixCommentViewSet, PartPurchaseIntentViewSet, SupplierPaymentMethodViewSet, ProductAssemblyExtractionRunViewSet, ProductAttributeExtractionRunViewSet, ProcessAssemblyExtractionRunViewSet, ProcessAttributeExtractionRunViewSet
+from project_management.views.document_register import DocumentRegisterViewSet
 from project_management.views.document_search import (
     DocumentContentSearchAPIView,
     DocumentIndexBackfillAPIView,
@@ -533,6 +534,16 @@ urlpatterns = [
     path('document/bulk-update', DocumentViewSet.as_view({
         'patch': 'bulk_update',
     }), name='document-bulk-update'),
+    path('document-register', DocumentRegisterViewSet.as_view({'get': 'list'}), name='document-register'),
+    path('document-register/filter-options', DocumentRegisterViewSet.as_view({'get': 'filter_options'}), name='document-register-filter-options'),
+    path('document-register/<int:document_id>', DocumentRegisterViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+    }), name='document-register-detail'),
+    path('document-control/<int:control_id>', DocumentRegisterViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+    }), name='document-control-detail'),
 
     path('document/<int:pk>', DocumentViewSet.as_view({
         'get': 'retrieve',         

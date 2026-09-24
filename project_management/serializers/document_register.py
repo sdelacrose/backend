@@ -1,0 +1,165 @@
+from rest_framework import serializers
+
+from project_management.models import DocumentControl
+from project_management.services.document_numbering import (
+    resolve_document_library_scope,
+)
+from project_management.services.document_register import (
+    get_allowed_owner_queryset,
+)
+
+
+def user_reference(user):
+    if user is None:
+        return None
+    return {"id": user.id, "name": (user.full_name or "").strip() or user.email}
+
+
+def control_or_none(document):
+    # Reverse one-to-one access raises when the row does not exist yet.
+    return getattr(document, "control", None)
+
+
+class DocumentRegisterRowSerializer(serializers.Serializer):
+    """One register row: a Document plus its optional Document Control data.
+
+    Missing Document Control values are returned as null (rendered as a dash by
+    the UI); nothing is invented for documents without a DocumentControl.
+    """
+
+    def to_representation(self, document):
+        control = control_or_none(document)
+        folder = document.folder
+        project = folder.project if folder else None
+        request = self.context.get("request")
+
+        file_url = None
+        if document.file:
+            file_url = document.file.url
+            if request is not None and not str(file_url).startswith("http"):
+                file_url = request.build_absolute_uri(file_url)
+
+        return {
+            "id": document.id,
+            "control_id": control.id if control else None,
+            "title": getattr(document, "register_title", None)
+            or document.file_name,
+            "file": file_url,
+            "file_name": document.file_name,
+            "folder": document.folder_id,
+            "project": (
+                {"id": project.id, "name": project.project_name}
+                if project
+                else None
+            ),
+            "reference": getattr(document, "register_reference", None),
+            "document_type": control.document_type if control else None,
+            "discipline": control.discipline if control else None,
+            "revision": control.revision if control else None,
+            "status": control.status if control else None,
+            "owner": user_reference(control.owner) if control else None,
+            "updated_at": getattr(document, "register_updated_at", None)
+            or document.updated_at,
+            "control": (
+                {
+                    "id": control.id,
+                    "reference": control.reference,
+                    "document_type": control.document_type,
+                    "discipline": control.discipline,
+                    "revision": control.revision,
+                    "status": control.status,
+                    "owner": control.owner_id,
+                }
+                if control
+                else None
+            ),
+        }
+
+
+class DocumentControlWriteSerializer(serializers.Serializer):
+    """Validates Document Control metadata for one accessible Document.
+
+    Context: ``document`` (already access-checked) and ``user`` (requester).
+    """
+
+    reference = serializers.CharField(
+        max_length=255, required=False, allow_blank=True, allow_null=True
+    )
+    document_type = serializers.ChoiceField(
+        choices=DocumentControl.DocumentType.choices,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    discipline = serializers.ChoiceField(
+        choices=DocumentControl.Discipline.choices,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    revision = serializers.CharField(max_length=32, required=False)
+    status = serializers.ChoiceField(
+        choices=DocumentControl.Status.choices, required=False
+    )
+    owner = serializers.IntegerField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        document = self.context["document"]
+        user = self.context["user"]
+        control = control_or_none(document)
+
+        for field in ("reference", "document_type", "discipline"):
+            if field in attrs:
+                attrs[field] = (attrs[field] or "").strip() or None
+
+        if "owner" in attrs:
+            owner_id = attrs["owner"]
+            if owner_id is None:
+                attrs["owner"] = None
+            elif control is not None and owner_id == control.owner_id:
+                attrs["owner"] = control.owner
+            else:
+                owner = get_allowed_owner_queryset(user).filter(pk=owner_id).first()
+                if owner is None:
+                    raise serializers.ValidationError(
+                        {
+                            "owner": (
+                                "Owner must be an active user of your company."
+                            )
+                        }
+                    )
+                attrs["owner"] = owner
+
+        if control is None and "reference" not in attrs:
+            # First save: reuse the reference already generated by Documents.
+            attrs["reference"] = document.full_document_number or None
+
+        reference = (
+            attrs["reference"]
+            if "reference" in attrs
+            else (control.reference if control else None)
+        )
+        revision = attrs.get("revision") or (
+            control.revision if control else DocumentControl.DEFAULT_REVISION
+        )
+        if reference:
+            scope = resolve_document_library_scope(document.folder)
+            scope_lookup = {
+                f"document__{key}": value
+                for key, value in scope.document_filter.items()
+            }
+            duplicates = DocumentControl.objects.filter(
+                reference__iexact=reference,
+                revision__iexact=revision,
+                **scope_lookup,
+            ).exclude(document=document)
+            if duplicates.exists():
+                raise serializers.ValidationError(
+                    {
+                        "reference": (
+                            "This reference and revision already exist "
+                            "in this document library."
+                        )
+                    }
+                )
+        return attrs
