@@ -7,6 +7,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 
+from project_management.models import DocumentWorkflow
 from project_management.serializers.document_register import user_reference
 from project_management.services.document_register import (
     assert_can_update_document,
@@ -23,8 +24,14 @@ def _absolute_url(request, url):
     return url if str(url).startswith("http") else request.build_absolute_uri(url)
 
 
-def serialize_revision(revision, request, document):
+def serialize_revision(revision, request, document, workflow=None):
     return {
+        # Latest workflow of this revision (summary only; events: the workflow endpoint).
+        "workflow": (
+            {"id": workflow.id, "status": workflow.status, "workflow_type": workflow.workflow_type}
+            if workflow
+            else None
+        ),
         "id": revision.id,
         "major_revision": revision.major_revision,
         "minor_revision": revision.minor_revision,
@@ -64,7 +71,15 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
     def list(self, request, document_id=None, *args, **kwargs):
         document = get_register_document_or_404(request, document_id=document_id)
         revisions = list(get_revision_history(document))
-        results = [serialize_revision(r, request, document) for r in revisions]
+        workflows = {}
+        for workflow in DocumentWorkflow.objects.filter(
+            revision__in=revisions
+        ).order_by("created_at", "id"):
+            workflows[workflow.revision_id] = workflow  # latest wins
+        results = [
+            serialize_revision(r, request, document, workflows.get(r.id))
+            for r in revisions
+        ]
 
         if not results and document.file:
             # Compatibility: no real revision yet, the current Document.file is
@@ -82,6 +97,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                     "file_size": None,
                     "file_url": file_url,
                     "comment": "",
+                    "workflow": None,
                     "created_at": document.uploaded_at,
                     "created_by": user_reference(document.created_by),
                     "download_url": file_url,

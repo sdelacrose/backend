@@ -3,6 +3,7 @@ from project_management.serializers.time_expense import get_valid_choices
 from rest_framework import serializers
 from django.conf import settings
 from django.db import transaction
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from models.models import CompanyConfig, CompanyProfile
 from models.hierarchical_configurations import (
@@ -12,6 +13,7 @@ from models.hierarchical_configurations import (
 from project_management.models import Document, DocumentSearchIndex, Folder, Project
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
+from project_management.services.document_workflow import assert_document_file_unlocked
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
     allocate_document_sequence,
@@ -482,6 +484,11 @@ class DocumentSerializer(serializers.ModelSerializer):
             return instance
 
     def update(self, instance, validated_data):
+        if 'file' in validated_data:
+            try:
+                assert_document_file_unlocked(instance)
+            except DjangoValidationError as error:
+                raise serializers.ValidationError({'file': error.messages})
         next_folder = validated_data.get('folder')
         if (
             next_folder is not None

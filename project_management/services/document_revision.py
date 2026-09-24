@@ -4,6 +4,9 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 
 from project_management.models import Document, DocumentRevision
+from project_management.services.document_workflow import (
+    assert_document_file_unlocked,
+)
 
 MINOR = "minor"
 MAJOR = "major"
@@ -94,6 +97,38 @@ def _title_for_new_file(document, revision):
     return f"{stem}{new_ext}"
 
 
+def _materialize_first_revision(locked):
+    """First real revision of a legacy document (caller holds the document lock).
+
+    The current Document.file is snapshotted as-is (same stored path, nothing is
+    copied). Only called by operations that really need a revision; never on read.
+    """
+    if DocumentRevision.objects.filter(document=locked).exists() or not locked.file:
+        return
+    legacy = DocumentRevision(
+        document=locked,
+        major_revision=_legacy_major(locked),
+        minor_revision=0,
+        file_name=locked.file_name or posixpath.basename(locked.file.name),
+        created_by=locked.created_by,
+    )
+    legacy.file = locked.file.name
+    legacy.file_size = _stored_size(locked.file)
+    legacy.save()
+
+
+def ensure_current_revision(document):
+    """Current (latest) revision of a document, materializing the first one if needed."""
+    with transaction.atomic():
+        locked = Document.objects.select_for_update().get(pk=document.pk)
+        _materialize_first_revision(locked)
+        return (
+            DocumentRevision.objects.filter(document=locked)
+            .order_by("-created_at", "-id")
+            .first()
+        )
+
+
 def add_document_revision(
     document,
     uploaded_file,
@@ -116,20 +151,11 @@ def add_document_revision(
     with transaction.atomic():
         # Serialize concurrent version numbering for one document.
         locked = Document.objects.select_for_update().get(pk=document.pk)
+        # The current revision/file cannot change while its workflow is running.
+        assert_document_file_unlocked(locked)
         revisions = DocumentRevision.objects.filter(document=locked)
 
-        if not revisions.exists() and locked.file:
-            legacy = DocumentRevision(
-                document=locked,
-                major_revision=_legacy_major(locked),
-                minor_revision=0,
-                file_name=locked.file_name
-                or posixpath.basename(locked.file.name),
-                created_by=locked.created_by,
-            )
-            legacy.file = locked.file.name
-            legacy.file_size = _stored_size(locked.file)
-            legacy.save()
+        _materialize_first_revision(locked)
 
         latest = revisions.order_by("-created_at", "-id").first()
         if major_revision:
