@@ -50,6 +50,7 @@ def get_register_queryset(request, *, project_id=None):
         "folder__company_profile",
         "control",
         "control__owner",
+        "control__approver",
     ).annotate(
         register_title=Coalesce(
             NullIf(F("file_name"), Value("")),
@@ -172,5 +173,7 @@ def save_document_control(document, validated_data):
             setattr(control, field, validated_data[field])
     if "owner" in validated_data:
         control.owner = validated_data["owner"]
+    if "approver" in validated_data:
+        control.approver = validated_data["approver"]
     control.save()
     return control

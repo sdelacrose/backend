@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from django.db import transaction
 from django.http import Http404
 from django.test import SimpleTestCase
 from django.urls import resolve
@@ -234,7 +235,13 @@ class SaveDocumentControlTests(SimpleTestCase):
             save=MagicMock(),
         )
 
+        # @transaction.atomic would open a DB connection, forbidden in
+        # SimpleTestCase: neutralise only the transaction enter/exit.
         with patch.object(
+            transaction.Atomic, "__enter__", return_value=None
+        ), patch.object(
+            transaction.Atomic, "__exit__", return_value=False
+        ), patch.object(
             register_service.DocumentControl.objects,
             "get_or_create",
             return_value=(control, True),
@@ -381,3 +388,165 @@ class RegisterEndpointPermissionTests(SimpleTestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         save.assert_called_once()
         self.assertEqual(save.call_args.args[1]["status"], "ARCHIVED")
+
+
+class DocumentSerializerControlFieldsTests(SimpleTestCase):
+    """Canonical Register: read-only project/creator/approver (+ file_size on detail)."""
+
+    def _serializer(self, **context):
+        from project_management.serializers.document import DocumentSerializer
+
+        return DocumentSerializer(context=context)
+
+    def _user(self, pk, first, last="Doe"):
+        return SimpleNamespace(id=pk, full_name=f"{first} {last}", email="x@y.z")
+
+    def _document(self, project=None, control=None, creator=None, size=None):
+        file = SimpleNamespace(size=size) if size is not None else None
+        document = SimpleNamespace(
+            folder_id=2,
+            folder=SimpleNamespace(project=project),
+            created_by=creator,
+            file=file,
+        )
+        if control is not None:
+            document.control = control
+        return document
+
+    def test_new_fields_are_declared_read_only(self):
+        from project_management.serializers.document import DocumentSerializer
+
+        fields = DocumentSerializer().fields
+        for name in ("project", "creator", "approver", "file_size"):
+            self.assertIn(name, fields)
+            self.assertTrue(fields[name].read_only, name)
+        self.assertNotIn("lifecycle_status", fields)
+
+    def test_not_computed_unless_the_view_opts_in(self):
+        serializer = self._serializer(include_control=False)
+        document = self._document(
+            project=SimpleNamespace(id=3, project_name="P"),
+            creator=self._user(1, "A"),
+            control=SimpleNamespace(approver=self._user(2, "B")),
+            size=12,
+        )
+
+        self.assertIsNone(serializer.get_project(document))
+        self.assertIsNone(serializer.get_creator(document))
+        self.assertIsNone(serializer.get_approver(document))
+        self.assertIsNone(serializer.get_file_size(document))
+
+    def test_document_without_control_shows_no_approver_and_is_not_created(self):
+        serializer = self._serializer(include_control=True)
+        document = self._document(creator=self._user(1, "Ann"))
+
+        self.assertIsNone(serializer.get_project(document))
+        self.assertIsNone(serializer.get_approver(document))
+        self.assertEqual(
+            serializer.get_creator(document), {"id": 1, "name": "Ann Doe"}
+        )
+
+    def test_project_creator_and_approver_are_returned_when_present(self):
+        serializer = self._serializer(include_control=True)
+        document = self._document(
+            project=SimpleNamespace(id=3, project_name="Plant A"),
+            creator=self._user(1, "Ann"),
+            control=SimpleNamespace(approver=self._user(2, "Bob")),
+        )
+
+        self.assertEqual(serializer.get_project(document), {"id": 3, "name": "Plant A"})
+        self.assertEqual(serializer.get_approver(document), {"id": 2, "name": "Bob Doe"})
+
+    def test_file_size_only_on_detail_and_tolerates_storage_errors(self):
+        document = self._document(size=27)
+        self.assertEqual(
+            self._serializer(include_detail=True).get_file_size(document), 27
+        )
+        self.assertIsNone(self._serializer(include_detail=False).get_file_size(document))
+
+        class Broken:
+            @property
+            def size(self):
+                raise OSError("storage down")
+
+        broken = SimpleNamespace(file=Broken())
+        self.assertIsNone(self._serializer(include_detail=True).get_file_size(broken))
+
+
+class DocumentListFilterAndHistoryTests(SimpleTestCase):
+    def test_approver_and_creator_are_server_side_filters(self):
+        from project_management.filters import DocumentFilter
+
+        self.assertEqual(DocumentFilter.base_filters["approver"].field_name, "control__approver")
+        self.assertEqual(DocumentFilter.base_filters["created_by"].field_name, "created_by")
+        self.assertEqual(DocumentFilter.base_filters["project"].field_name, "folder__project")
+        self.assertIn("folder__project", DocumentFilter.Meta.fields)
+
+    def test_search_covers_reference_and_title(self):
+        from project_management.views.document import DocumentViewSet
+
+        for field in ("full_document_number", "identification_number", "file_name"):
+            self.assertIn(field, DocumentViewSet.search_fields)
+
+    def test_history_exposes_revision(self):
+        from project_management.serializers.document import DocumentHistorySerializer
+
+        self.assertIn("revision", DocumentHistorySerializer.Meta.fields)
+
+
+class DocumentControlApproverTests(SimpleTestCase):
+    def test_approver_is_optional_and_migration_is_declared(self):
+        field = DocumentControl._meta.get_field("approver")
+        self.assertTrue(field.null)
+        self.assertEqual(field.remote_field.related_name, "approver_document_controls")
+
+    def test_approver_from_another_company_is_rejected_and_same_company_accepted(self):
+        document = SimpleNamespace(
+            id=10,
+            full_document_number=None,
+            folder=SimpleNamespace(project_id=3, company_profile_id=None, freelancer_id=None),
+        )
+        with patch(
+            "project_management.serializers.document_register.get_allowed_owner_queryset"
+        ) as owners:
+            owners.return_value.filter.return_value.first.return_value = None
+            serializer = DocumentControlWriteSerializer(
+                data={"approver": 999},
+                partial=True,
+                context={"document": document, "user": SimpleNamespace(id=1)},
+            )
+            self.assertFalse(serializer.is_valid())
+            self.assertIn("approver", serializer.errors)
+
+            approver = SimpleNamespace(id=7)
+            owners.return_value.filter.return_value.first.return_value = approver
+            serializer = DocumentControlWriteSerializer(
+                data={"approver": 7},
+                partial=True,
+                context={"document": document, "user": SimpleNamespace(id=1)},
+            )
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            self.assertIs(serializer.validated_data["approver"], approver)
+
+
+class DocumentPermissionRetrieveTests(SimpleTestCase):
+    def test_get_on_a_company_document_passes_the_context_to_the_view_check(self):
+        # Regression: retrieve of a company document raised a TypeError (missing context).
+        permission = DocumentPermission(action="view", scope="company")
+        request = SimpleNamespace(method="GET", user=SimpleNamespace(id=1))
+        document = SimpleNamespace(id=5)
+
+        with patch.object(
+            DocumentPermission, "is_company_document", return_value=True
+        ), patch.object(
+            DocumentPermission, "_get_context", return_value={"ctx": 1}
+        ), patch.object(
+            DocumentPermission, "_check_view_permission", return_value=True
+        ) as check:
+            self.assertTrue(
+                permission.has_object_permission(
+                    request, SimpleNamespace(action="retrieve"), document
+                )
+            )
+
+        check.assert_called_once_with(request.user, document, {"ctx": 1})

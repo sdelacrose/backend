@@ -85,6 +85,14 @@ class DocumentControl(models.Model):
         null=True,
         blank=True,
     )
+    # Supplementary Document Control data: Documents have no approver concept.
+    approver = models.ForeignKey(
+        User,
+        related_name="approver_document_controls",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

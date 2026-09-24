@@ -858,7 +858,7 @@ class DocumentPermission(BaseModulePermission):
         elif request.method == 'GET':
             print(f'[DEBUG] DocumentPermission: has_object_permission: GET | is_company_document: {is_company_document} | context: {context}')
             if is_company_document:
-                return self._check_view_permission(request.user, obj)
+                return self._check_view_permission(request.user, obj, context)
             else:
                 return self._check_view_permission_project(request.user, obj, context)
         return False

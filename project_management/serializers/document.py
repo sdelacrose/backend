@@ -30,6 +30,7 @@ class DocumentHistorySerializer(serializers.ModelSerializer):
             'file_name',
             'document_type',
             'identification_number',
+            'revision',
             'status',
             'internal_review_status',
             'external_review_status',
@@ -59,6 +60,10 @@ class DocumentSerializer(serializers.ModelSerializer):
     history = serializers.SerializerMethodField()
     linked_items = serializers.SerializerMethodField()
     index_status = serializers.SerializerMethodField()
+    project = serializers.SerializerMethodField()
+    creator = serializers.SerializerMethodField()
+    approver = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -88,6 +93,10 @@ class DocumentSerializer(serializers.ModelSerializer):
             'linked_items',
             'full_document_number',
             'index_status',
+            'project',
+            'creator',
+            'approver',
+            'file_size',
         ]
         read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
 
@@ -560,6 +569,43 @@ class DocumentSerializer(serializers.ModelSerializer):
             
         history = obj.history.all().order_by('-history_date')
         return DocumentHistorySerializer(history, many=True).data
+
+    def get_project(self, obj):
+        # Only computed where the caller opted in (Documents list/detail), to avoid
+        # extra queries when this serializer is nested elsewhere (e.g. folder trees).
+        if not self.context.get('include_control'):
+            return None
+        project = obj.folder.project if obj.folder_id else None
+        if project is None:
+            return None
+        return {'id': project.id, 'name': project.project_name}
+
+    @staticmethod
+    def _user_ref(user):
+        if user is None:
+            return None
+        return {'id': user.id, 'name': (user.full_name or '').strip() or user.email}
+
+    def get_creator(self, obj):
+        if not self.context.get('include_control'):
+            return None
+        return self._user_ref(obj.created_by)
+
+    def get_approver(self, obj):
+        # Optional Document Control data (DocumentControl is created on first save only).
+        if not self.context.get('include_control'):
+            return None
+        control = getattr(obj, 'control', None)
+        return self._user_ref(control.approver) if control else None
+
+    def get_file_size(self, obj):
+        # Detail page only: may hit the storage backend.
+        if not self.context.get('include_detail') or not obj.file:
+            return None
+        try:
+            return obj.file.size
+        except Exception:
+            return None
 
     def get_index_status(self, obj):
         try:

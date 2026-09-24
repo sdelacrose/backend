@@ -40,6 +40,9 @@ class DocumentFilter(filters.FilterSet):
     folder = NumberInFilter(field_name="folder", lookup_expr="in")
     folder_name = CharInFilter(field_name="folder__name", lookup_expr="in")
     created_by = NumberInFilter(field_name="created_by", lookup_expr="in")
+    # Supplementary Document Control data (no approver concept on Document).
+    approver = NumberInFilter(field_name="control__approver", lookup_expr="in")
+    project = NumberInFilter(field_name="folder__project", lookup_expr="in")
     date_from = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__gte")
     date_to = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__lte")
 

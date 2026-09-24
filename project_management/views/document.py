@@ -580,13 +580,15 @@ class DocumentViewSet(viewsets.ModelViewSet):
     ordering_natural_fields = ordering_text_fields
     ordering = ["-uploaded_at", "-id"]
 
-    search_fields = ["file_name", "author__first_name", "author__last_name", "id", "document_type", "full_document_number"]
+    search_fields = ["file_name", "author__first_name", "author__last_name", "id", "document_type", "full_document_number", "identification_number"]
 
     def get_serializer(self, *args, **kwargs):
         serializer = super(DocumentViewSet, self).get_serializer(*args, **kwargs)
         serializer.context['user'] = self.request.user
         serializer.context['include_history'] = self.request.query_params.get('include_history', False)
         serializer.context['include_linked_items'] = self.request.query_params.get('include_linked_items', 'true').lower() == 'true'
+        serializer.context['include_control'] = True
+        serializer.context['include_detail'] = self.action == 'retrieve'
         return serializer
 
     def get_permissions(self):
@@ -692,7 +694,9 @@ class DocumentViewSet(viewsets.ModelViewSet):
         """
         Filter queryset based on user permissions using the new DocumentPermission system.
         """
-        return get_accessible_document_queryset(self.request).annotate(
+        return get_accessible_document_queryset(self.request).select_related(
+            "control", "control__approver", "created_by", "folder__project"
+        ).annotate(
             author_name=Concat(
                 Coalesce(F("author__first_name"), Value("")),
                 Value(" "),
