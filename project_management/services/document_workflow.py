@@ -15,10 +15,12 @@ WorkflowType = DocumentWorkflow.WorkflowType
 Step = DocumentWorkflowEvent.Step
 Action = DocumentWorkflowEvent.Action
 
-# The only two automatic Document.status transitions (protected default values).
-# Workflow states are never exposed as Document.status; everything else stays manual.
-DOCUMENT_STATUS_APPROVED = "Approved"
-DOCUMENT_STATUS_NEW_REVISION = "Draft"
+# Derived INTERNAL status of a document (validation lifecycle of its CURRENT version).
+# It is never stored and never written to Document.status (the configurable business status).
+# TO_CREATE (register entry without a main file) is not supported yet: Document.file is mandatory.
+INTERNAL_DRAFT = "DRAFT"
+INTERNAL_IN_VALIDATION = "IN_VALIDATION"
+INTERNAL_APPROVED = "APPROVED"
 
 # action -> (status it can be performed in, step recorded, actor attribute)
 _DECISIONS = {
@@ -110,9 +112,33 @@ def get_current_revision(document):
     )
 
 
-def current_revision_has_active_workflow(document):
+def internal_status_from_workflow_status(workflow_status):
+    """Canonical derivation: workflow status of the CURRENT version -> internal status.
+
+    No workflow (or a REJECTED one) -> DRAFT; DRAFT/VERIFY/APPROVE -> IN_VALIDATION;
+    APPROVED -> APPROVED. Older versions never matter.
+    """
+    if workflow_status in DocumentWorkflow.ACTIVE_STATUSES:
+        return INTERNAL_IN_VALIDATION
+    if workflow_status == Status.APPROVED:
+        return INTERNAL_APPROVED
+    return INTERNAL_DRAFT
+
+
+def get_internal_status(document):
+    """Internal status of a document. Uses the list annotation when present (no extra query)."""
+    if hasattr(document, "wf_status"):
+        return internal_status_from_workflow_status(document.wf_status)
     current = get_current_revision(document)
-    return bool(current and revision_has_active_workflow(current))
+    latest = (
+        DocumentWorkflow.objects.filter(revision=current)
+        .order_by("-created_at", "-id")
+        .values_list("status", flat=True)
+        .first()
+        if current
+        else None
+    )
+    return internal_status_from_workflow_status(latest)
 
 
 def assert_document_file_unlocked(document):
@@ -124,18 +150,6 @@ def assert_document_file_unlocked(document):
         )
 
 
-def _set_document_approved(revision):
-    """Approval of the CURRENT revision sets Document.status to "Approved".
-
-    An older revision can never overwrite the status of the document.
-    """
-    document = revision.document
-    current = get_current_revision(document)
-    if current is None or current.pk != revision.pk:
-        return
-    if document.status != DOCUMENT_STATUS_APPROVED:
-        document.status = DOCUMENT_STATUS_APPROVED
-        document.save(update_fields=["status", "updated_at"])
 
 
 # --- Writes ----------------------------------------------------------------------
@@ -283,7 +297,6 @@ def perform_action(workflow, actor, action, comment):
             )
 
             assign_revision_label(locked.revision)
-            _set_document_approved(locked.revision)
         return locked
 
 

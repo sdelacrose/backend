@@ -15,7 +15,7 @@ from project_management.utils import get_product_name_from_request, has_project_
 from project_management.models import ECPMPConfig
 from project_management.services.document_workflow import (
     assert_document_file_unlocked,
-    current_revision_has_active_workflow,
+    get_internal_status,
 )
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
@@ -70,6 +70,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     approver = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     workflow = serializers.SerializerMethodField()
+    internal_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -103,6 +104,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'creator',
             'approver',
             'workflow',
+            'internal_status',
             'file_size',
         ]
         read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
@@ -214,16 +216,6 @@ class DocumentSerializer(serializers.ModelSerializer):
         return value
 
     def validate_status(self, value):
-        # Server-side guard: the status is frozen while the CURRENT revision has an active
-        # validation workflow (an unchanged value is still accepted).
-        if (
-            self.instance is not None
-            and (value or None) != (self.instance.status or None)
-            and current_revision_has_active_workflow(self.instance)
-        ):
-            raise serializers.ValidationError(
-                'The status cannot be changed while a validation workflow is in progress.'
-            )
         return self._validate_optional_choice_field(
             value, "document_status", "document status", "status"
         )
@@ -634,6 +626,13 @@ class DocumentSerializer(serializers.ModelSerializer):
             'status': status_value,
             'awaiting_me': bool(expected and user and expected == user.id),
         }
+
+    def get_internal_status(self, obj):
+        # Derived (never stored) validation lifecycle of the CURRENT version:
+        # DRAFT / IN_VALIDATION / APPROVED. Independent from the business Document.status.
+        if not self.context.get('include_control'):
+            return None
+        return get_internal_status(obj)
 
     def get_file_size(self, obj):
         # Detail page only: may hit the storage backend.

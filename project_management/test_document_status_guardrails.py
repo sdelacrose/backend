@@ -8,11 +8,12 @@ from project_management.services.document_revision import create_document_revisi
 from project_management.services.document_workflow import perform_action
 from project_management.test_document_workflow import THREE, TWO, WorkflowTestBase
 
-CHOICES = ["Draft", "Approved", "Sent", "Issued", "Under review", "To be updated"]
+CHOICES = ["Draft", "Approved", "Sent", "Issued", "For construction (IFC)", "On Hold"]
 
 
-class StatusGuardrailTests(WorkflowTestBase):
-    """Document.status and workflow status stay separate; only two automatic transitions."""
+class BusinessStatusIndependenceTests(WorkflowTestBase):
+    """Document.status is a configurable BUSINESS status: the validation workflow and new
+    versions never write it, and it is never locked by a workflow."""
 
     def status(self):
         return Document.objects.get(pk=self.document.pk).status
@@ -45,96 +46,42 @@ class StatusGuardrailTests(WorkflowTestBase):
         ):
             return serializer.is_valid(), serializer.errors
 
-    def approve_current(self, revision=None):
-        wf = self.start(TWO, revision=revision or self.revision2)
-        perform_action(wf, self.alice, "SIGN", "s")
-        return perform_action(wf, self.carol, "APPROVE", "a")
-
-    # --- no automatic mapping of the workflow steps ----------------------------------
-
-    def test_start_signature_and_validation_do_not_change_the_status(self):
-        self.set_status("Sent")
-        wf = self.start(THREE, revision=self.revision2)
-        self.assertEqual(self.status(), "Sent")
-        perform_action(wf, self.alice, "SIGN", "s")
-        self.assertEqual(self.status(), "Sent")
-        perform_action(wf, self.bob, "VALIDATE", "v")
-        self.assertEqual(self.status(), "Sent")
-
-    def test_final_approval_sets_the_current_status_to_approved(self):
-        self.set_status("Draft")
-        self.approve_current()
-        self.assertEqual(self.status(), "Approved")
-
-    def test_rejection_does_not_force_to_be_updated(self):
+    def test_workflow_progression_never_writes_the_business_status(self):
         self.set_status("Issued")
+        wf = self.start(THREE, revision=self.revision2)
+        self.assertEqual(self.status(), "Issued")
+        perform_action(wf, self.alice, "SIGN", "s")
+        perform_action(wf, self.bob, "VALIDATE", "v")
+        self.assertEqual(self.status(), "Issued")
+        perform_action(wf, self.carol, "APPROVE", "a")  # final approval
+        self.assertEqual(self.status(), "Issued")  # not "Approved"
+
+    def test_rejection_never_writes_the_business_status(self):
+        self.set_status("On Hold")
         wf = self.start(TWO, revision=self.revision2)
         perform_action(wf, self.alice, "REJECT", "no")
-        self.assertEqual(self.status(), "Issued")
+        self.assertEqual(self.status(), "On Hold")
 
-    def test_an_old_revision_cannot_overwrite_the_document_status(self):
-        # Workflow on the OLDER revision while a newer current revision exists.
-        self.set_status("Issued")
-        wf = self.start(TWO, revision=self.revision)
-        perform_action(wf, self.alice, "SIGN", "s")
-        perform_action(wf, self.carol, "APPROVE", "a")
-        self.assertEqual(wf.__class__.objects.get(pk=wf.pk).status, "APPROVED")
-        self.assertEqual(self.status(), "Issued")
+    def test_new_versions_never_write_the_business_status(self):
+        self.set_status("For construction (IFC)")
+        for kind in ("minor", "major"):
+            self.revise(kind)
+            self.assertEqual(self.status(), "For construction (IFC)")  # not "Draft"
 
-    # --- manual status guard -----------------------------------------------------------
-
-    def test_active_workflow_blocks_a_manual_status_change(self):
-        self.set_status("Sent")
+    def test_business_status_can_be_changed_during_an_active_workflow(self):
+        self.set_status("Draft")
         wf = self.start(THREE, revision=self.revision2)
         for step in (None, ("SIGN", self.alice), ("VALIDATE", self.bob)):
             if step:
                 perform_action(wf, step[1], step[0], "c")
-            valid, errors = self.try_status("Issued")
-            self.assertFalse(valid)
-            self.assertIn("status", errors)
-            self.assertIn("workflow", str(errors["status"]))
-        # an unchanged value is still accepted while the workflow runs
-        self.assertTrue(self.try_status("Sent")[0])
+            valid, errors = self.try_status("Sent")
+            self.assertTrue(valid, errors)
 
-    def test_workflow_on_an_old_revision_does_not_freeze_the_status(self):
-        self.start(TWO, revision=self.revision)  # not the current revision
+    def test_configurable_status_validation_still_applies(self):
+        wf = self.start(TWO, revision=self.revision2)
+        valid, errors = self.try_status("Not a configured status")
+        self.assertFalse(valid)
+        self.assertIn("status", errors)
+        self.assertIn("Invalid document status", str(errors["status"]))
         self.assertTrue(self.try_status("Issued")[0])
-
-    def test_terminal_workflows_allow_status_changes_again(self):
-        wf = self.start(TWO, revision=self.revision2)
-        perform_action(wf, self.alice, "SIGN", "s")
-        self.assertFalse(self.try_status("Issued")[0])
-        perform_action(wf, self.carol, "APPROVE", "a")
-        self.assertEqual(self.status(), "Approved")
-        self.assertTrue(self.try_status("Issued")[0])  # business status after approval
-
-    def test_rejected_workflow_allows_a_later_status_change(self):
-        wf = self.start(TWO, revision=self.revision2)
-        perform_action(wf, self.alice, "REJECT", "no")
-        self.assertTrue(self.try_status("To be updated")[0])
-        self.assertTrue(self.try_status("Issued")[0])
-
-    # --- new revision restarts the lifecycle --------------------------------------------
-
-    def test_new_minor_version_sets_the_status_to_draft(self):
-        self.set_status("Issued")
-        self.revise("minor")
-        self.assertEqual(self.status(), "Draft")
-
-    def test_new_major_revision_sets_the_status_to_draft(self):
-        self.approve_current()
-        self.assertEqual(self.status(), "Approved")
-        self.revise("major")
-        self.assertEqual(self.status(), "Draft")
-
-    def test_correction_after_rejection_sets_the_status_to_draft(self):
-        wf = self.start(TWO, revision=self.revision2)
-        perform_action(wf, self.alice, "REJECT", "no")
-        self.set_status("To be updated")
-        corrected = self.revise("minor")
-        self.assertEqual(self.status(), "Draft")
-        # the rejected revision and its workflow are unchanged
-        wf.refresh_from_db()
-        self.assertEqual(wf.status, "REJECTED")
-        self.assertEqual(wf.revision_id, self.revision2.pk)
-        self.assertNotEqual(corrected.pk, self.revision2.pk)
+        self.assertEqual(wf.status, "DRAFT")
