@@ -13,13 +13,13 @@ from models.hierarchical_configurations import (
 from project_management.models import Document, DocumentSearchIndex, Folder, Project
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
+from project_management.services.document_reference import generate_document_reference
 from project_management.services.document_workflow import (
     assert_document_file_unlocked,
     get_internal_status,
 )
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
-    allocate_document_sequence,
     resolve_document_library_scope,
 )
 
@@ -481,10 +481,19 @@ class DocumentSerializer(serializers.ModelSerializer):
             validated_data['author'] = request_user
 
         with transaction.atomic():
-            validated_data['sequence_number'] = allocate_document_sequence(
-                validated_data['folder']
+            # Permanent reference, generated ONCE here (PROJECT-DISCIPLINE-DOCUMENT_TYPE-SEQUENCE by
+            # default, configurable per project/company); never recalculated afterwards.
+            (
+                validated_data['sequence_number'],
+                validated_data['full_document_number'],
+            ) = generate_document_reference(
+                validated_data['folder'],
+                document_type=validated_data.get('document_type'),
+                discipline=validated_data.get('discipline'),
+                discipline_code=validated_data.get('discipline_code'),
+                category=validated_data.get('category'),
+                config=config,
             )
-            validated_data['full_document_number'] = self._get_full_document_number(validated_data, config)
             validated_data['created_by'] = request_user
             validated_data['assignee'] = validated_data.get('author')
             instance = super().create(validated_data)
@@ -522,52 +531,6 @@ class DocumentSerializer(serializers.ModelSerializer):
             validated_data['revision'] = instance.revision
         validated_data['assignee'] = instance.author if "author" not in validated_data else validated_data.get('author')
         return super().update(instance, validated_data)
-
-    def _get_code(self, validated_data):
-        """Get the code for the given combination"""
-        folder_id = validated_data.get('folder').id if validated_data.get('folder') else None
-        if folder_id:
-            folder = Folder.objects.get(id=folder_id)
-            if folder.project:
-                name = ""
-                if folder.project.user.is_freelancer:
-                    name += folder.project.user.full_name.upper()[:3]
-                else:
-                    name += folder.project.user.company.company_name.upper()[:3]
-                
-                if folder.project.project_name :
-                    name += "-" + folder.project.project_name.upper()[:3]
-                return name
-            elif folder.company_profile:
-                return folder.company_profile.company_name.upper()[:3] if folder.company_profile.company_name else None
-            elif folder.freelancer:
-                return folder.freelancer.full_name.upper()[:3] if folder.freelancer.full_name else None
-        
-        return None
-
-    def _get_full_document_number(self, validated_data, config):
-        """Get the full document number for the given combination"""
-        document_number = ""
-        folder_id = validated_data.get('folder').id if validated_data.get('folder') else None
-        code = self._get_code(validated_data)
-        document_type_code = get_abbreviation(validated_data.get('document_type'), config, "document_types")
-        document_category_code = get_abbreviation(validated_data.get('category'), config, "document_categories")
-        discipline_code = validated_data.get('discipline_code') or get_abbreviation(validated_data.get('discipline'), config, "document_disciplines")
-        sequence_number = validated_data.get('sequence_number')
-        revision = validated_data.get('revision')
-
-        if code:
-            document_number += code
-        if document_type_code:
-            document_number += "-" + document_type_code
-        if document_category_code:
-            document_number += "-" + document_category_code
-        if discipline_code:
-            document_number += "-" + discipline_code
-        if sequence_number:
-            document_number += "-" + str(sequence_number).zfill(5)
-        document_number += "-" + str(revision).zfill(2)
-        return document_number
 
     def get_history(self, obj):
         include_history = self.context.get('include_history', False)

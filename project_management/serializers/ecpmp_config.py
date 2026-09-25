@@ -29,6 +29,35 @@ class ECPMPCONFIGSerializer(serializers.ModelSerializer):
         model = ECPMPConfig
         exclude = ("acceptance_status_options",)
 
+    def validate_document_control_configuration(self, value):
+        # Reference / revision / workflow settings: validated and stored in canonical form.
+        from models.document_control_configuration import (
+            DocumentControlConfigurationError,
+            validate_document_control_configuration,
+        )
+
+        try:
+            resolved = validate_document_control_configuration(value)
+        except DocumentControlConfigurationError as error:
+            raise serializers.ValidationError(str(error))
+
+        # A started project (first permanent reference issued) keeps its reference convention.
+        project = getattr(self.instance, "project", None)
+        if project is not None:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+
+            from project_management.services.project_codes import (
+                assert_reference_convention_unchanged,
+            )
+
+            try:
+                assert_reference_convention_unchanged(
+                    project, self.instance.document_control_configuration, resolved
+                )
+            except DjangoValidationError as error:
+                raise serializers.ValidationError(error.messages[0])
+        return resolved
+
     def validate_reminder_settings(self, value):
         if not isinstance(value, list):
             raise serializers.ValidationError("Reminder settings must be a list.")

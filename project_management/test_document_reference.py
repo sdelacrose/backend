@@ -11,7 +11,7 @@ from project_management.services.document_revision import add_document_revision
 from project_management.services.document_workflow import perform_action
 from project_management.test_document_workflow import TWO, WorkflowTestBase
 
-FORMAT = re.compile(r"^REV-Plan-\d{5}-00$")  # legacy composition, unchanged for now
+FORMAT = re.compile(r"^PLA-\d{5}$")  # company library document: no project segment
 
 
 class PermanentReferenceTests(WorkflowTestBase):
@@ -47,7 +47,7 @@ class PermanentReferenceTests(WorkflowTestBase):
                 "folder": self.document.folder_id,
                 "file": SimpleUploadedFile(name, b"content"),
                 "document_type": "Plan",
-                "revision": 0,  # the UI always sends the legacy revision (0 by default)
+                "revision": 0,  # legacy field: no longer part of the reference
             },
             context={"user": self.creator},
         )
@@ -80,7 +80,7 @@ class PermanentReferenceTests(WorkflowTestBase):
         first, second = self.create_document("a.txt"), self.create_document("b.txt")
         self.assertEqual(second.sequence_number, first.sequence_number + 1)
         self.assertNotEqual(first.full_document_number, second.full_document_number)
-        self.assertTrue(first.full_document_number.endswith(f"-{first.sequence_number:05d}-00"))
+        self.assertTrue(first.full_document_number.endswith(f"-{first.sequence_number:05d}"))
 
     # --- metadata updates never recalculate it -----------------------------------------
 

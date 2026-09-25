@@ -233,6 +233,9 @@ class DocumentReferenceCounter(models.Model):
         null=True,
         blank=True,
     )
+    # "" = the library counter (legacy behaviour and the default PROJECT scope); the other
+    # sequence scopes use their own keys ("company", "discipline:STR", "type:DWG").
+    scope_key = models.CharField(max_length=100, default="", blank=True)
     last_sequence = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -260,7 +263,7 @@ class DocumentReferenceCounter(models.Model):
                 name="document_reference_counter_single_owner",
             ),
             models.UniqueConstraint(
-                fields=["project"],
+                fields=["project", "scope_key"],
                 condition=models.Q(
                     project__isnull=False,
                     company_profile__isnull=True,
@@ -269,7 +272,7 @@ class DocumentReferenceCounter(models.Model):
                 name="unique_document_reference_counter_project",
             ),
             models.UniqueConstraint(
-                fields=["company_profile"],
+                fields=["company_profile", "scope_key"],
                 condition=models.Q(
                     project__isnull=True,
                     company_profile__isnull=False,
@@ -278,7 +281,7 @@ class DocumentReferenceCounter(models.Model):
                 name="unique_document_reference_counter_company",
             ),
             models.UniqueConstraint(
-                fields=["freelancer"],
+                fields=["freelancer", "scope_key"],
                 condition=models.Q(
                     project__isnull=True,
                     company_profile__isnull=True,

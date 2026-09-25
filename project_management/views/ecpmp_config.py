@@ -114,6 +114,22 @@ class ECPMPConfigViewSet(viewsets.ModelViewSet):
         self._save_configuration_update(serializer)
         return serializer
 
+    @staticmethod
+    def _keep_frozen_reference_convention(config, values):
+        """Sync/reset must not overwrite the reference convention of a started project."""
+        from project_management.services.project_codes import (
+            keep_frozen_reference_convention,
+        )
+
+        values = dict(values)
+        if "document_control_configuration" in values:
+            values["document_control_configuration"] = keep_frozen_reference_convention(
+                config.project,
+                config.document_control_configuration,
+                values["document_control_configuration"],
+            )
+        return values
+
     @action(detail=True, methods=["post"], url_path="sync")
     @transaction.atomic
     def sync_with_admin(self, request, pk=None):
@@ -146,6 +162,7 @@ class ECPMPConfigViewSet(viewsets.ModelViewSet):
         else:
             synced_values = replace_configuration(template_values)
 
+        synced_values = self._keep_frozen_reference_convention(config, synced_values)
         serializer = self._apply_configuration_values(config, synced_values)
         return Response(
             {
@@ -161,7 +178,9 @@ class ECPMPConfigViewSet(viewsets.ModelViewSet):
     def reset_config(self, request, pk=None):
         config = self.get_object()
         config = ECPMPConfig.objects.select_for_update().get(pk=config.pk)
-        reset_values = get_project_template_defaults()
+        reset_values = self._keep_frozen_reference_convention(
+            config, get_project_template_defaults()
+        )
         serializer = self._apply_configuration_values(config, reset_values)
         return Response(
             {

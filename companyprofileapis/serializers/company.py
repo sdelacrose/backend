@@ -198,6 +198,18 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
         fields = '__all__'
         read_only_fields = ['company_profile']
 
+    def validate_document_control_configuration(self, value):
+        # Reference / revision / workflow settings: validated and stored in canonical form.
+        from models.document_control_configuration import (
+            DocumentControlConfigurationError,
+            validate_document_control_configuration,
+        )
+
+        try:
+            return validate_document_control_configuration(value)
+        except DocumentControlConfigurationError as error:
+            raise serializers.ValidationError(str(error))
+
     def validate_contract_type(self, value):
         return self._validate_with_defaults(value, constants.GC_CONTRACT_TYPES, "contract_type")
 
