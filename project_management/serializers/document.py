@@ -66,6 +66,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     creator = serializers.SerializerMethodField()
     approver = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
+    workflow = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -98,6 +99,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'project',
             'creator',
             'approver',
+            'workflow',
             'file_size',
         ]
         read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
@@ -604,6 +606,21 @@ class DocumentSerializer(serializers.ModelSerializer):
             return None
         control = getattr(obj, 'control', None)
         return self._user_ref(control.approver) if control else None
+
+    def get_workflow(self, obj):
+        # Register indicator only: status of the CURRENT revision's workflow and whether the
+        # connected user is the expected actor. Annotated by the list queryset; no events.
+        if not self.context.get('include_control'):
+            return None
+        status_value = getattr(obj, 'wf_status', None)
+        if not status_value:
+            return None
+        user = self.context.get('user')
+        expected = getattr(obj, 'wf_expected_actor_id', None)
+        return {
+            'status': status_value,
+            'awaiting_me': bool(expected and user and expected == user.id),
+        }
 
     def get_file_size(self, obj):
         # Detail page only: may hit the storage backend.

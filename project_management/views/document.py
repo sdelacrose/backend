@@ -28,6 +28,7 @@ from project_management.serializers.document import DocumentHistorySerializer
 from project_management.permissions import DocumentPermission
 from project_management.filters import DocumentFilter
 from project_management.services.document_access import get_accessible_document_queryset
+from project_management.services.document_workflow import annotate_current_workflow
 from project_management.services.document_bulk_update import (
     BulkDocumentUpdateRequestSerializer,
     DocumentBulkUpdateService,
@@ -694,7 +695,11 @@ class DocumentViewSet(viewsets.ModelViewSet):
         """
         Filter queryset based on user permissions using the new DocumentPermission system.
         """
-        return get_accessible_document_queryset(self.request).select_related(
+        queryset = get_accessible_document_queryset(self.request)
+        if self.action == "list":
+            # Workflow of the CURRENT revision (Register indicator + "my validations").
+            queryset = annotate_current_workflow(queryset)
+        return queryset.select_related(
             "control", "control__approver", "created_by", "folder__project"
         ).annotate(
             author_name=Concat(

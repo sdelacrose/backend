@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Case, F, IntegerField, OuterRef, Subquery, When
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
@@ -50,6 +51,44 @@ def get_workflow_for_revision(revision):
         .prefetch_related("events__actor")
         .first()
     )
+
+
+def annotate_current_workflow(queryset):
+    """Annotate Documents with the workflow of their CURRENT (latest) revision only.
+
+    wf_status: status of that revision's latest workflow (None: no revision/workflow)
+    wf_expected_actor_id: user expected to act now (author at DRAFT, verifier at VERIFY,
+    approver at APPROVE; None once the workflow is APPROVED/REJECTED).
+    Correlated subqueries: no per-row queries, safe with pagination and counts.
+    """
+    if "wf_status" in queryset.query.annotations:
+        return queryset
+    current_revision = DocumentRevision.objects.filter(
+        document=OuterRef("pk")
+    ).order_by("-created_at", "-id")
+    latest_workflow = DocumentWorkflow.objects.filter(
+        revision=OuterRef("current_revision_id")
+    ).order_by("-created_at", "-id")
+    expected = Case(
+        When(status=Status.DRAFT, then=F("author_id")),
+        When(status=Status.VERIFY, then=F("verifier_id")),
+        When(status=Status.APPROVE, then=F("approver_id")),
+        default=None,
+        output_field=IntegerField(),
+    )
+    return queryset.annotate(
+        current_revision_id=Subquery(current_revision.values("pk")[:1])
+    ).annotate(
+        wf_status=Subquery(latest_workflow.values("status")[:1]),
+        wf_expected_actor_id=Subquery(
+            latest_workflow.annotate(expected=expected).values("expected")[:1]
+        ),
+    )
+
+
+def filter_awaiting_user(queryset, user):
+    """Documents whose current revision waits for an action from `user`."""
+    return annotate_current_workflow(queryset).filter(wf_expected_actor_id=user.pk)
 
 
 def revision_has_active_workflow(revision):

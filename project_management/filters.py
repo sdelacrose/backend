@@ -43,6 +43,8 @@ class DocumentFilter(filters.FilterSet):
     # Supplementary Document Control data (no approver concept on Document).
     approver = NumberInFilter(field_name="control__approver", lookup_expr="in")
     project = NumberInFilter(field_name="folder__project", lookup_expr="in")
+    # Workflow: documents whose CURRENT revision waits for an action from the connected user.
+    my_validation = filters.BooleanFilter(method="filter_my_validation")
     date_from = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__gte")
     date_to = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__lte")
 
@@ -67,6 +69,15 @@ class DocumentFilter(filters.FilterSet):
             "date_from",
             "date_to",
         ]
+
+    def filter_my_validation(self, queryset, name, value):
+        if not value:
+            return queryset
+        from project_management.services.document_workflow import (
+            filter_awaiting_user,
+        )
+
+        return filter_awaiting_user(queryset, self.request.user)
 
 class MilestoneFilter(filters.FilterSet):
     due_date = filters.DateFromToRangeFilter(field_name='due_date', label='Due Date Range')
