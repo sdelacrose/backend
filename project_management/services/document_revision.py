@@ -62,9 +62,11 @@ def _legacy_major(document):
 
 
 def get_revision_history(document):
-    """Stored versions of a document, newest first."""
-    return DocumentRevision.objects.filter(document=document).select_related(
-        "created_by"
+    """Stored versions of a document, newest first (deterministic: by version number)."""
+    return (
+        DocumentRevision.objects.filter(document=document)
+        .select_related("created_by")
+        .order_by("-version_number", "-id")
     )
 
 

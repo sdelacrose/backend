@@ -27,14 +27,29 @@ def _absolute_url(request, url):
     return url if str(url).startswith("http") else request.build_absolute_uri(url)
 
 
+def serialize_workflow_summary(workflow):
+    """Workflow of a version, as needed by the Revision History (details: workflow endpoint).
+
+    The approval date exists only for an APPROVED workflow (completed_at is also set when a
+    workflow is rejected, so it is never exposed as such). TWO_STEP has no reviewer.
+    """
+    if workflow is None:
+        return None
+    approved = workflow.status == DocumentWorkflow.Status.APPROVED
+    return {
+        "id": workflow.id,
+        "status": workflow.status,
+        "workflow_type": workflow.workflow_type,
+        "verifier": user_reference(workflow.verifier),
+        "approver": user_reference(workflow.approver),
+        "approved_at": workflow.completed_at if approved else None,
+    }
+
+
 def serialize_revision(revision, request, document, workflow=None):
     return {
         # Latest workflow of this revision (summary only; events: the workflow endpoint).
-        "workflow": (
-            {"id": workflow.id, "status": workflow.status, "workflow_type": workflow.workflow_type}
-            if workflow
-            else None
-        ),
+        "workflow": serialize_workflow_summary(workflow),
         "id": revision.id,
         "version_number": revision.version_number,
         "revision_label": revision.revision_label,
@@ -79,7 +94,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
         workflows = {}
         for workflow in DocumentWorkflow.objects.filter(
             revision__in=revisions
-        ).order_by("created_at", "id"):
+        ).select_related("verifier", "approver").order_by("created_at", "id"):
             workflows[workflow.revision_id] = workflow  # latest wins
         results = [
             serialize_revision(r, request, document, workflows.get(r.id))
