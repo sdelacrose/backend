@@ -2,6 +2,7 @@ import posixpath
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Max, Q
 
 from models.models import User
 
@@ -35,6 +36,12 @@ class DocumentRevision(models.Model):
     document = models.ForeignKey(
         Document, related_name="revisions", on_delete=models.CASCADE
     )
+    # VERSION: sequential working version of the document (1, 2, 3...), set at creation.
+    version_number = models.PositiveIntegerField()
+    # REVISION: official internal revision index (A, B, ...), null until the version is
+    # internally approved; assigned once by the workflow approval, never changed.
+    revision_label = models.CharField(max_length=20, null=True, blank=True)
+    # Legacy compatibility fields (previous "major-minor" labelling); not the product semantics.
     major_revision = models.CharField(max_length=20)
     minor_revision = models.PositiveIntegerField(default=0)
     file = models.FileField(upload_to=get_revision_upload_path, max_length=500)
@@ -56,7 +63,16 @@ class DocumentRevision(models.Model):
             models.UniqueConstraint(
                 fields=["document", "major_revision", "minor_revision"],
                 name="document_revision_unique_version",
-            )
+            ),
+            models.UniqueConstraint(
+                fields=["document", "version_number"],
+                name="document_revision_unique_version_number",
+            ),
+            models.UniqueConstraint(
+                fields=["document", "revision_label"],
+                condition=Q(revision_label__isnull=False),
+                name="document_revision_unique_revision_label",
+            ),
         ]
 
     @property
@@ -67,6 +83,14 @@ class DocumentRevision(models.Model):
         # Stored versions are immutable: a correction is a new minor version.
         if not self._state.adding:
             raise ValidationError("A stored document revision cannot be modified.")
+        if self.version_number is None:
+            # Safety net: services set it explicitly under the document lock.
+            self.version_number = (
+                DocumentRevision.objects.filter(document_id=self.document_id).aggregate(
+                    m=Max("version_number")
+                )["m"]
+                or 0
+            ) + 1
         super().save(*args, **kwargs)
 
     def __str__(self):

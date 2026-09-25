@@ -278,6 +278,11 @@ def perform_action(workflow, actor, action, comment):
         locked.save(update_fields=["status", "completed_at"])
         if locked.status == Status.APPROVED:
             # Same transaction as the approval.
+            from project_management.services.document_revision import (
+                assign_revision_label,
+            )
+
+            assign_revision_label(locked.revision)
             _set_document_approved(locked.revision)
         return locked
 

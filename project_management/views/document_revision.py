@@ -33,6 +33,8 @@ def serialize_revision(revision, request, document, workflow=None):
             else None
         ),
         "id": revision.id,
+        "version_number": revision.version_number,
+        "revision_label": revision.revision_label,
         "major_revision": revision.major_revision,
         "minor_revision": revision.minor_revision,
         "label": revision.label,
@@ -89,6 +91,8 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
             results = [
                 {
                     "id": None,
+                    "version_number": 1,
+                    "revision_label": None,
                     "major_revision": major,
                     "minor_revision": 0,
                     "label": f"{major}-00",

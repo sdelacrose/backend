@@ -2,6 +2,7 @@ import posixpath
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.db.models import Max
 
 from project_management.models import Document, DocumentRevision
 from project_management.services.document_workflow import (
@@ -98,6 +99,48 @@ def _title_for_new_file(document, revision):
     return f"{stem}{new_ext}"
 
 
+def _next_version_number(document):
+    """Next sequential VERSION number of a document (caller holds the document lock)."""
+    return (
+        DocumentRevision.objects.filter(document=document).aggregate(
+            m=Max("version_number")
+        )["m"]
+        or 0
+    ) + 1
+
+
+def next_revision_label(existing_labels):
+    """Temporary default REVISION sequence: A, B, ... Z, AA, AB ... (2D-3 makes it configurable)."""
+    labels = [label for label in existing_labels if label]
+    if not labels:
+        return "A"
+    return increment_major(max(labels, key=lambda label: (len(label), label)))
+
+
+def assign_revision_label(revision):
+    """Give an internally approved version its official revision label, once.
+
+    Serialized on the document row; an already assigned label is never changed.
+    The DocumentRevision row itself stays immutable (only this controlled update).
+    """
+    with transaction.atomic():
+        Document.objects.select_for_update().get(pk=revision.document_id)
+        current = DocumentRevision.objects.get(pk=revision.pk)
+        if current.revision_label:
+            revision.revision_label = current.revision_label
+            return current.revision_label
+        label = next_revision_label(
+            DocumentRevision.objects.filter(
+                document_id=revision.document_id, revision_label__isnull=False
+            ).values_list("revision_label", flat=True)
+        )
+        DocumentRevision.objects.filter(
+            pk=revision.pk, revision_label__isnull=True
+        ).update(revision_label=label)
+        revision.revision_label = label
+        return label
+
+
 def _materialize_first_revision(locked):
     """First real revision of a legacy document (caller holds the document lock).
 
@@ -108,6 +151,7 @@ def _materialize_first_revision(locked):
         return
     legacy = DocumentRevision(
         document=locked,
+        version_number=_next_version_number(locked),
         major_revision=_legacy_major(locked),
         minor_revision=0,
         file_name=locked.file_name or posixpath.basename(locked.file.name),
@@ -177,6 +221,7 @@ def add_document_revision(
 
         revision = DocumentRevision(
             document=locked,
+            version_number=_next_version_number(locked),
             major_revision=major,
             minor_revision=minor,
             file_name=posixpath.basename(getattr(uploaded_file, "name", "") or ""),
