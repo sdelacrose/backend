@@ -511,22 +511,15 @@ class DocumentSerializer(serializers.ModelSerializer):
                     )
                 }
             )
-        config = self.get_config()
+        # The document reference (full_document_number) is generated ONCE at creation and is
+        # permanent: no metadata, version, revision or legacy Document.revision change ever
+        # recalculates it (it is also read-only through the API). A legacy blank reference
+        # stays blank rather than being invented from partial data on an unrelated update.
         validated_data['sequence_number'] = instance.sequence_number
+        validated_data.pop('full_document_number', None)
         # Use user-provided revision or keep existing revision
         if 'revision' not in validated_data:
             validated_data['revision'] = instance.revision
-        numbering_data = {
-            'folder': instance.folder,
-            'document_type': instance.document_type,
-            'category': instance.category,
-            'discipline': instance.discipline,
-            'discipline_code': getattr(instance, 'discipline_code', ''),
-            'sequence_number': instance.sequence_number,
-            'revision': instance.revision,
-        }
-        numbering_data.update(validated_data)
-        validated_data['full_document_number'] = self._get_full_document_number(numbering_data, config)
         validated_data['assignee'] = instance.author if "author" not in validated_data else validated_data.get('author')
         return super().update(instance, validated_data)
 
