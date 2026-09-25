@@ -163,7 +163,9 @@ class Folder(models.Model):
 class Document(models.Model):
     folder = models.ForeignKey(Folder, related_name='documents', on_delete=models.CASCADE)
     author = models.ForeignKey(User, related_name='authored_documents', on_delete=models.SET_NULL, null=True, blank=True) # assignee
-    file = models.FileField(upload_to=get_upload_path)
+    # MAIN controlled file, kept as the compatibility pointer to the latest stored version.
+    # Empty ("") for a register entry whose main document is not created yet (TO_CREATE).
+    file = models.FileField(upload_to=get_upload_path, blank=True)
     file_name = models.CharField(max_length=500, null=True, blank=True)
     document_type = models.CharField(max_length=255, null=True, blank=True)
     identification_number = models.CharField(max_length=255, null=True, blank=True)

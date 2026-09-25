@@ -86,18 +86,28 @@ def get_next_versions(document):
 
 # --- Writes ----------------------------------------------------------------------
 
-def _title_for_new_file(document, revision):
+def _title_for_new_file(document, revision, previous_file=""):
     """Keep the document title stable across versions.
 
     Only the extension follows the new file (the viewer/download pick the renderer
-    and the saved name from it), e.g. plan.docx + a PDF upload -> plan.pdf.
+    and the saved name from it), e.g. plan.docx + a PDF upload -> plan.pdf. A title is
+    never cut at an arbitrary dot ("Plan v1.2" + PDF -> "Plan v1.2.pdf"), and an empty
+    title (first file of a register entry) takes the uploaded file name.
     """
-    current = document.file_name or posixpath.basename(document.file.name)
-    new_ext = posixpath.splitext(revision.file_name or "")[1]
-    stem, ext = posixpath.splitext(current)
-    if not new_ext or new_ext.lower() == ext.lower():
+    previous_file = previous_file or ""
+    current = document.file_name or (
+        posixpath.basename(previous_file) if previous_file else ""
+    )
+    new_name = revision.file_name or ""
+    if not current:
+        return new_name
+    new_ext = posixpath.splitext(new_name)[1]
+    if not new_ext or current.lower().endswith(new_ext.lower()):
         return current
-    return f"{stem}{new_ext}"
+    previous_ext = posixpath.splitext(previous_file)[1]
+    if previous_ext and current.lower().endswith(previous_ext.lower()):
+        return f"{current[: -len(previous_ext)]}{new_ext}"
+    return f"{current}{new_ext}"
 
 
 def _next_version_number(document):
@@ -227,7 +237,9 @@ def add_document_revision(
                 latest.major_revision, latest.minor_revision, revision_type
             )
         else:
-            major, minor = next_version(_legacy_major(locked), 0, revision_type)
+            # First stored version of a register entry without a file (nothing to
+            # materialize): legacy compatibility label 0-00 (never the official Revision).
+            major, minor = _legacy_major(locked), 0
 
         revision = DocumentRevision(
             document=locked,
@@ -246,8 +258,9 @@ def add_document_revision(
         except IntegrityError:
             raise ValidationError("This revision already exists.")
 
+        previous_file = locked.file.name if locked.file else ""
         locked.file = revision.file.name
-        locked.file_name = _title_for_new_file(locked, revision)
+        locked.file_name = _title_for_new_file(locked, revision, previous_file)
         # Document.status (business status) is deliberately left untouched.
         fields = ["file", "file_name", "updated_at"]
         if major.isdigit() and int(major) <= 99:
@@ -258,8 +271,29 @@ def add_document_revision(
         return revision
 
 
+def is_first_main_file_upload(document):
+    """A register entry with no controlled file yet: no stored version and no Document.file."""
+    return not document.file and not DocumentRevision.objects.filter(
+        document=document
+    ).exists()
+
+
 def create_document_revision(document, uploaded_file, user, revision_type, comment):
-    """Validated entry point used by the API: new file + reason are mandatory."""
+    """Validated entry point used by the API: new file + reason are mandatory.
+
+    Exception: the FIRST main file of a document that has none (TO_CREATE) only needs the
+    file; the version type and the comment may be omitted.
+    """
+    if is_first_main_file_upload(document):
+        if uploaded_file is None:
+            raise ValidationError({"file": "A new file is required."})
+        return add_document_revision(
+            document,
+            uploaded_file,
+            user,
+            revision_type=MINOR,
+            comment=(comment or "").strip(),
+        )
     errors = {}
     if revision_type not in REVISION_TYPES:
         errors["revision_type"] = "Must be 'minor' or 'major'."

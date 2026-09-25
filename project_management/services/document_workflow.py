@@ -17,7 +17,7 @@ Action = DocumentWorkflowEvent.Action
 
 # Derived INTERNAL status of a document (validation lifecycle of its CURRENT version).
 # It is never stored and never written to Document.status (the configurable business status).
-# TO_CREATE (register entry without a main file) is not supported yet: Document.file is mandatory.
+INTERNAL_TO_CREATE = "TO_CREATE"  # register entry without any main controlled file/version
 INTERNAL_DRAFT = "DRAFT"
 INTERNAL_IN_VALIDATION = "IN_VALIDATION"
 INTERNAL_APPROVED = "APPROVED"
@@ -126,10 +126,18 @@ def internal_status_from_workflow_status(workflow_status):
 
 
 def get_internal_status(document):
-    """Internal status of a document. Uses the list annotation when present (no extra query)."""
+    """Internal status of a document. Uses the list annotation when present (no extra query).
+
+    TO_CREATE: no stored version AND no Document.file (supporting attachments never count).
+    A legacy document (file, no stored version) is a synthetic Version 1: DRAFT or workflow-driven.
+    """
     if hasattr(document, "wf_status"):
+        if getattr(document, "current_revision_id", None) is None and not document.file:
+            return INTERNAL_TO_CREATE
         return internal_status_from_workflow_status(document.wf_status)
     current = get_current_revision(document)
+    if current is None and not document.file:
+        return INTERNAL_TO_CREATE
     latest = (
         DocumentWorkflow.objects.filter(revision=current)
         .order_by("-created_at", "-id")

@@ -3,7 +3,6 @@ from project_management.serializers.time_expense import get_valid_choices
 from rest_framework import serializers
 from django.conf import settings
 from django.db import transaction
-from django.core.exceptions import ValidationError as DjangoValidationError
 
 from models.models import CompanyConfig, CompanyProfile
 from models.hierarchical_configurations import (
@@ -14,10 +13,7 @@ from project_management.models import Document, DocumentSearchIndex, Folder, Pro
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
 from project_management.services.document_reference import generate_document_reference
-from project_management.services.document_workflow import (
-    assert_document_file_unlocked,
-    get_internal_status,
-)
+from project_management.services.document_workflow import get_internal_status
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
     resolve_document_library_scope,
@@ -362,6 +358,17 @@ class DocumentSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         attrs = super().validate(attrs)
 
+        if (
+            self.instance is None
+            and hasattr(self, "initial_data")
+            and not attrs.get("file")
+        ):
+            # Register entry without a main file (TO_CREATE): the title is the file_name.
+            if not str(attrs.get("file_name") or "").strip():
+                raise serializers.ValidationError(
+                    {"file_name": "A title is required when no file is provided."}
+                )
+
         status = attrs.get("status")
         internal_review_status = attrs.get("internal_review_status")
         external_review_status = attrs.get("external_review_status")
@@ -501,10 +508,16 @@ class DocumentSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         if 'file' in validated_data:
-            try:
-                assert_document_file_unlocked(instance)
-            except DjangoValidationError as error:
-                raise serializers.ValidationError({'file': error.messages})
+            # The controlled main file only changes through a new version (revision endpoint);
+            # an ordinary update can never silently replace it.
+            raise serializers.ValidationError(
+                {
+                    'file': (
+                        'The main file cannot be replaced by updating the document. '
+                        'Upload it as a new version (POST /document/<id>/revisions).'
+                    )
+                }
+            )
         next_folder = validated_data.get('folder')
         if (
             next_folder is not None
