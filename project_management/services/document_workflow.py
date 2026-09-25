@@ -15,6 +15,11 @@ WorkflowType = DocumentWorkflow.WorkflowType
 Step = DocumentWorkflowEvent.Step
 Action = DocumentWorkflowEvent.Action
 
+# The only two automatic Document.status transitions (protected default values).
+# Workflow states are never exposed as Document.status; everything else stays manual.
+DOCUMENT_STATUS_APPROVED = "Approved"
+DOCUMENT_STATUS_NEW_REVISION = "Draft"
+
 # action -> (status it can be performed in, step recorded, actor attribute)
 _DECISIONS = {
     Action.SIGN: (Status.DRAFT, Step.AUTHOR_SIGN, "author"),
@@ -97,17 +102,40 @@ def revision_has_active_workflow(revision):
     ).exists()
 
 
-def assert_document_file_unlocked(document):
-    """The current revision/file of a document cannot change during an active workflow."""
-    current = (
+def get_current_revision(document):
+    return (
         DocumentRevision.objects.filter(document=document)
         .order_by("-created_at", "-id")
         .first()
     )
+
+
+def current_revision_has_active_workflow(document):
+    current = get_current_revision(document)
+    return bool(current and revision_has_active_workflow(current))
+
+
+def assert_document_file_unlocked(document):
+    """The current revision/file of a document cannot change during an active workflow."""
+    current = get_current_revision(document)
     if current and revision_has_active_workflow(current):
         raise ValidationError(
             f"Revision {current.label} is locked by an active workflow."
         )
+
+
+def _set_document_approved(revision):
+    """Approval of the CURRENT revision sets Document.status to "Approved".
+
+    An older revision can never overwrite the status of the document.
+    """
+    document = revision.document
+    current = get_current_revision(document)
+    if current is None or current.pk != revision.pk:
+        return
+    if document.status != DOCUMENT_STATUS_APPROVED:
+        document.status = DOCUMENT_STATUS_APPROVED
+        document.save(update_fields=["status", "updated_at"])
 
 
 # --- Writes ----------------------------------------------------------------------
@@ -248,6 +276,9 @@ def perform_action(workflow, actor, action, comment):
             if locked.status == Status.APPROVED:
                 locked.completed_at = timezone.now()
         locked.save(update_fields=["status", "completed_at"])
+        if locked.status == Status.APPROVED:
+            # Same transaction as the approval.
+            _set_document_approved(locked.revision)
         return locked
 
 

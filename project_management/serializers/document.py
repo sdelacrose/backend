@@ -13,7 +13,10 @@ from models.hierarchical_configurations import (
 from project_management.models import Document, DocumentSearchIndex, Folder, Project
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
-from project_management.services.document_workflow import assert_document_file_unlocked
+from project_management.services.document_workflow import (
+    assert_document_file_unlocked,
+    current_revision_has_active_workflow,
+)
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
     allocate_document_sequence,
@@ -211,6 +214,16 @@ class DocumentSerializer(serializers.ModelSerializer):
         return value
 
     def validate_status(self, value):
+        # Server-side guard: the status is frozen while the CURRENT revision has an active
+        # validation workflow (an unchanged value is still accepted).
+        if (
+            self.instance is not None
+            and (value or None) != (self.instance.status or None)
+            and current_revision_has_active_workflow(self.instance)
+        ):
+            raise serializers.ValidationError(
+                'The status cannot be changed while a validation workflow is in progress.'
+            )
         return self._validate_optional_choice_field(
             value, "document_status", "document status", "status"
         )

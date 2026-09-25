@@ -5,6 +5,7 @@ from django.db import IntegrityError, transaction
 
 from project_management.models import Document, DocumentRevision
 from project_management.services.document_workflow import (
+    DOCUMENT_STATUS_NEW_REVISION,
     assert_document_file_unlocked,
 )
 
@@ -192,7 +193,9 @@ def add_document_revision(
 
         locked.file = revision.file.name
         locked.file_name = _title_for_new_file(locked, revision)
-        fields = ["file", "file_name", "updated_at"]
+        # A new revision becoming current restarts the document lifecycle (same transaction).
+        locked.status = DOCUMENT_STATUS_NEW_REVISION
+        fields = ["file", "file_name", "status", "updated_at"]
         if major.isdigit() and int(major) <= 99:
             # Keep the integer shown by the Register in step with numeric majors.
             locked.revision = int(major)
