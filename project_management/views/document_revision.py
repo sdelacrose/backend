@@ -13,6 +13,9 @@ from project_management.services.document_register import (
     assert_can_update_document,
     get_register_document_or_404,
 )
+from project_management.services.document_control_settings import (
+    get_document_control_settings,
+)
 from project_management.services.document_revision import (
     create_document_revision,
     get_next_versions,
@@ -115,6 +118,10 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                 "count": len(results),
                 "results": results,
                 "next_versions": get_next_versions(document),
+                # Project default of the internal workflow (preselected when launching it).
+                "workflow_default": get_document_control_settings(document)["workflow"][
+                    "default"
+                ],
             }
         )
 

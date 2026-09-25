@@ -95,31 +95,59 @@ def reference_convention_is_frozen(project):
     return project_code_is_locked(project)
 
 
-def _reference_section(document_control_configuration):
+def revision_convention_is_frozen(project):
+    """The revision scheme/start is frozen once a revision label has been assigned in the project."""
+    from project_management.models import DocumentRevision
+
+    if not project.pk:
+        return False
+    return (
+        DocumentRevision.objects.filter(document__folder__project_id=project.pk)
+        .exclude(revision_label__isnull=True)
+        .exclude(revision_label="")
+        .exists()
+    )
+
+
+def _section(document_control_configuration, name):
     from models.document_control_configuration import (
         resolve_document_control_configuration,
     )
 
-    return resolve_document_control_configuration(document_control_configuration)["reference"]
+    return resolve_document_control_configuration(document_control_configuration)[name]
 
 
-def assert_reference_convention_unchanged(project, current, new):
-    """Reject a change of reference.* (segments, separator, sequence_width, sequence_scope)
-    on a frozen project. revision.* and workflow.* stay editable."""
-    if _reference_section(current) == _reference_section(new):
-        return
-    if reference_convention_is_frozen(project):
-        raise ValidationError(
-            "The reference convention (segments, separator, sequence width and sequence "
-            "scope) cannot be changed: documents of this project already have permanent "
-            "references built with it."
-        )
+_FROZEN_CONVENTIONS = (
+    (
+        "reference",
+        reference_convention_is_frozen,
+        "The reference convention (segments, separator, sequence width and sequence "
+        "scope) cannot be changed: documents of this project already have permanent "
+        "references built with it.",
+    ),
+    (
+        "revision",
+        revision_convention_is_frozen,
+        "The revision scheme and start cannot be changed: revisions of this project "
+        "have already been assigned with them.",
+    ),
+)
 
 
-def keep_frozen_reference_convention(project, current, new):
-    """Sync/reset helper: on a frozen project, carry the current reference.* over `new`."""
-    if not reference_convention_is_frozen(project):
-        return new
+def assert_conventions_unchanged(project, current, new):
+    """Reject a change of reference.* or revision.* once the project has used them.
+
+    workflow.* is never frozen.
+    """
+    for name, is_frozen, message in _FROZEN_CONVENTIONS:
+        if _section(current, name) != _section(new, name) and is_frozen(project):
+            raise ValidationError(message)
+
+
+def keep_frozen_conventions(project, current, new):
+    """Sync/reset helper: on a started project, carry the current frozen sections over `new`."""
     merged = dict(new or {})
-    merged["reference"] = dict(_reference_section(current))
+    for name, is_frozen, _message in _FROZEN_CONVENTIONS:
+        if is_frozen(project):
+            merged[name] = dict(_section(current, name))
     return merged

@@ -182,6 +182,17 @@ def _validate_actors(workflow_type, author, verifier, approver, allowed_users):
         raise ValidationError(errors)
 
 
+def resolve_workflow_type(document, workflow_type):
+    """An explicit workflow type is kept as is; when omitted, the project's workflow.default."""
+    if workflow_type:
+        return workflow_type
+    from project_management.services.document_control_settings import (
+        get_document_control_settings,
+    )
+
+    return get_document_control_settings(document)["workflow"]["default"]
+
+
 def start_workflow(
     revision, workflow_type, author, verifier, approver, created_by, allowed_users=None
 ):
@@ -189,6 +200,7 @@ def start_workflow(
 
     A revision has one workflow: resubmission after a rejection is not implemented.
     """
+    workflow_type = resolve_workflow_type(revision.document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
     if workflow_type == WorkflowType.TWO_STEP:
         verifier = None
@@ -233,6 +245,7 @@ def start_workflow_for_document(
         ensure_current_revision,
     )
 
+    workflow_type = resolve_workflow_type(document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
     with transaction.atomic():
         revision = ensure_current_revision(document)

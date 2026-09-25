@@ -47,11 +47,11 @@ class ECPMPCONFIGSerializer(serializers.ModelSerializer):
             from django.core.exceptions import ValidationError as DjangoValidationError
 
             from project_management.services.project_codes import (
-                assert_reference_convention_unchanged,
+                assert_conventions_unchanged,
             )
 
             try:
-                assert_reference_convention_unchanged(
+                assert_conventions_unchanged(
                     project, self.instance.document_control_configuration, resolved
                 )
             except DjangoValidationError as error:

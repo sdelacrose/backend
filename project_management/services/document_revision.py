@@ -108,11 +108,14 @@ def _next_version_number(document):
     ) + 1
 
 
-def next_revision_label(existing_labels):
-    """Temporary default REVISION sequence: A, B, ... Z, AA, AB ... (2D-3 makes it configurable)."""
+def next_revision_label(existing_labels, start="A"):
+    """Next REVISION label: the configured start, then A -> B -> ... -> Z -> AA (or 0 -> 1 -> 2).
+
+    Labels already assigned are respected (the sequence continues after the highest one).
+    """
     labels = [label for label in existing_labels if label]
     if not labels:
-        return "A"
+        return start
     return increment_major(max(labels, key=lambda label: (len(label), label)))
 
 
@@ -128,10 +131,16 @@ def assign_revision_label(revision):
         if current.revision_label:
             revision.revision_label = current.revision_label
             return current.revision_label
+        from project_management.services.document_control_settings import (
+            get_document_control_settings,
+        )
+
+        settings = get_document_control_settings(current.document)["revision"]
         label = next_revision_label(
             DocumentRevision.objects.filter(
                 document_id=revision.document_id, revision_label__isnull=False
-            ).values_list("revision_label", flat=True)
+            ).values_list("revision_label", flat=True),
+            start=settings["start"],
         )
         DocumentRevision.objects.filter(
             pk=revision.pk, revision_label__isnull=True
