@@ -2336,3 +2336,37 @@ def check_company_project_permission(self, user, permission_type, context=None):
             print(f'\n\n\n=============== [DEBUG] check_company_project_permission: user is a company owner and project belongs to their company\n\n\n', flush=True)
             return self._check_permission(user, 'projects', permission_type, "company", {})
         return False
+
+
+class DocumentIssuerLookupPermission(BaseModulePermission):
+    """Select the external issuing company of a Document (Client / Supplier origin).
+
+    The use case is "which external company issued this document", never browsing the Network:
+    it needs the right to create or edit Documents (company scope, or the project scope of the
+    optional ?project=<id>) and NEVER requires contact_management.view.
+    """
+
+    ACTIONS = ("full_access", "create", "update")
+
+    def __init__(self):
+        super().__init__("documents", "create", "company")
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        if any(
+            self._check_permission(user, "documents", action, "company", {})
+            for action in self.ACTIONS
+        ):
+            return True
+        project_id = request.query_params.get("project")
+        if not str(project_id or "").isdigit():
+            return False
+        project = Project.objects.filter(pk=project_id).first()
+        if project is None:
+            return False
+        return any(
+            self._check_permission(user, "documents", action, "project", {"project": project})
+            for action in self.ACTIONS
+        )

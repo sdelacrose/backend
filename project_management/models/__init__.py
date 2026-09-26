@@ -1,5 +1,5 @@
 from .contact import Contact, ContactCompany, ContactUser
-from .document import Document, DocumentReferenceCounter, Folder
+from .document import Document, DocumentOrigin, DocumentReferenceCounter, Folder
 from .document_control import DocumentControl
 from .document_revision import DocumentRevision
 from .document_attachment import DocumentAttachment

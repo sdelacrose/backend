@@ -161,6 +161,19 @@ class Folder(models.Model):
     def __str__(self):
         return self.name
 
+class DocumentOrigin(models.TextChoices):
+    """Who produced the document. A business classification, explicit and never inferred.
+
+    Independent from Document.status (business status), the internal lifecycle, the internal
+    workflow and any future distribution / review purpose. An INTERNAL document sent to a client
+    stays INTERNAL; CLIENT means the client produced and sent the document to us.
+    """
+
+    INTERNAL = "INTERNAL", "Internal"
+    CLIENT = "CLIENT", "Client"
+    SUPPLIER = "SUPPLIER", "Supplier"
+
+
 class Document(models.Model):
     folder = models.ForeignKey(Folder, related_name='documents', on_delete=models.CASCADE)
     author = models.ForeignKey(User, related_name='authored_documents', on_delete=models.SET_NULL, null=True, blank=True) # assignee
@@ -171,6 +184,21 @@ class Document(models.Model):
     document_type = models.CharField(max_length=255, null=True, blank=True)
     identification_number = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=255, null=True, blank=True)
+    # Legacy documents predate this distinction and keep the internal Document Control behaviour.
+    document_origin = models.CharField(
+        max_length=20,
+        choices=DocumentOrigin.choices,
+        default=DocumentOrigin.INTERNAL,
+        db_index=True,
+    )
+    # CLIENT / SUPPLIER only: the Network company (ContactCompany) that issued the document.
+    external_issuer_company = models.ForeignKey(
+        "ContactCompany",
+        related_name="issued_documents",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
     transmittal_category = models.CharField(max_length=255, null=True, blank=True)

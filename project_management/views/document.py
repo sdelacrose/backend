@@ -10,7 +10,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
-from django.db.models import Case, CharField, F, Func, Prefetch, Q, Value, When
+from django.db.models import Case, CharField, Exists, F, Func, OuterRef, Prefetch, Q, Value, When
 from django.db.models.functions import Coalesce, Concat, NullIf
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
@@ -19,13 +19,13 @@ from django.core.exceptions import PermissionDenied
 from django.utils.decorators import method_decorator
 
 from models.models import CompanyProfile, User
-from project_management.models import Folder, Document, Project, ObjectAssessment
+from project_management.models import ContactCompany, Folder, Document, DocumentWorkflow, Project, ObjectAssessment
 from project_management.serializers.document import FolderSerializer, DocumentSerializer
 from ecpmpapp.constants import UserType
 from ecpmpapp.ordering import TableOrderingFilter
 from project_management.utils import get_product_name_from_request, has_project_permission
 from project_management.serializers.document import DocumentHistorySerializer
-from project_management.permissions import DocumentPermission
+from project_management.permissions import DocumentIssuerLookupPermission, DocumentPermission
 from project_management.filters import DocumentFilter
 from project_management.services.document_access import get_accessible_document_queryset
 from project_management.services.document_workflow import annotate_current_workflow
@@ -595,6 +595,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'bulk_update':
             return [DocumentPermission('update', 'mixed')]
+        if self.action == 'issuer_companies':
+            return [DocumentIssuerLookupPermission()]
         if self.action == 'list':
             # Check if it's a company or project document based on query params
             company_profile_id = self.request.query_params.get('folder__company_profile')
@@ -676,6 +678,28 @@ class DocumentViewSet(viewsets.ModelViewSet):
             return [DocumentPermission('delete', 'company')]
         return super().get_permissions()
 
+    @action(detail=False, methods=["get"], url_path="issuer-companies")
+    def issuer_companies(self, request):
+        """Companies selectable as the external issuer of a Document (Client / Supplier origin).
+
+        Minimal by design: only {id, company_name}, live companies of the requester's own
+        tenant (same ownership rule as the Network companies). It is not a Network browser.
+        """
+        user = request.user
+        if user.is_freelancer:
+            queryset = ContactCompany.objects.filter(user=user)
+        elif user.company_id:
+            queryset = ContactCompany.objects.filter(company_profile_id=user.company_id)
+        else:
+            queryset = ContactCompany.objects.none()
+        queryset = queryset.filter(is_deleted=False)
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(company_name__icontains=search)
+        return Response(
+            list(queryset.order_by("company_name", "id").values("id", "company_name"))
+        )
+
     @action(detail=False, methods=["patch"], url_path="bulk-update")
     def bulk_update(self, request):
         request_serializer = BulkDocumentUpdateRequestSerializer(
@@ -698,9 +722,14 @@ class DocumentViewSet(viewsets.ModelViewSet):
         queryset = get_accessible_document_queryset(self.request)
         if self.action == "list":
             # Workflow of the CURRENT revision (Register indicator + "my validations").
-            queryset = annotate_current_workflow(queryset)
+            queryset = annotate_current_workflow(queryset).annotate(
+                # Origin becomes immutable once any internal workflow exists.
+                has_workflow_history=Exists(
+                    DocumentWorkflow.objects.filter(revision__document=OuterRef("pk"))
+                )
+            )
         return queryset.select_related(
-            "control", "control__approver", "created_by", "folder__project"
+            "control", "control__approver", "created_by", "folder__project", "external_issuer_company"
         ).annotate(
             author_name=Concat(
                 Coalesce(F("author__first_name"), Value("")),

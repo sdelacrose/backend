@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
 from project_management.models import (
+    DocumentOrigin,
     DocumentRevision,
     DocumentWorkflow,
     DocumentWorkflowEvent,
@@ -162,6 +163,19 @@ def assert_document_file_unlocked(document):
 
 
 
+def document_has_workflow(document):
+    """Any internal validation workflow (active or historical) on any version of the document."""
+    return DocumentWorkflow.objects.filter(revision__document=document).exists()
+
+
+def assert_internal_origin(document):
+    """Only INTERNAL documents can use the internal 2/3-signature workflow (server-side rule)."""
+    if document.document_origin != DocumentOrigin.INTERNAL:
+        raise ValidationError(
+            "The internal validation workflow is available for internal documents only."
+        )
+
+
 # --- Writes ----------------------------------------------------------------------
 
 def _validate_actors(workflow_type, author, verifier, approver, allowed_users):
@@ -210,6 +224,7 @@ def start_workflow(
 
     A revision has one workflow: resubmission after a rejection is not implemented.
     """
+    assert_internal_origin(revision.document)
     workflow_type = resolve_workflow_type(revision.document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
     if workflow_type == WorkflowType.TWO_STEP:
@@ -255,6 +270,7 @@ def start_workflow_for_document(
         ensure_current_revision,
     )
 
+    assert_internal_origin(document)
     workflow_type = resolve_workflow_type(document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
     with transaction.atomic():

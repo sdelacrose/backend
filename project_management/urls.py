@@ -537,6 +537,9 @@ urlpatterns = [
     path('document/bulk-update', DocumentViewSet.as_view({
         'patch': 'bulk_update',
     }), name='document-bulk-update'),
+    path('document/issuer-companies', DocumentViewSet.as_view({
+        'get': 'issuer_companies',
+    }), name='document-issuer-companies'),
     path('document-register', DocumentRegisterViewSet.as_view({'get': 'list'}), name='document-register'),
     path('document-register/filter-options', DocumentRegisterViewSet.as_view({'get': 'filter_options'}), name='document-register-filter-options'),
     path('document-register/<int:document_id>', DocumentRegisterViewSet.as_view({

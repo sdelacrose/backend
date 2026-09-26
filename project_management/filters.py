@@ -36,6 +36,7 @@ class DocumentFilter(filters.FilterSet):
     transmittal_category = CharInFilter(
         field_name="transmittal_category", lookup_expr="in"
     )
+    document_origin = CharInFilter(field_name="document_origin", lookup_expr="in")
     author = NumberInFilter(field_name="author", lookup_expr="in")
     folder = NumberInFilter(field_name="folder", lookup_expr="in")
     folder_name = CharInFilter(field_name="folder__name", lookup_expr="in")
@@ -56,6 +57,7 @@ class DocumentFilter(filters.FilterSet):
             "folder__freelancer",
             "author",
             "document_type",
+            "document_origin",
             "category",
             "discipline_group_id",
             "discipline",

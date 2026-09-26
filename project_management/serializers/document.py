@@ -9,11 +9,14 @@ from models.hierarchical_configurations import (
     DOCUMENT_DISCIPLINES_KEY,
     resolve_nested_configurations,
 )
-from project_management.models import Document, DocumentRevision, DocumentSearchIndex, Folder, Project
+from project_management.models import Document, DocumentOrigin, DocumentRevision, DocumentSearchIndex, Folder, Project
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
 from project_management.services.document_reference import generate_document_reference
-from project_management.services.document_workflow import get_internal_status
+from project_management.services.document_workflow import (
+    document_has_workflow,
+    get_internal_status,
+)
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
     resolve_document_library_scope,
@@ -32,6 +35,7 @@ class DocumentHistorySerializer(serializers.ModelSerializer):
             'document_type',
             'identification_number',
             'revision',
+            'document_origin',
             'status',
             'internal_review_status',
             'external_review_status',
@@ -74,6 +78,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     workflow = serializers.SerializerMethodField()
     internal_status = serializers.SerializerMethodField()
     revision_label = serializers.SerializerMethodField()
+    origin_locked = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -84,6 +89,9 @@ class DocumentSerializer(serializers.ModelSerializer):
             'file',
             'file_name',
             'document_type',
+            'document_origin',
+            'external_issuer_company',
+            'origin_locked',
             'status',
             'internal_review_status',
             'external_review_status',
@@ -374,8 +382,83 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         return value
 
+    @staticmethod
+    def _issuer_in_scope(issuer, folder):
+        """The issuer must be a live Network company of the library owner (no cross-tenant use)."""
+        if issuer.is_deleted:
+            return False
+        if folder.company_profile_id:
+            return issuer.company_profile_id == folder.company_profile_id
+        if folder.freelancer_id:
+            return issuer.user_id == folder.freelancer_id
+        owner = folder.project.user if folder.project_id else None
+        if owner is None:
+            return False
+        if getattr(owner, "company_id", None):
+            return issuer.company_profile_id == owner.company_id
+        return issuer.user_id == owner.id
+
+    def _validate_origin(self, attrs):
+        """Document Origin rules (V1): explicit origin, issuer only for CLIENT / SUPPLIER."""
+        instance = self.instance
+        origin_sent = "document_origin" in attrs
+        issuer_sent = "external_issuer_company" in attrs
+        if not origin_sent and not issuer_sent:
+            return attrs
+
+        current_origin = instance.document_origin if instance else DocumentOrigin.INTERNAL
+        origin = attrs.get("document_origin", current_origin)
+        if (
+            instance
+            and origin_sent
+            and origin != current_origin
+            and document_has_workflow(instance)
+        ):
+            # Internal approval history must never be silently reclassified.
+            raise serializers.ValidationError(
+                {
+                    "document_origin": (
+                        "The origin cannot be changed once an internal validation "
+                        "workflow exists for this document."
+                    )
+                }
+            )
+
+        if origin == DocumentOrigin.INTERNAL:
+            # An issuer submitted for an internal document is cleaned up, never stored.
+            attrs["external_issuer_company"] = None
+            return attrs
+
+        issuer = (
+            attrs["external_issuer_company"]
+            if issuer_sent
+            else (instance.external_issuer_company if instance else None)
+        )
+        if issuer is None:
+            if issuer_sent or origin_sent:
+                raise serializers.ValidationError(
+                    {
+                        "external_issuer_company": (
+                            "The issuing company is required for client and supplier documents."
+                        )
+                    }
+                )
+            return attrs
+        folder = attrs.get("folder") or (instance.folder if instance else None)
+        unchanged = instance is not None and instance.external_issuer_company_id == issuer.id
+        if folder is not None and not unchanged and not self._issuer_in_scope(issuer, folder):
+            raise serializers.ValidationError(
+                {
+                    "external_issuer_company": (
+                        "This company does not belong to the network of the document library."
+                    )
+                }
+            )
+        return attrs
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        attrs = self._validate_origin(attrs)
 
         if (
             self.instance is None
@@ -627,6 +710,15 @@ class DocumentSerializer(serializers.ModelSerializer):
         ).first()
         return current.revision_label if current else None
 
+    def get_origin_locked(self, obj):
+        # True once an internal workflow (active or historical) exists: the origin is then
+        # immutable. Annotated by the list queryset; one lookup on the detail.
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'has_workflow_history'):
+            return bool(obj.has_workflow_history)
+        return document_has_workflow(obj)
+
     def get_internal_status(self, obj):
         # Derived (never stored) validation lifecycle of the CURRENT version:
         # DRAFT / IN_VALIDATION / APPROVED. Independent from the business Document.status.
@@ -866,6 +958,10 @@ class DocumentSerializer(serializers.ModelSerializer):
                 "id" : instance.folder.id,
                 "name": instance.folder.name
             }
+        issuer = instance.external_issuer_company
+        representation["external_issuer_company"] = (
+            {"id": issuer.id, "name": issuer.company_name} if issuer else None
+        )
         return representation
 
 class FolderSerializer(serializers.ModelSerializer):
