@@ -3,6 +3,8 @@ import posixpath
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Max, Q
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 
 from models.models import User
 
@@ -23,6 +25,24 @@ def get_revision_upload_path(instance, filename):
         f"{instance.major_revision}-{instance.minor_revision:02d}",
         filename,
     )
+
+
+class DocumentRevisionQuerySet(models.QuerySet):
+    """Stored versions are evidence: never bulk-deleted, never bulk-rewritten.
+
+    The ONLY allowed bulk write is the controlled approval step: giving a version its
+    official revision label once (services.document_revision.assign_revision_label).
+    """
+
+    def update(self, **kwargs):
+        if set(kwargs) != {"revision_label"}:
+            raise ValidationError("A stored document revision cannot be modified.")
+        if self.filter(revision_label__isnull=False).exists():
+            raise ValidationError("An assigned revision label cannot be changed.")
+        return super().update(**kwargs)
+
+    def delete(self):
+        raise ValidationError("Stored document revisions cannot be deleted.")
 
 
 class DocumentRevision(models.Model):
@@ -56,6 +76,8 @@ class DocumentRevision(models.Model):
         blank=True,
     )
     created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = DocumentRevisionQuerySet.as_manager()
 
     class Meta:
         ordering = ["-created_at", "-id"]
@@ -93,5 +115,18 @@ class DocumentRevision(models.Model):
             ) + 1
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Stored document revisions cannot be deleted.")
+
     def __str__(self):
         return f"{self.document_id} {self.label}"
+
+
+@receiver(pre_delete, sender=DocumentRevision)
+def protect_evidence_revision(sender, instance, **kwargs):
+    """A cascade (Document, Folder, Project...) may only remove plain draft versions."""
+    if instance.revision_label or instance.workflows.exists():
+        raise ValidationError(
+            "This document has validation workflow history or an approved revision "
+            "and cannot be deleted."
+        )

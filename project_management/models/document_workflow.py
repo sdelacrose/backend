@@ -1,10 +1,23 @@
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 
 from models.models import User
 
 from .document_revision import DocumentRevision
+
+
+class EvidenceQuerySet(models.QuerySet):
+    """Workflow records are evidence: transitions go through the workflow service (instance
+    save); nothing is bulk-edited or bulk-deleted."""
+
+    def update(self, **kwargs):
+        raise ValidationError("Workflow records cannot be modified.")
+
+    def delete(self):
+        raise ValidationError("Workflow records cannot be deleted.")
 
 
 class DocumentWorkflow(models.Model):
@@ -60,6 +73,8 @@ class DocumentWorkflow(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
+    objects = EvidenceQuerySet.as_manager()
+
     class Meta:
         ordering = ["-created_at", "-id"]
         constraints = [
@@ -81,6 +96,21 @@ class DocumentWorkflow(models.Model):
     @property
     def is_active(self):
         return self.status in self.ACTIVE_STATUSES
+
+    def save(self, *args, **kwargs):
+        # A completed (approved / rejected) workflow is historical evidence: never rewritten.
+        if not self._state.adding:
+            stored = (
+                DocumentWorkflow.objects.filter(pk=self.pk)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if stored is not None and stored not in self.ACTIVE_STATUSES:
+                raise ValidationError("A completed workflow cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Workflows cannot be deleted.")
 
     def __str__(self):
         return f"workflow {self.pk} rev {self.revision_id} {self.status}"
@@ -154,3 +184,16 @@ class DocumentWorkflowEvent(models.Model):
 
     def __str__(self):
         return f"{self.workflow_id} {self.step} {self.action}"
+
+
+_EVIDENCE_MESSAGE = (
+    "This document has validation workflow history or an approved revision "
+    "and cannot be deleted."
+)
+
+
+@receiver(pre_delete, sender=DocumentWorkflow)
+@receiver(pre_delete, sender=DocumentWorkflowEvent)
+def protect_workflow_evidence(sender, instance, **kwargs):
+    """Cascades (Document, Folder, Project...) must not remove workflow evidence."""
+    raise ValidationError(_EVIDENCE_MESSAGE)

@@ -28,7 +28,13 @@ from project_management.serializers.document import DocumentHistorySerializer
 from project_management.permissions import DocumentIssuerLookupPermission, DocumentPermission
 from project_management.filters import DocumentFilter
 from project_management.services.document_access import get_accessible_document_queryset
-from project_management.services.document_workflow import annotate_current_workflow
+from project_management.services.document_workflow import (
+    DOCUMENT_EVIDENCE_MESSAGE,
+    FOLDER_EVIDENCE_MESSAGE,
+    annotate_current_workflow,
+    document_has_evidence,
+    folder_has_evidence,
+)
 from project_management.services.document_bulk_update import (
     BulkDocumentUpdateRequestSerializer,
     DocumentBulkUpdateService,
@@ -535,10 +541,20 @@ class FolderViewSet(viewsets.ModelViewSet):
             return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, *args, **kwargs):
+        # Preflight: refuse cleanly BEFORE touching anything when a document below this folder
+        # is documentary evidence (the model/signal guards stay as defence in depth).
+        folder = self.get_object()
+        if folder_has_evidence(folder):
+            return Response(
+                {"detail": FOLDER_EVIDENCE_MESSAGE},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             return super().destroy(request, *args, **kwargs)
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST
+            )
  
  
 class DocumentViewSet(viewsets.ModelViewSet):
@@ -810,6 +826,22 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        # Documentary evidence (workflow history, approved revision) is never deleted.
+        instance = self.get_object()
+        if document_has_evidence(instance):
+            return Response(
+                {"detail": DOCUMENT_EVIDENCE_MESSAGE},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ValidationError as error:
+            return Response(
+                {"detail": " ".join(error.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def create(self, request, *args, **kwargs):
         # Custom create method to handle file uploads

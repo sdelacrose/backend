@@ -243,6 +243,14 @@ class Document(models.Model):
         return self.file.name
 
     def delete(self, *args, **kwargs):
+        # Documentary evidence (workflow history, approved revision) is never hard-deleted.
+        from project_management.services.document_workflow import (
+            DOCUMENT_EVIDENCE_MESSAGE,
+            document_has_evidence,
+        )
+
+        if document_has_evidence(self):
+            raise ValidationError(DOCUMENT_EVIDENCE_MESSAGE)
         # Delete associated historical records
         self.history.all().delete()
         # Call the parent class's delete method

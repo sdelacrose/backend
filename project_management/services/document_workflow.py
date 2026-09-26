@@ -1,10 +1,11 @@
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
-from django.db.models import Case, F, IntegerField, OuterRef, Subquery, When
+from django.db.models import Case, F, IntegerField, OuterRef, Q, Subquery, When
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied
 
 from project_management.models import (
+    Document,
     DocumentOrigin,
     DocumentRevision,
     DocumentWorkflow,
@@ -166,6 +167,67 @@ def assert_document_file_unlocked(document):
 def document_has_workflow(document):
     """Any internal validation workflow (active or historical) on any version of the document."""
     return DocumentWorkflow.objects.filter(revision__document=document).exists()
+
+
+DOCUMENT_EVIDENCE_MESSAGE = (
+    "This document has validation workflow history or an approved revision "
+    "and cannot be deleted."
+)
+
+
+def document_has_evidence(document):
+    """Documentary evidence exists: any workflow, workflow event or official revision label.
+
+    A plain draft (versions without any workflow) is not evidence and stays deletable.
+    """
+    if not document.pk:
+        return False
+    return (
+        DocumentWorkflow.objects.filter(revision__document=document).exists()
+        or DocumentWorkflowEvent.objects.filter(
+            workflow__revision__document=document
+        ).exists()
+        or DocumentRevision.objects.filter(
+            document=document, revision_label__isnull=False
+        ).exists()
+    )
+
+
+FOLDER_EVIDENCE_MESSAGE = (
+    "This folder contains documents with validation workflow history or an approved "
+    "revision and cannot be deleted."
+)
+PROJECT_EVIDENCE_MESSAGE = (
+    "This project contains documents with validation workflow history or an approved "
+    "revision and cannot be deleted."
+)
+
+
+def _documents_with_evidence(documents):
+    return documents.filter(
+        Q(revisions__workflows__isnull=False) | Q(revisions__revision_label__isnull=False)
+    )
+
+
+def folder_has_evidence(folder):
+    """Preflight for a folder deletion: evidence in the folder or any subfolder."""
+    from project_management.models import Folder
+
+    ids = [folder.pk]
+    frontier = [folder.pk]
+    while frontier:
+        frontier = list(
+            Folder.objects.filter(parent_id__in=frontier).values_list("pk", flat=True)
+        )
+        ids.extend(frontier)
+    return _documents_with_evidence(Document.objects.filter(folder_id__in=ids)).exists()
+
+
+def project_has_evidence(project):
+    """Preflight for a project deletion: evidence in any document of the project."""
+    return _documents_with_evidence(
+        Document.objects.filter(folder__project=project)
+    ).exists()
 
 
 def assert_internal_origin(document):
