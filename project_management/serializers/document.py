@@ -65,6 +65,12 @@ class DocumentSerializer(serializers.ModelSerializer):
     creator = serializers.SerializerMethodField()
     approver = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
+    # Blank entries are accepted here and dropped by validate_tags.
+    tags = serializers.ListField(
+        child=serializers.CharField(allow_blank=True, max_length=100),
+        required=False,
+        allow_empty=True,
+    )
     workflow = serializers.SerializerMethodField()
     internal_status = serializers.SerializerMethodField()
 
@@ -102,8 +108,19 @@ class DocumentSerializer(serializers.ModelSerializer):
             'workflow',
             'internal_status',
             'file_size',
+            'description',
+            'tags',
         ]
         read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
+
+    def validate_tags(self, value):
+        # Trim, drop empty values and exact duplicates; capitalization is preserved.
+        seen = []
+        for tag in value or []:
+            tag = str(tag).strip()
+            if tag and tag not in seen:
+                seen.append(tag)
+        return seen
 
     def validate_revision(self, value):
         """

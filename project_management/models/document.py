@@ -1,3 +1,4 @@
+from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.core.exceptions import ValidationError
@@ -173,6 +174,13 @@ class Document(models.Model):
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
     transmittal_category = models.CharField(max_length=255, null=True, blank=True)
+    # Document identity metadata (not versioned): plain-text context and lightweight tags.
+    description = models.TextField(blank=True, default="")
+    tags = ArrayField(
+        models.CharField(max_length=100),
+        default=list,
+        blank=True,
+    )
     
     # Document numbering system fields
     category = models.CharField(max_length=255, null=True, blank=True)
