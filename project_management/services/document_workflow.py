@@ -86,6 +86,8 @@ def annotate_current_workflow(queryset):
     return queryset.annotate(
         current_revision_id=Subquery(current_revision.values("pk")[:1])
     ).annotate(
+        # Official Revision of the CURRENT version (null until it is approved).
+        current_revision_label=Subquery(current_revision.values("revision_label")[:1]),
         wf_status=Subquery(latest_workflow.values("status")[:1]),
         wf_expected_actor_id=Subquery(
             latest_workflow.annotate(expected=expected).values("expected")[:1]

@@ -9,7 +9,7 @@ from models.hierarchical_configurations import (
     DOCUMENT_DISCIPLINES_KEY,
     resolve_nested_configurations,
 )
-from project_management.models import Document, DocumentSearchIndex, Folder, Project
+from project_management.models import Document, DocumentRevision, DocumentSearchIndex, Folder, Project
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
 from project_management.services.document_reference import generate_document_reference
@@ -73,6 +73,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     )
     workflow = serializers.SerializerMethodField()
     internal_status = serializers.SerializerMethodField()
+    revision_label = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -107,6 +108,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'approver',
             'workflow',
             'internal_status',
+            'revision_label',
             'file_size',
             'description',
             'tags',
@@ -612,6 +614,18 @@ class DocumentSerializer(serializers.ModelSerializer):
             'status': status_value,
             'awaiting_me': bool(expected and user and expected == user.id),
         }
+
+    def get_revision_label(self, obj):
+        # Canonical official Revision of the CURRENT version (null until approved); never the
+        # legacy Document.revision. Annotated by the list queryset, one lookup otherwise.
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'current_revision_label'):
+            return obj.current_revision_label
+        current = DocumentRevision.objects.filter(document=obj).order_by(
+            '-created_at', '-id'
+        ).first()
+        return current.revision_label if current else None
 
     def get_internal_status(self, obj):
         # Derived (never stored) validation lifecycle of the CURRENT version:
