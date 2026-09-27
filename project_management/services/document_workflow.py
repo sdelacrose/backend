@@ -395,9 +395,11 @@ def perform_action(workflow, actor, action, comment):
             # Same transaction as the approval.
             from project_management.services.document_revision import (
                 assign_revision_label,
+                record_approval_evidence,
             )
 
             assign_revision_label(locked.revision)
+            record_approval_evidence(locked.revision, locked)
         return locked
 
 

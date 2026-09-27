@@ -34,11 +34,15 @@ class DocumentRevisionQuerySet(models.QuerySet):
     official revision label once (services.document_revision.assign_revision_label).
     """
 
+    # Approval evidence: each of these is written ONCE (from NULL) by the approval transaction.
+    WRITE_ONCE_FIELDS = ("revision_label", "file_sha256", "approval_snapshot")
+
     def update(self, **kwargs):
-        if set(kwargs) != {"revision_label"}:
+        if not kwargs or not set(kwargs) <= set(self.WRITE_ONCE_FIELDS):
             raise ValidationError("A stored document revision cannot be modified.")
-        if self.filter(revision_label__isnull=False).exists():
-            raise ValidationError("An assigned revision label cannot be changed.")
+        for field in kwargs:
+            if self.filter(**{f"{field}__isnull": False}).exists():
+                raise ValidationError(f"The stored {field} cannot be changed.")
         return super().update(**kwargs)
 
     def delete(self):
@@ -67,6 +71,13 @@ class DocumentRevision(models.Model):
     file = models.FileField(upload_to=get_revision_upload_path, max_length=500)
     file_name = models.CharField(max_length=500, null=True, blank=True)
     file_size = models.BigIntegerField(null=True, blank=True)
+    # Evidence, immutable once stored. SHA-256 (lowercase hex) of the exact raw bytes of THIS
+    # version's file; NULL only for legacy versions created before it existed (computed at
+    # approval when still missing).
+    file_sha256 = models.CharField(max_length=64, null=True, blank=True)
+    # Historical metadata evidence, written once by the approval transaction (NULL until then):
+    # what the approved version represented at that moment. Never replaces live Document data.
+    approval_snapshot = models.JSONField(null=True, blank=True)
     comment = models.TextField(blank=True, default="")
     created_by = models.ForeignKey(
         User,

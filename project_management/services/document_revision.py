@@ -1,3 +1,4 @@
+import hashlib
 import posixpath
 
 from django.core.exceptions import ValidationError
@@ -84,6 +85,42 @@ def get_next_versions(document):
         return {MINOR: None, MAJOR: None}
 
 
+# --- File evidence (SHA-256) -----------------------------------------------------
+
+def sha256_of_file(file_obj):
+    """Lowercase hex SHA-256 of the EXACT raw bytes of a file object (upload or stored file).
+
+    Streams in chunks; leaves an upload rewound so it can still be stored afterwards.
+    """
+    digest = hashlib.sha256()
+    if hasattr(file_obj, "seek"):
+        file_obj.seek(0)
+    for chunk in file_obj.chunks():
+        digest.update(chunk if isinstance(chunk, bytes) else chunk.encode("utf-8"))
+    if hasattr(file_obj, "seek"):
+        file_obj.seek(0)
+    return digest.hexdigest()
+
+
+def _hash_of_stored_version(revision):
+    """SHA-256 of a stored Version file (legacy versions approved after the hash existed)."""
+    try:
+        revision.file.open("rb")
+        try:
+            return sha256_of_file(revision.file)
+        finally:
+            revision.file.close()
+    except Exception as error:
+        raise ValidationError(
+            {
+                "file": (
+                    "The stored file of this version cannot be read, so the approval "
+                    "evidence cannot be recorded."
+                )
+            }
+        ) from error
+
+
 # --- Writes ----------------------------------------------------------------------
 
 def _title_for_new_file(document, revision, previous_file=""):
@@ -159,6 +196,103 @@ def assign_revision_label(revision):
         ).update(revision_label=label)
         revision.revision_label = label
         return label
+
+
+def _snapshot_project(document):
+    project = document.folder.project if document.folder_id else None
+    if project is None:
+        return None
+    return {
+        "id": project.pk,
+        "name": project.project_name,
+        "code": project.project_code or None,
+    }
+
+
+def build_approval_snapshot(revision, workflow):
+    """Approval-time metadata evidence of ONE Version (JSON, human-interpretable).
+
+    Real current model values only. The workflow actors / events / comments are NOT
+    duplicated: they stay in the protected workflow records (referenced by id).
+    """
+    document = revision.document
+    issuer = document.external_issuer_company
+    return {
+        "schema_version": 1,
+        "document": {
+            "id": document.pk,
+            "reference": document.full_document_number,
+            "title": document.file_name,
+            "document_type": document.document_type,
+            "discipline": {
+                "group_id": document.discipline_group_id,
+                "group": document.discipline_group,
+                "option_id": document.discipline_option_id,
+                "label": document.discipline,
+                "code": document.discipline_code,
+            },
+            "origin": {
+                "value": document.document_origin,
+                "label": document.get_document_origin_display(),
+            },
+            "external_issuer": (
+                {"id": issuer.pk, "name": issuer.company_name} if issuer else None
+            ),
+            "description": document.description,
+            "tags": list(document.tags or []),
+            "business_status": document.status,
+        },
+        "project": _snapshot_project(document),
+        "version": {
+            "id": revision.pk,
+            "number": revision.version_number,
+            "revision_label": revision.revision_label,
+        },
+        "file": {
+            "name": revision.file_name,
+            "path": revision.file.name,
+            "size": revision.file_size,
+            "sha256": revision.file_sha256,
+        },
+        "workflow": {
+            "id": workflow.pk,
+            "type": workflow.workflow_type,
+            "approved_at": workflow.completed_at.isoformat()
+            if workflow.completed_at
+            else None,
+        },
+    }
+
+
+def record_approval_evidence(revision, workflow):
+    """Approval evidence, in the SAME transaction as the approval, in this order:
+
+    1. the official revision label (assign_revision_label, already done by the caller),
+    2. the file SHA-256 (legacy versions: computed now, approval fails if unreadable),
+    3. the approval snapshot, which therefore carries THAT label and hash.
+
+    Each value is written once; an existing one is never replaced.
+    """
+    with transaction.atomic():
+        Document.objects.select_for_update().get(pk=revision.document_id)
+        current = DocumentRevision.objects.select_related(
+            "document", "document__folder", "document__external_issuer_company"
+        ).get(pk=revision.pk)
+        if not current.revision_label:
+            raise ValidationError("The official revision label is missing.")
+        if not current.file_sha256:
+            digest = _hash_of_stored_version(current)
+            DocumentRevision.objects.filter(pk=current.pk).update(file_sha256=digest)
+            current.file_sha256 = digest
+        if current.approval_snapshot is None:
+            snapshot = build_approval_snapshot(current, workflow)
+            DocumentRevision.objects.filter(pk=current.pk).update(
+                approval_snapshot=snapshot
+            )
+            current.approval_snapshot = snapshot
+        revision.file_sha256 = current.file_sha256
+        revision.approval_snapshot = current.approval_snapshot
+        return current
 
 
 def _materialize_first_revision(locked):
@@ -248,6 +382,8 @@ def add_document_revision(
             minor_revision=minor,
             file_name=posixpath.basename(getattr(uploaded_file, "name", "") or ""),
             file_size=getattr(uploaded_file, "size", None),
+            # Calculated from the upload itself (no download from storage), before it is stored.
+            file_sha256=sha256_of_file(uploaded_file),
             comment=comment,
             created_by=user,
         )

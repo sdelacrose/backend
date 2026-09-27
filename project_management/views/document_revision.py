@@ -58,6 +58,9 @@ def serialize_revision(revision, request, document, workflow=None):
         "label": revision.label,
         "file_name": revision.file_name,
         "file_size": revision.file_size,
+        # Approval evidence (read-only): exact-bytes hash and the approval-time metadata.
+        "file_sha256": revision.file_sha256,
+        "approval_snapshot": revision.approval_snapshot,
         "file_url": _absolute_url(request, revision.file.url),
         "comment": revision.comment,
         "created_at": revision.created_at,
@@ -117,6 +120,8 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                     "file_name": document.file_name
                     or posixpath.basename(document.file.name),
                     "file_size": None,
+                    "file_sha256": None,
+                    "approval_snapshot": None,
                     "file_url": file_url,
                     "comment": "",
                     "workflow": None,
