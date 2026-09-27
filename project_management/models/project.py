@@ -242,6 +242,13 @@ class ECPMPConfig(models.Model):
         blank=True,
         default=list,
     )
+    # LOT 3B stabilization: Correspondence Type reference data (plain labels; distinct from
+    # document_types, never confused with it).
+    correspondence_types = ArrayField(
+        models.CharField(max_length=255),
+        blank=True,
+        default=list,
+    )
     document_status = ArrayField(
         models.CharField(max_length=255),
         blank=True,

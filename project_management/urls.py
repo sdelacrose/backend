@@ -14,6 +14,10 @@ from project_management.views import ContactViewset, DocumentViewSet, FolderView
     TransportViewSet, PartsListConfigViewSet, SolutionSpaceConfigViewSet, MachineConfigViewSet, EquipmentConfigViewSet, AvailableProductPartViewSet, MachineViewSet, EquipmentViewSet, BillOfMaterialPartViewSet, CompanySolutionSpaceItemViewSet, ProjectSolutionSpaceItemViewSet, ProjectWorkstationViewSet, BomGenerationRunViewSet, ProcessAssemblyRecommendationRunViewSet, MatrixCommentViewSet, PartPurchaseIntentViewSet, SupplierPaymentMethodViewSet, ProductAssemblyExtractionRunViewSet, ProductAttributeExtractionRunViewSet, ProcessAssemblyExtractionRunViewSet, ProcessAttributeExtractionRunViewSet
 from project_management.views.document_register import DocumentRegisterViewSet
 from project_management.views.document_attachment import DocumentAttachmentViewSet
+from project_management.views.correspondence import (
+    CorrespondenceViewSet,
+    CorrespondenceAttachmentViewSet,
+)
 from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.document_search import (
@@ -551,6 +555,16 @@ urlpatterns = [
     path('document/<int:document_id>/attachments', DocumentAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='document-attachments'),
     path('document/<int:document_id>/attachments/<int:attachment_id>', DocumentAttachmentViewSet.as_view({'delete': 'destroy'}), name='document-attachment-detail'),
     path('document/<int:document_id>/attachments/<int:attachment_id>/download', DocumentAttachmentViewSet.as_view({'get': 'download'}), name='document-attachment-download'),
+
+    # LOT 3B: Correspondence -- a formal external communication, not a Document/Livrable.
+    path('correspondence', CorrespondenceViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondences'),
+    path('correspondence/<int:pk>', CorrespondenceViewSet.as_view({
+        'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy',
+    }), name='correspondence-detail'),
+    path('correspondence/<int:correspondence_id>/attachments', CorrespondenceAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-attachments'),
+    path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>', CorrespondenceAttachmentViewSet.as_view({'delete': 'destroy'}), name='correspondence-attachment-detail'),
+    path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>/download', CorrespondenceAttachmentViewSet.as_view({'get': 'download'}), name='correspondence-attachment-download'),
+
     path('document/<int:document_id>/workflow', DocumentWorkflowViewSet.as_view({'post': 'start_current'}), name='document-workflow-start'),
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow', DocumentWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='document-revision-workflow'),
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow/actions', DocumentWorkflowViewSet.as_view({'post': 'act'}), name='document-revision-workflow-action'),

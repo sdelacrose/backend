@@ -1169,6 +1169,47 @@ class DocumentPermission(BaseModulePermission):
         return False
 
 
+class CorrespondencePermission(BaseModulePermission):
+    """documents.correspondence_<action>: same module ("documents") and scope mechanism as
+    DocumentPermission, but Correspondence already carries its own project/company_profile
+    fields directly, so scope is read straight from the object/payload -- no folder-style
+    indirection is needed (LOT 3B section 12).
+    """
+
+    def __init__(self, action='view', scope='company'):
+        super().__init__('documents', f'correspondence_{action}', scope)
+
+    def _scope_and_context(self, project):
+        if project is not None:
+            return 'project', {'project': project}
+        return 'company', {}
+
+    def has_permission(self, request, view):
+        if request.method == 'POST':
+            project = None
+            project_id = request.data.get('project')
+            if project_id:
+                project = Project.objects.filter(pk=project_id).first()
+            scope, context = self._scope_and_context(project)
+            return self._check_permission(
+                request.user, self.module, 'correspondence_create', scope, context
+            )
+        if request.method == 'GET' and getattr(view, 'action', None) == 'list':
+            return self._check_permission(
+                request.user, self.module, 'correspondence_view', self.scope, {}
+            )
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        # self.action was already set correctly for this call (by get_permissions() for the
+        # main viewset's own per-DRF-action instance, or explicitly by
+        # CorrespondenceAttachmentViewSet for its own sub-resource actions) -- re-deriving it
+        # from request.method here would be wrong for POST (attachment upload), which needs
+        # "update" rather than whatever a generic method->action mapping would guess.
+        scope, context = self._scope_and_context(obj.project)
+        return self._check_permission(request.user, self.module, self.action, scope, context)
+
+
 class ECPMPConfigPermission(BaseModulePermission):
     def __init__(self, action='view', scope='project'):
         super().__init__('ecpmp_configurations', action, scope)

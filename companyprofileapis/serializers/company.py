@@ -581,6 +581,7 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
                 "expense_types": constants.GC_EXPENSE_TYPES,
                 "project_types": constants.GC_PROJECT_TYPES,
                 "document_types": constants.GC_COMPANY_DOCUMENT_TYPES,
+                "correspondence_types": constants.GC_CORRESPONDENCE_TYPES,
                 "document_status": constants.GC_DOCUMENT_STATUSES,
                 "document_internal_review_status": constants.GC_DOCUMENT_INTERNAL_REVIEW_STATUSES,
                 "document_external_review_status": constants.GC_DOCUMENT_EXTERNAL_REVIEW_STATUSES,
@@ -606,6 +607,12 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
             if "document_types" in representation:
                 representation["document_types"] = merge_missing_document_type_defaults(
                     representation["document_types"], constants.GC_COMPANY_DOCUMENT_TYPES
+                )
+
+            # LOT 3B stabilization: same backfill for Correspondence Type reference data.
+            if "correspondence_types" in representation:
+                representation["correspondence_types"] = merge_missing_document_type_defaults(
+                    representation["correspondence_types"], constants.GC_CORRESPONDENCE_TYPES
                 )
 
             for field, default_values in default_values_mapping.items():

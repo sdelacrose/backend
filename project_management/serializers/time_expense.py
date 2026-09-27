@@ -452,6 +452,15 @@ def get_valid_choices(key, project_id, request=None, is_company=False, is_freela
             else constants.GC_COMPANY_DOCUMENT_TYPES
         )
         choices = merge_missing_document_type_defaults(choices, canonical)
+    elif key == "correspondence_types":
+        # LOT 3B stabilization: same principle as document_types above -- one canonical
+        # default list (no project/company split, no "Label:CODE" segment is needed here).
+        from companyprofileapis.services.document_type_defaults import (
+            merge_missing_document_type_defaults,
+        )
+        from models import constants
+
+        choices = merge_missing_document_type_defaults(choices, constants.GC_CORRESPONDENCE_TYPES)
     return choices
 
 

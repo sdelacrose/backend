@@ -11,7 +11,7 @@ from project_management.models import (
     ProjectExternalUsers,
     Milestone, ActionItem, ObjectAssessment, Project, ProjectPhase,
     ContactUser, ContactCompany, Invoice, TimeCard, ExpenseCard, Document,
-    PurchaseOrder,
+    PurchaseOrder, Correspondence,
 )
 
 class CharInFilter(filters.BaseInFilter, filters.CharFilter):
@@ -621,8 +621,23 @@ class TimeCardFilter(filters.FilterSet):
                         filtered_queryset = filtered_queryset.filter(freelancer_id=int(value))
                 except (ValueError, TypeError):
                     pass
-        
+
         return filtered_queryset
+
+class CorrespondenceFilter(filters.FilterSet):
+    direction = CharInFilter(field_name="direction", lookup_expr="in")
+    correspondence_type = CharInFilter(field_name="correspondence_type", lookup_expr="in")
+    response_status = CharInFilter(field_name="response_status", lookup_expr="in")
+    project = NumberInFilter(field_name="project", lookup_expr="in")
+    sender_company = NumberInFilter(field_name="sender_company", lookup_expr="in")
+    recipient_company = NumberInFilter(field_name="recipient_company", lookup_expr="in")
+
+    class Meta:
+        model = Correspondence
+        fields = [
+            "direction", "correspondence_type", "response_status", "project",
+            "sender_company", "recipient_company",
+        ]
 
 class ExpenseCardFilter(filters.FilterSet):
     status = CharInFilter(field_name="status", lookup_expr="in")
