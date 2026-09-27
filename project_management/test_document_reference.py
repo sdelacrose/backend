@@ -5,17 +5,40 @@ from unittest.mock import patch
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
 
+from models.company_codes import derive_company_code
+from models.models import CompanyConfig
+
 from project_management.models import Document
 from project_management.serializers.document import DocumentSerializer
 from project_management.services.document_revision import add_document_revision
 from project_management.services.document_workflow import perform_action
 from project_management.test_document_workflow import TWO, WorkflowTestBase
 
-FORMAT = re.compile(r"^PLA-\d{5}$")  # company library document: no project segment
+# Company library document, no project: COMPANY-DOCUMENT_TYPE-SEQUENCE (no discipline is
+# ever selected in these tests, so that segment is skipped -- LOT 2D-12).
+FORMAT = re.compile(r"^[A-Z0-9]+-PLA-\d{5}$")
 
 
 class PermanentReferenceTests(WorkflowTestBase):
     """full_document_number is generated once at creation and never recalculated."""
+
+    def setUp(self):
+        super().setUp()
+        # A real, canonical "Label:CODE" document type list: LOT 2D-12 removed the
+        # silent 3-letter fallback, so the type used below ("Plan") needs a configured code.
+        CompanyConfig.objects.update_or_create(
+            company_profile=self.document.folder.company_profile,
+            solution="Energy Consultant Solution",
+            defaults={
+                "document_types": ["Plan:PLA", "Report:REP", "Manual:MAN", "Design:DSN", "Other:OTH"],
+            },
+        )
+        # The code actually persisted (auto-derived on first save of the CompanyProfile);
+        # read it back rather than re-deriving it, to avoid any drift from a real collision.
+        self.company_code = (
+            self.document.folder.company_profile.company_code
+            or derive_company_code(self.document.folder.company_profile.company_name)
+        )
 
     def relaxed_configuration(self):
         # Configuration/permission lookups are not what is under test here.
@@ -74,6 +97,7 @@ class PermanentReferenceTests(WorkflowTestBase):
     def test_new_document_receives_a_reference_in_the_existing_format(self):
         document = self.create_document()
         self.assertRegex(document.full_document_number, FORMAT)
+        self.assertTrue(document.full_document_number.startswith(f"{self.company_code}-"))
         self.assertEqual(self.reference(document), document.full_document_number)
 
     def test_sequence_allocation_still_works_for_new_documents(self):

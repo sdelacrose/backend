@@ -20,7 +20,8 @@ from models.document_control_configuration import (
     resolve_document_control_configuration,
     validate_document_control_configuration,
 )
-from models.models import CompanyProfile, User
+from models.company_codes import derive_company_code
+from models.models import CompanyConfig, CompanyProfile, User
 from project_management.models import (
     Document,
     DocumentReferenceCounter,
@@ -37,6 +38,10 @@ from project_management.services.project_configuration_templates import (
 from project_management.views.ecpmp_config import ECPMPConfigViewSet
 from project_management.services.document_revision import add_document_revision
 from project_management.services.document_workflow import perform_action
+from project_management.services.company_codes import (
+    assert_company_code_change_allowed,
+    company_code_is_locked,
+)
 from project_management.services.project_codes import (
     derive_project_code,
     project_code_is_locked,
@@ -468,8 +473,238 @@ class FrozenReferenceConventionTests(ProjectFixtureMixin, WorkflowTestBase):
         self.assertEqual(Document.objects.get(pk=first.pk).full_document_number, before)
         self.assertEqual(
             DocumentReferenceCounter.objects.filter(project=self.project).count(), counter)
-        second = self.create_doc(self.folder)
+        # reset_config restored document_disciplines to the real canonical (hierarchical)
+        # set, which has no flat "Structure:STR" entry; this test is about reference
+        # immutability and sequence continuation, not discipline coding, so no discipline is
+        # selected here (LOT 2D-12: an unresolvable discipline code now fails cleanly instead
+        # of silently guessing one, and that is exercised on its own in
+        # CompanyReferenceTests/test_document_control_reference.py).
+        second = self.create_doc(self.folder, discipline="")
         self.assertEqual(second.sequence_number, first.sequence_number + 1)
+
+
+class CompanyFixtureMixin:
+    """A company-library folder (no project): COMPANY-DISCIPLINE-DOCUMENT_TYPE-SEQUENCE."""
+
+    def make_company_config(self, folder=None):
+        folder = folder or self.document.folder
+        CompanyConfig.objects.update_or_create(
+            company_profile=folder.company_profile,
+            solution="Energy Consultant Solution",
+            defaults={
+                "document_disciplines": DISCIPLINES,
+                "document_types": TYPES,
+            },
+        )
+        return folder
+
+    def relaxed(self):
+        stack = ExitStack()
+        stack.enter_context(
+            patch(
+                "project_management.serializers.document.get_valid_choices",
+                # "Specification" is an allowed label with no configured code: used to prove
+                # the no-fallback failure is a code-resolution error, not a choice rejection.
+                return_value=["Drawing", "Report", "Other", "Design", "Specification"],
+            )
+        )
+        stack.enter_context(
+            patch.object(DocumentSerializer, "_get_valid_choices_for_config_key", return_value=[])
+        )
+        stack.enter_context(
+            patch.object(DocumentSerializer, "validate_folder", lambda s, v: v)
+        )
+        stack.enter_context(
+            patch.object(DocumentSerializer, "validate_discipline", lambda s, v: v)
+        )
+        return stack
+
+    def create_company_doc(self, folder, discipline="Structure", document_type="Drawing", **extra):
+        serializer = DocumentSerializer(
+            data={
+                "folder": folder.id,
+                "file": SimpleUploadedFile("d.txt", b"x"),
+                "document_type": document_type,
+                "discipline": discipline,
+                **extra,
+            },
+            context={"user": self.creator},
+        )
+        with self.relaxed():
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            return serializer.save()
+
+
+class CompanyReferenceTests(CompanyFixtureMixin, WorkflowTestBase):
+    """COMPANY_CODE-DISCIPLINE_CODE-DOCUMENT_TYPE_CODE-SEQUENCE for a company-library document.
+
+    The shared default reference configuration still literally lists "PROJECT" first (it is
+    also used by projects); for a company-library document it resolves to the company's own
+    code instead of being left empty (LOT 2D-12).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.folder = self.make_company_config()
+        self.company = self.folder.company_profile
+        self.company.company_code = "SHA"
+        self.company.save()
+
+    def test_company_document_reference_uses_company_discipline_and_type_codes(self):
+        document = self.create_company_doc(self.folder)
+        self.assertEqual(document.full_document_number, "SHA-STR-DWG-00001")
+
+    def test_sequence_increments_and_new_codes_are_resolved_per_document(self):
+        first = self.create_company_doc(self.folder, "Structure", "Drawing")
+        second = self.create_company_doc(self.folder, "Electrical", "Report")
+        self.assertEqual(second.sequence_number, first.sequence_number + 1)
+        self.assertEqual(second.full_document_number, "SHA-ELE-REP-00002")
+
+    def test_reference_is_permanent_and_never_gains_a_company_code_retroactively(self):
+        document = self.create_company_doc(self.folder)
+        original = document.full_document_number
+        for change in ({"document_type": "Report"}, {"discipline": "Electrical"}, {"status": "Issued"}):
+            serializer = DocumentSerializer(
+                Document.objects.get(pk=document.pk), data=change, partial=True,
+                context={"user": self.creator})
+            with self.relaxed():
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                serializer.save()
+            self.assertEqual(Document.objects.get(pk=document.pk).full_document_number, original)
+
+    # --- no silent fallback: a missing configured code fails cleanly (LOT 2D-12) -----------
+
+    def test_unconfigured_document_type_fails_cleanly_with_no_three_letter_guess(self):
+        with self.assertRaises(Exception) as ctx:
+            self.create_company_doc(self.folder, document_type="Specification")
+        self.assertNotIn("SPE", str(ctx.exception))
+        self.assertFalse(Document.objects.filter(full_document_number__icontains="SPE").exists())
+
+    def test_unconfigured_discipline_fails_cleanly_with_no_three_letter_guess(self):
+        with self.assertRaises(Exception) as ctx:
+            self.create_company_doc(self.folder, discipline="Civil")
+        self.assertNotIn("CIV", str(ctx.exception))
+        self.assertFalse(Document.objects.filter(full_document_number__icontains="CIV").exists())
+
+    def test_a_failed_creation_does_not_consume_a_sequence_number(self):
+        first = self.create_company_doc(self.folder)
+        with self.assertRaises(Exception):
+            self.create_company_doc(self.folder, document_type="Specification")
+        second = self.create_company_doc(self.folder)
+        self.assertEqual(second.sequence_number, first.sequence_number + 1)
+
+
+class CompanyCodeTests(CompanyFixtureMixin, WorkflowTestBase):
+    """Company Code: proposed, unique, editable until the first permanent company Document."""
+
+    def test_automatic_proposal_is_simple_and_deterministic(self):
+        self.assertEqual(derive_company_code("Sharemundo Links"), "SL")
+        self.assertEqual(derive_company_code("Acme Engineering Group"), "AEG")
+        self.assertEqual(derive_company_code("Acme"), "ACM")
+        self.assertEqual(derive_company_code(""), "CMP")
+
+    def test_a_company_code_is_proposed_automatically_on_creation(self):
+        company = self.document.folder.company_profile  # created via CompanyProfile.objects.create
+        self.assertTrue(company.company_code)
+        self.assertEqual(company.company_code, derive_company_code(company.company_name))
+
+    def test_code_is_unique_across_companies(self):
+        company = self.document.folder.company_profile
+        other_user = User.objects.create_user(
+            email="dup.company@links-local.invalid", first_name="Dup", last_name="Owner",
+            title="Mr", user_type="company_user")
+        other = CompanyProfile.objects.create(
+            admin_user=other_user, company_name=company.company_name,  # same name on purpose
+            company_address="1", post_code="0", company_town="T", company_country="C",
+            company_tell_no="0", company_mob_no="1", company_web_address="http://x",
+            company_email_address="dup@x.invalid", company_tax_reference="T", company_iban="I")
+        self.assertNotEqual(other.company_code, company.company_code)
+        self.assertTrue(other.company_code.startswith(company.company_code))
+
+    def test_code_is_editable_before_the_first_permanent_company_document(self):
+        company = self.document.folder.company_profile
+        self.assertFalse(company_code_is_locked(company))
+        company.company_code = "SHA"
+        company.save()
+        self.assertEqual(CompanyProfile.objects.get(pk=company.pk).company_code, "SHA")
+
+    def test_code_is_locked_after_the_first_permanent_company_document(self):
+        folder = self.make_company_config()
+        company = folder.company_profile
+        company.company_code = "SHA"
+        company.save()
+        self.assertFalse(company_code_is_locked(company))
+        document = self.create_company_doc(folder)
+        self.assertTrue(document.full_document_number.startswith("SHA-"))
+        self.assertTrue(company_code_is_locked(company))
+        with self.assertRaises(ValidationError):
+            assert_company_code_change_allowed(company, "XYZ")
+        # Legacy safety: the already-generated reference is untouched by the refused attempt.
+        self.assertEqual(
+            Document.objects.get(pk=document.pk).full_document_number,
+            document.full_document_number,
+        )
+
+
+class EmptyDocumentTypeConfigRegressionTests(WorkflowTestBase):
+    """LOT 2D-12 UI regression: a company/project whose stored `document_types` is empty (the
+    real local demo's state, and any company provisioned before the canonical list existed)
+    must still let a canonical label (e.g. "Drawing") be selected AND actually create the
+    Document -- both the choice validation (`get_valid_choices`) and the reference's code
+    resolution (`generate_document_reference`) must honor the same canonical defaults the
+    dropdown already shows (include_defaults=true), not just the raw stored list.
+    """
+
+    def relaxed(self):
+        stack = ExitStack()
+        stack.enter_context(patch.object(DocumentSerializer, "validate_folder", lambda s, v: v))
+        stack.enter_context(patch.object(DocumentSerializer, "validate_discipline", lambda s, v: v))
+        return stack
+
+    def test_get_valid_choices_returns_canonical_company_types_when_stored_is_empty(self):
+        from project_management.serializers.time_expense import get_valid_choices
+
+        company = self.document.folder.company_profile
+        CompanyConfig.objects.update_or_create(
+            company_profile=company, solution="Energy Consultant Solution",
+            defaults={"document_types": []},
+        )
+        choices = {c.split(":")[0] for c in get_valid_choices(
+            "document_types", company.id, None, is_company=True
+        )}
+        self.assertIn("Drawing", choices)
+
+    def test_get_valid_choices_returns_canonical_project_types_when_stored_is_empty(self):
+        project, _ = ProjectFixtureMixin.make_project(self, "LOT 2D-12 Regression Project")
+        ECPMPConfig.objects.filter(project=project).update(document_types=[])
+        from project_management.serializers.time_expense import get_valid_choices
+
+        choices = {c.split(":")[0] for c in get_valid_choices(
+            "document_types", project.id, None
+        )}
+        self.assertIn("Drawing", choices)
+
+    def test_selecting_a_canonical_type_on_an_empty_company_config_creates_the_document(self):
+        """Reproduces the exact reported UI bug end-to-end: Register -> New Document ->
+        Document Type "Drawing" on a company whose document_types is empty."""
+        company = self.document.folder.company_profile
+        CompanyConfig.objects.update_or_create(
+            company_profile=company, solution="Energy Consultant Solution",
+            defaults={"document_types": []},
+        )
+        serializer = DocumentSerializer(
+            data={
+                "folder": self.document.folder_id,
+                "file": SimpleUploadedFile("ui-regression.txt", b"x"),
+                "document_type": "Drawing",
+            },
+            context={"user": self.creator},
+        )
+        with self.relaxed():
+            self.assertTrue(serializer.is_valid(), serializer.errors)
+            document = serializer.save()
+        self.assertIn("DRW", document.full_document_number)
+        self.assertNotIn("DRA", document.full_document_number)  # no label-guess fallback
 
 
 class ConcurrencyTests(TransactionTestCase):

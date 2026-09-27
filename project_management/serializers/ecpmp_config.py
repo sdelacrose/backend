@@ -23,6 +23,9 @@ from models.rooms_utils import bootstrap_rooms_if_legacy_empty, effective_rooms_
 from companyprofileapis.services.hierarchical_configurations import (
     validate_removed_document_disciplines,
 )
+from companyprofileapis.services.document_type_defaults import (
+    merge_missing_document_type_defaults,
+)
 
 class ECPMPCONFIGSerializer(serializers.ModelSerializer):
     class Meta:
@@ -245,6 +248,13 @@ class ECPMPCONFIGSerializer(serializers.ModelSerializer):
                 "rooms": constants.GC_ROOMS,
                 "skills": constants.GC_SKILLS,
             }
+
+            # document_types: an empty/partial stored list must still offer the canonical
+            # project types -- missing canonical entries are appended, custom entries kept.
+            if "document_types" in representation:
+                representation["document_types"] = merge_missing_document_type_defaults(
+                    representation["document_types"], constants.GC_PROJECT_DOCUMENT_TYPES
+                )
 
             for field, default_values in default_values_mapping.items():
                 if field in representation:

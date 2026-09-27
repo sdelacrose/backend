@@ -31,6 +31,9 @@ from companyprofileapis.services.offer_validity import (
     OfferValidityPeriodInUseError,
     validate_offer_validity_period_removal,
 )
+from companyprofileapis.services.document_type_defaults import (
+    merge_missing_document_type_defaults,
+)
 from companyprofileapis.models import Opportunity, NoticeBoard
 from ecpmpapp.constants import (
     VALID_REMINDER_PATTERN, UserType, StatusType,
@@ -596,6 +599,14 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
                 "rooms": constants.GC_ROOMS,
                 "skills": constants.GC_SKILLS,
             }
+
+            # document_types: an empty/partial stored list must still offer the canonical
+            # types (the Document Type selector and the permanent reference both depend on
+            # it) -- missing canonical entries are appended, custom entries are preserved.
+            if "document_types" in representation:
+                representation["document_types"] = merge_missing_document_type_defaults(
+                    representation["document_types"], constants.GC_COMPANY_DOCUMENT_TYPES
+                )
 
             for field, default_values in default_values_mapping.items():
                 if field in representation:
