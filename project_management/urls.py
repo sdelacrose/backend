@@ -18,6 +18,12 @@ from project_management.views.correspondence import (
     CorrespondenceViewSet,
     CorrespondenceAttachmentViewSet,
 )
+from project_management.views.transmittal import (
+    TransmittalEventViewSet,
+    TransmittalIssueView,
+    TransmittalItemViewSet,
+    TransmittalViewSet,
+)
 from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.document_search import (
@@ -564,6 +570,16 @@ urlpatterns = [
     path('correspondence/<int:correspondence_id>/attachments', CorrespondenceAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-attachments'),
     path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>', CorrespondenceAttachmentViewSet.as_view({'delete': 'destroy'}), name='correspondence-attachment-detail'),
     path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>/download', CorrespondenceAttachmentViewSet.as_view({'get': 'download'}), name='correspondence-attachment-download'),
+
+    # LOT 3C: Transmittal -- a formal transmission record/bordereau, not a Correspondence.
+    path('transmittal', TransmittalViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittals'),
+    path('transmittal/<int:pk>', TransmittalViewSet.as_view({
+        'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy',
+    }), name='transmittal-detail'),
+    path('transmittal/<int:transmittal_id>/items', TransmittalItemViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittal-items'),
+    path('transmittal/<int:transmittal_id>/items/<int:item_id>', TransmittalItemViewSet.as_view({'delete': 'destroy'}), name='transmittal-item-detail'),
+    path('transmittal/<int:transmittal_id>/issue', TransmittalIssueView.as_view({'post': 'create'}), name='transmittal-issue'),
+    path('transmittal/<int:transmittal_id>/events', TransmittalEventViewSet.as_view({'get': 'list'}), name='transmittal-events'),
 
     path('document/<int:document_id>/workflow', DocumentWorkflowViewSet.as_view({'post': 'start_current'}), name='document-workflow-start'),
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow', DocumentWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='document-revision-workflow'),

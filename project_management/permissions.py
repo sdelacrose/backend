@@ -1210,6 +1210,44 @@ class CorrespondencePermission(BaseModulePermission):
         return self._check_permission(request.user, self.module, self.action, scope, context)
 
 
+class TransmittalPermission(BaseModulePermission):
+    """documents.transmittal_<action>: same module ("documents") and scope mechanism as
+    CorrespondencePermission -- Transmittal likewise carries its own project/company_profile
+    fields directly, so scope is read straight from the object/payload (LOT 3C section 16).
+    """
+
+    def __init__(self, action='view', scope='company'):
+        super().__init__('documents', f'transmittal_{action}', scope)
+
+    def _scope_and_context(self, project):
+        if project is not None:
+            return 'project', {'project': project}
+        return 'company', {}
+
+    def has_permission(self, request, view):
+        if request.method == 'POST' and getattr(view, 'action', None) == 'create':
+            project = None
+            project_id = request.data.get('project')
+            if project_id:
+                project = Project.objects.filter(pk=project_id).first()
+            scope, context = self._scope_and_context(project)
+            return self._check_permission(
+                request.user, self.module, 'transmittal_create', scope, context
+            )
+        if request.method == 'GET' and getattr(view, 'action', None) == 'list':
+            return self._check_permission(
+                request.user, self.module, 'transmittal_view', self.scope, {}
+            )
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        # self.action is set correctly by the caller (get_permissions() per DRF action for the
+        # main viewset, or explicitly for the items/events sub-resources and the issue action)
+        # -- never re-derived from request.method (see CorrespondencePermission's own fix).
+        scope, context = self._scope_and_context(obj.project)
+        return self._check_permission(request.user, self.module, self.action, scope, context)
+
+
 class ECPMPConfigPermission(BaseModulePermission):
     def __init__(self, action='view', scope='project'):
         super().__init__('ecpmp_configurations', action, scope)

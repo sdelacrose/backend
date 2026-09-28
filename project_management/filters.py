@@ -11,7 +11,7 @@ from project_management.models import (
     ProjectExternalUsers,
     Milestone, ActionItem, ObjectAssessment, Project, ProjectPhase,
     ContactUser, ContactCompany, Invoice, TimeCard, ExpenseCard, Document,
-    PurchaseOrder, Correspondence,
+    PurchaseOrder, Correspondence, Transmittal,
 )
 
 class CharInFilter(filters.BaseInFilter, filters.CharFilter):
@@ -638,6 +638,18 @@ class CorrespondenceFilter(filters.FilterSet):
             "direction", "correspondence_type", "response_status", "project",
             "sender_company", "recipient_company",
         ]
+
+class TransmittalFilter(filters.FilterSet):
+    direction = CharInFilter(field_name="direction", lookup_expr="in")
+    status = CharInFilter(field_name="status", lookup_expr="in")
+    project = NumberInFilter(field_name="project", lookup_expr="in")
+    external_company = NumberInFilter(field_name="external_company", lookup_expr="in")
+    date_from = filters.DateFilter(field_name="created_at", lookup_expr="date__gte")
+    date_to = filters.DateFilter(field_name="created_at", lookup_expr="date__lte")
+
+    class Meta:
+        model = Transmittal
+        fields = ["direction", "status", "project", "external_company"]
 
 class ExpenseCardFilter(filters.FilterSet):
     status = CharInFilter(field_name="status", lookup_expr="in")

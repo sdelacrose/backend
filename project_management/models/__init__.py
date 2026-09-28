@@ -4,6 +4,7 @@ from .document_control import DocumentControl
 from .document_revision import DocumentRevision
 from .document_attachment import DocumentAttachment
 from .correspondence import Correspondence, CorrespondenceAttachment, CorrespondenceReferenceCounter
+from .transmittal import Transmittal, TransmittalEvent, TransmittalItem, TransmittalReferenceCounter
 from .document_workflow import DocumentWorkflow, DocumentWorkflowEvent
 from .document_search import (
     DocumentContentSegment,
