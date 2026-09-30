@@ -6,14 +6,39 @@ APPROVED -- proven exclusively by the canonical workflow/revision approval evide
 the moment a DocumentWorkflow reaches APPROVED). Document.status is never used as proof
 (LOT 3C section 6).
 
+LOT 3E-1C1 OUT eligibility amendment: in addition, the Document's own transmission
+classification (Document.transmittal_category -- the existing, already-used "Transmittal
+Category" metadata field, configured per project/company as one of "Not sent" / "Available" /
+"For review" / "For information", see project_management/models/constants.py
+GC_TRANSMITTAL_CATEGORIES) must be "For review" or "For information". A Document classified
+"Not sent" (or "Available", or left unset) must never be distributable through an outgoing
+transmittal -- there is deliberately no "Available" condition here, only this exact whitelist.
+
 IN (supplier receipt): the minimal safe rule the current architecture supports without
 inventing a Supplier review workflow -- the Document must be SUPPLIER-origin. No internal
-approval is required for an incoming Revision (LOT 3C section 7).
+approval is required for an incoming Revision (LOT 3C section 7). The transmittal_category
+rule above is OUT-only and never applied to IN.
 """
 
 from django.core.exceptions import ValidationError
 
 from project_management.models.document import DocumentOrigin
+
+# Case-insensitive on purpose: transmittal_category is a free-text field whose options are
+# configured per project/company (GC_TRANSMITTAL_CATEGORIES is only the seeded default), so the
+# stored value's exact casing is never guaranteed beyond matching one of the configured labels.
+OUT_ELIGIBLE_TRANSMITTAL_CATEGORIES = {"for review", "for information"}
+
+
+def document_transmittal_purpose(document):
+    """The distribution purpose implied by the Document's own transmittal_category, or None if
+    it is not classified for transmission ("Not sent", "Available", unset, or any other value).
+    Shared by the OUT eligibility check and the frontend's Purpose-prefill (LOT 3E-1C1 section
+    19) -- kept here as the single canonical mapping rather than duplicated ad hoc."""
+    category = (document.transmittal_category or "").strip().lower()
+    if category not in OUT_ELIGIBLE_TRANSMITTAL_CATEGORIES:
+        return None
+    return "FOR_REVIEW" if category == "for review" else "FOR_INFORMATION"
 
 
 def owner_scope_of_document(document):
@@ -48,6 +73,11 @@ def validate_item_eligibility(transmittal, document_revision):
             raise ValidationError(
                 "This document revision is not internally approved and cannot be "
                 "distributed."
+            )
+        if document_transmittal_purpose(document) is None:
+            raise ValidationError(
+                "This document is not classified for transmission (For review / For "
+                "information) and cannot be distributed."
             )
     else:
         if document.document_origin != DocumentOrigin.SUPPLIER:

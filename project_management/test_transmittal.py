@@ -167,8 +167,16 @@ class TransmittalTestBase(NoNotificationsMixin, TestCase):
         revision.refresh_from_db()
         return revision
 
-    def make_approved_internal_revision(self, folder=None):
+    def make_approved_internal_revision(self, folder=None, transmittal_category="For review"):
+        # LOT 3E-1C1 OUT eligibility amendment: an OUT-eligible revision now also needs its
+        # Document classified "For review"/"For information" (transmittal_category), not just
+        # internally approved -- default matches every existing caller's actual intent ("make me
+        # a revision usable in an OUT transmittal"). Pass transmittal_category=None to build one
+        # that is approved but NOT classified, for the new rule-2 rejection tests.
         document = self.make_document(folder=folder, origin=DocumentOrigin.INTERNAL)
+        if transmittal_category is not None:
+            document.transmittal_category = transmittal_category
+            document.save(update_fields=["transmittal_category"])
         revision = self.add_revision(document)
         return self.approve(revision)
 
@@ -438,6 +446,61 @@ class TransmittalEligibilityTests(TransmittalTestBase):
         revision = self.add_revision(document)  # never approved: no revision_label
         with self.assertRaises(ValidationError):
             add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    # --- LOT 3E-1C1 OUT eligibility amendment: rule 2 (Document.transmittal_category) ---------
+    # Canonical field: Document.transmittal_category (free-text, project/company-configured from
+    # GC_TRANSMITTAL_CATEGORIES -- "Not sent" / "Available" / "For review" / "For information").
+    # Section 22 test matrix A-I.
+
+    def test_out_accepts_approved_for_review_document(self):  # A
+        transmittal = self.create_transmittal()
+        revision = self.make_approved_internal_revision(transmittal_category="For review")
+        item = add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+        self.assertEqual(item.document_revision_id, revision.id)
+
+    def test_out_accepts_approved_for_information_document(self):  # B
+        transmittal = self.create_transmittal()
+        revision = self.make_approved_internal_revision(transmittal_category="For information")
+        item = add_transmittal_item(transmittal, revision, "FOR_INFORMATION", self.owner)
+        self.assertEqual(item.document_revision_id, revision.id)
+
+    def test_out_rejects_approved_not_sent_document(self):  # C
+        transmittal = self.create_transmittal()
+        revision = self.make_approved_internal_revision(transmittal_category="Not sent")
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_approved_available_document(self):
+        # "Available" is deliberately NOT an eligibility condition -- it is excluded exactly
+        # like "Not sent" and unset, never given special treatment.
+        transmittal = self.create_transmittal()
+        revision = self.make_approved_internal_revision(transmittal_category="Available")
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_approved_unclassified_document(self):
+        transmittal = self.create_transmittal()
+        revision = self.make_approved_internal_revision(transmittal_category=None)
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_unapproved_for_review_document(self):  # D
+        transmittal = self.create_transmittal()
+        document = self.make_document(origin=DocumentOrigin.INTERNAL)
+        document.transmittal_category = "For review"
+        document.save(update_fields=["transmittal_category"])
+        revision = self.add_revision(document)  # never approved: no revision_label
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_unapproved_for_information_document(self):  # E
+        transmittal = self.create_transmittal()
+        document = self.make_document(origin=DocumentOrigin.INTERNAL)
+        document.transmittal_category = "For information"
+        document.save(update_fields=["transmittal_category"])
+        revision = self.add_revision(document)  # never approved: no revision_label
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_INFORMATION", self.owner)
 
     def test_out_rejects_client_origin_document(self):
         transmittal = self.create_transmittal()
@@ -777,7 +840,10 @@ class TransmittalPermissionTests(TransmittalTestBase):
 class LegacyFieldAndIsolationTests(TransmittalTestBase):
     def test_legacy_document_fields_untouched(self):
         document = self.make_document()
-        document.transmittal_category = "Legacy Value"
+        # LOT 3E-1C1 OUT eligibility amendment: transmittal_category now gates OUT eligibility
+        # (rule 2), so this fixture must use an eligible value to reach finalize -- the
+        # assertion below is unchanged: finalize must never rewrite it.
+        document.transmittal_category = "For review"
         document.external_review_status = "Legacy Status"
         document.save(update_fields=["transmittal_category", "external_review_status"])
         transmittal = self.create_transmittal()
@@ -785,7 +851,7 @@ class LegacyFieldAndIsolationTests(TransmittalTestBase):
         add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
         finalize_transmittal(transmittal, self.owner)
         document.refresh_from_db()
-        self.assertEqual(document.transmittal_category, "Legacy Value")
+        self.assertEqual(document.transmittal_category, "For review")
         self.assertEqual(document.external_review_status, "Legacy Status")
 
     def test_correspondence_data_and_counters_untouched(self):
@@ -795,3 +861,45 @@ class LegacyFieldAndIsolationTests(TransmittalTestBase):
         finalize_transmittal(transmittal, self.owner)
         self.assertEqual(Correspondence.objects.count(), 0)
         self.assertEqual(CorrespondenceReferenceCounter.objects.count(), 0)
+
+
+class TransmittalDetailSerializationTests(TransmittalTestBase):
+    """LOT 3E-1B live defect: a live browser hit GET /transmittal/<id> returned 500
+    (AttributeError: 'TransmittalSerializer' object has no attribute 'get_project_name'),
+    traced to a stale, non-reloaded dev server process -- .data was never actually exercised end
+    -to-end by a real test (the frontend's own tests only source-scan for the field
+    declaration). This renders the serializer for real, the same way DRF does on every request,
+    so a genuine SerializerMethodField/get_<field> name mismatch (unlike the stale-process cause
+    here) would fail immediately."""
+
+    def test_transmittal_detail_serializes_without_error_and_exposes_human_readable_fields(self):
+        transmittal = self.create_transmittal(external_contacts=[self.client_contact.id])
+        revision = self.make_approved_internal_revision()
+        add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+        finalize_transmittal(transmittal, self.owner)
+        transmittal.refresh_from_db()
+
+        data = TransmittalSerializer(transmittal).data  # must not raise AttributeError
+
+        self.assertEqual(data["project_name"], self.project.project_name)
+        self.assertEqual(data["external_company_name"], self.client_company.company_name)
+        self.assertEqual(
+            data["external_contacts_detail"],
+            [{"id": self.client_contact.id, "name": "Jane Doe"}],
+        )
+        item = data["items"][0]
+        self.assertEqual(item["document_revision_detail"]["document"]["id"], revision.document_id)
+        self.assertEqual(item["document_revision_detail"]["revision"]["id"], revision.id)
+
+    def test_in_transmittal_detail_serializes_without_error(self):
+        transmittal = self.create_in_transmittal()
+        revision = self.make_supplier_revision()
+        add_transmittal_item(transmittal, revision, None, self.owner)
+        finalize_transmittal(transmittal, self.owner)
+        transmittal.refresh_from_db()
+
+        data = TransmittalSerializer(transmittal).data  # must not raise AttributeError
+
+        self.assertEqual(data["external_company_name"], self.supplier_company.company_name)
+        item = data["items"][0]
+        self.assertEqual(item["document_revision_detail"]["revision"]["id"], revision.id)
