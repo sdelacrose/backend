@@ -6,29 +6,68 @@ from project_management.services.transmittal_reference import generate_transmitt
 
 
 class TransmittalItemSerializer(serializers.ModelSerializer):
+    # LOT 3E-1B: `document_revision` alone is a bare PK -- fine for ISSUED evidence (frozen in
+    # evidence_snapshot already), but a DRAFT item has no snapshot yet and the frontend would
+    # otherwise have no document reference/title/revision label to show at all (a real API gap,
+    # not a display choice -- see the LOT 3E-1B report). Read-only, additive: never touches
+    # `document_revision` itself (still the plain writable PK add/remove already uses), and
+    # mirrors build_item_evidence_snapshot's own field names/shape exactly, so the frontend can
+    # treat a live revision and a frozen snapshot the same way once ISSUED.
+    document_revision_detail = serializers.SerializerMethodField()
+
     class Meta:
         model = TransmittalItem
         fields = [
-            "id", "transmittal", "document_revision", "distribution_purpose",
-            "evidence_snapshot", "created_at",
+            "id", "transmittal", "document_revision", "document_revision_detail",
+            "distribution_purpose", "evidence_snapshot", "created_at",
         ]
-        read_only_fields = ["id", "transmittal", "evidence_snapshot", "created_at"]
+        read_only_fields = [
+            "id", "transmittal", "document_revision_detail", "evidence_snapshot", "created_at",
+        ]
+
+    def get_document_revision_detail(self, obj):
+        revision = obj.document_revision
+        if revision is None:
+            return None
+        document = revision.document
+        return {
+            "document": {
+                "id": document.pk,
+                "reference": document.full_document_number,
+                "file_name": document.file_name,
+            },
+            "revision": {
+                "id": revision.pk,
+                "version_number": revision.version_number,
+                "revision_label": revision.revision_label,
+                "file_name": revision.file_name,
+            },
+        }
 
 
 class TransmittalSerializer(serializers.ModelSerializer):
     created_by = serializers.SerializerMethodField()
     items = TransmittalItemSerializer(many=True, read_only=True)
+    # LOT 3E-1B: `project`/`external_company`/`external_contacts` are plain FK/M2M PKs -- fine
+    # for create/update (the only place they need to be writable), but a read-only detail view
+    # must never show a raw id (see the LOT 3E-1B report's "Do not expose raw IDs" requirement).
+    # Additive only: the PK fields above are untouched and still what create/update read/write.
+    project_name = serializers.SerializerMethodField()
+    external_company_name = serializers.SerializerMethodField()
+    external_contacts_detail = serializers.SerializerMethodField()
 
     class Meta:
         model = Transmittal
         fields = [
-            "id", "transmittal_number", "direction", "status", "project",
-            "external_company", "external_contacts", "subject", "message",
+            "id", "transmittal_number", "direction", "status", "project", "project_name",
+            "external_company", "external_company_name",
+            "external_contacts", "external_contacts_detail", "subject", "message",
             "issued_at", "received_at", "evidence_snapshot", "items",
             "created_by", "created_at", "updated_at",
         ]
         read_only_fields = [
-            "id", "issued_at", "received_at", "evidence_snapshot", "items",
+            "id", "project_name", "external_company_name", "external_contacts_detail",
+            "issued_at", "received_at", "evidence_snapshot", "items",
             "created_by", "created_at", "updated_at",
         ]
 
@@ -36,6 +75,18 @@ class TransmittalSerializer(serializers.ModelSerializer):
         if not obj.created_by_id:
             return None
         return {"id": obj.created_by_id, "name": obj.created_by.full_name}
+
+    def get_project_name(self, obj):
+        return obj.project.project_name if obj.project_id else None
+
+    def get_external_company_name(self, obj):
+        return obj.external_company.company_name if obj.external_company_id else None
+
+    def get_external_contacts_detail(self, obj):
+        return [
+            {"id": contact.pk, "name": f"{contact.name} {contact.surname}".strip()}
+            for contact in obj.external_contacts.all()
+        ]
 
     def _validate_contacts_belong_to_company(self, company, contacts):
         for contact in contacts or []:

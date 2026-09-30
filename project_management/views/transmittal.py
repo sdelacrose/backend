@@ -35,7 +35,12 @@ def transmittal_queryset_for_user(user):
     Correspondances aggregation (services.correspondances_register)."""
     queryset = Transmittal.objects.select_related(
         "project", "external_company", "created_by",
-    ).prefetch_related("items", "external_contacts")
+    ).prefetch_related(
+        # LOT 3E-1B: the nested `items` field's new document_revision_detail (serializers.
+        # transmittal) needs the document too, not just the revision -- avoids an N+1 query per
+        # item on GET /transmittal/<id>.
+        "items__document_revision__document", "external_contacts",
+    )
     if user.is_freelancer:
         return queryset.filter(project__user=user).distinct()
     return queryset.filter(project__company_profile=user.company).distinct()
@@ -84,7 +89,9 @@ class TransmittalItemViewSet(viewsets.GenericViewSet):
 
     def list(self, request, transmittal_id=None, *args, **kwargs):
         transmittal = _transmittal_for_action(request, transmittal_id, "view")
-        items = transmittal.items.select_related("document_revision")
+        # LOT 3E-1B: document_revision__document too, for the same reason as
+        # transmittal_queryset_for_user's own prefetch above.
+        items = transmittal.items.select_related("document_revision__document")
         return Response(TransmittalItemSerializer(items, many=True).data)
 
     def create(self, request, transmittal_id=None, *args, **kwargs):
