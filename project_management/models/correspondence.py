@@ -89,6 +89,10 @@ class Correspondence(models.Model):
     correspondence_type = models.CharField(max_length=255, null=True, blank=True)
     subject = models.CharField(max_length=500)
     message = models.TextField(blank=True, default="")
+    # LOT 3D-3A TER: a free-text identifier from the external party's own numbering (e.g. their
+    # letter/reference number) -- distinct from `reference`, which is this system's own
+    # permanent, auto-generated number (LOT 3B section 8/10) and is never affected by this field.
+    external_reference = models.CharField(max_length=255, null=True, blank=True)
 
     # External party (canonical Network architecture -- never duplicated).
     sender_company = models.ForeignKey(
@@ -125,6 +129,16 @@ class Correspondence(models.Model):
         null=True, blank=True,
     )
 
+    # LOT 3D-3A TER: the person accountable for this Correspondence -- mirrors Document.assignee
+    # exactly (same FK shape/on_delete), reusing the existing per-record "responsible user"
+    # precedent rather than inventing a second one. The picker itself is not new either: the
+    # frontend reuses useInlineEditMemberOptions (project-team members in Project scope, company
+    # members in Company scope) unchanged.
+    responsible = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="responsible_correspondences",
+        null=True, blank=True,
+    )
+
     created_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, related_name="created_correspondences",
         null=True, blank=True,
@@ -149,6 +163,18 @@ class Correspondence(models.Model):
 
     def __str__(self):
         return self.reference or f"Correspondence #{self.pk}"
+
+    @property
+    def display_reference(self):
+        """LOT 3D-3C0C section 8: the ONE reference to show for this Correspondence, direction-
+        aware. OUT always shows its own internally generated `reference` -- unaffected by this
+        lot. IN shows the sender's manually-entered `external_reference` when present; a
+        historical IN record from before this lot (back when `reference` was generated for
+        every direction) falls back to that instead of going blank -- historical rows are never
+        rewritten (section 7/8), so they must never lose a reference they already display."""
+        if self.direction == self.Direction.OUT:
+            return self.reference
+        return self.external_reference or self.reference or ""
 
     @property
     def is_overdue(self):

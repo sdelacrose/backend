@@ -51,8 +51,13 @@ def initial_response_status(*, direction, response_required):
     return Status.AWAITING_REPLY
 
 
-def validate_parent_correspondence(parent, child_direction, child_scope):
-    """child_scope: a dict of the child's (project_id, company_profile_id, freelancer_id)."""
+def validate_parent_correspondence(parent, child_direction, child_scope, *, exclude_child_id=None):
+    """child_scope: a dict of the child's (project_id, company_profile_id, freelancer_id).
+
+    exclude_child_id: the child's own id when this is an UPDATE of an existing response that
+    still carries the same parent_correspondence (e.g. editing a DRAFT reply's subject) -- it
+    must never be counted against itself by the active-reply check below.
+    """
     if parent is None:
         return
     if parent.direction == child_direction:
@@ -78,6 +83,56 @@ def validate_parent_correspondence(parent, child_direction, child_scope):
                 )
             }
         )
+    # LOT 3D-3C0C section 10: a Correspondence cannot start a SECOND response while one is
+    # already in progress -- mirrors the UI gating (View mode's Reply button, Actions menu's
+    # Reply item), enforced here too so a client bypassing the UI is still rejected. DRAFT is
+    # the only "in progress" lifecycle status (an IN response can never be DRAFT --
+    # validate_status_for_direction already rejects that), so this only ever actually blocks
+    # exactly the case the ticket describes: an IN parent that already has an OUT child still
+    # being prepared. exclude_child_id keeps this from blocking a save of that same draft reply.
+    Lifecycle = _lifecycle_choices()
+    in_progress = parent.responses.filter(status=Lifecycle.DRAFT)
+    if exclude_child_id is not None:
+        in_progress = in_progress.exclude(pk=exclude_child_id)
+    if in_progress.exists():
+        raise ValidationError(
+            {
+                "parent_correspondence": (
+                    "This correspondence already has a response in progress -- it cannot "
+                    "start another one until that response is issued or deleted."
+                )
+            }
+        )
+
+
+def _candidate_status_for_child(parent_direction, child):
+    """What response_status a single linked `child` implies for a parent of `parent_direction`,
+    on its own -- the one place this per-child mapping lives, reused by both apply_response_link
+    (create/update: only ever moves a pending parent forward) and
+    recompute_parent_response_status_from_responses (delete: recomputes from whichever
+    responses still remain, section LOT 3D-3C0C). Returns None for a direction combination that
+    should never occur (validate_parent_correspondence already rejects it at save time).
+    """
+    Status = _status_choices()
+    Lifecycle = _lifecycle_choices()
+    if parent_direction == "IN" and child.direction == "OUT":
+        # A linked OUT response's own lifecycle decides this -- DRAFT is a prepared response
+        # (parent IN_PREPARATION), ISSUED actually answers the IN Correspondence (parent
+        # ANSWERED). issue_date is a plain business date only and is never consulted here.
+        return Status.ANSWERED if child.status == Lifecycle.ISSUED else Status.IN_PREPARATION
+    if parent_direction == "OUT" and child.direction == "IN":
+        # An IN is always ISSUED (DRAFT IN is rejected at creation): it unconditionally
+        # answers an OUT that required a response.
+        return Status.ANSWERED
+    return None
+
+
+# Only the two non-terminal candidates _candidate_status_for_child ever returns need a rank --
+# ANSWERED is strictly more advanced than IN_PREPARATION (section 3: with several remaining
+# responses, the most advanced one determines the parent).
+def _status_rank(status):
+    Status = _status_choices()
+    return {Status.IN_PREPARATION: 1, Status.ANSWERED: 2}.get(status, 0)
 
 
 def apply_response_link(child):
@@ -88,23 +143,52 @@ def apply_response_link(child):
     parent = child.parent_correspondence
     if parent is None:
         return
-    Status = _status_choices()
     if not parent.response_required or parent.response_status not in parent.PENDING_STATUSES:
         return
 
-    Lifecycle = _lifecycle_choices()
-    if parent.direction == "IN" and child.direction == "OUT":
-        # LOT 3B stabilization: a linked OUT response's own lifecycle decides this -- DRAFT is
-        # a prepared response (parent IN_PREPARATION), ISSUED actually answers the IN
-        # Correspondence (parent ANSWERED). issue_date is a plain business date only and is
-        # never consulted here.
-        new_status = Status.ANSWERED if child.status == Lifecycle.ISSUED else Status.IN_PREPARATION
-    elif parent.direction == "OUT" and child.direction == "IN":
-        # An IN is always ISSUED (DRAFT IN is rejected at creation): it unconditionally
-        # answers an OUT that required a response.
-        new_status = Status.ANSWERED
-    else:
+    new_status = _candidate_status_for_child(parent.direction, child)
+    if new_status is None:
         return
+
+    if new_status != parent.response_status:
+        parent.response_status = new_status
+        parent.save(update_fields=["response_status", "updated_at"])
+
+
+def recompute_parent_response_status_from_responses(parent):
+    """LOT 3D-3C0C: after a child Correspondence is DELETED, recompute `parent`'s
+    response_status from whichever linked responses still remain -- unlike apply_response_link
+    (create/update), this can move the status backwards (e.g. ANSWERED -> IN_PREPARATION, or
+    back to the original TO_ANSWER/AWAITING_REPLY once no response is left at all), since the
+    response that had advanced it may be exactly the one just deleted.
+
+    Reuses _candidate_status_for_child (the same per-child mapping apply_response_link uses)
+    and initial_response_status (the same "no response yet" rule creation already uses) --
+    no separate, duplicated set of status rules.
+
+    Never touches a parent that doesn't require a response (stays NOT_REQUIRED). OVERDUE is
+    still never written here -- it stays a read-time derivation
+    (Correspondence.effective_response_status), exactly like everywhere else in this module.
+    """
+    if not parent.response_required:
+        return
+
+    remaining = list(parent.responses.all())
+    candidates = [
+        status
+        for status in (
+            _candidate_status_for_child(parent.direction, child) for child in remaining
+        )
+        if status is not None
+    ]
+    if candidates:
+        new_status = max(candidates, key=_status_rank)
+    else:
+        # No response left at all: back to the exact same starting state a fresh Correspondence
+        # with this direction/response_required would get.
+        new_status = initial_response_status(
+            direction=parent.direction, response_required=parent.response_required,
+        )
 
     if new_status != parent.response_status:
         parent.response_status = new_status

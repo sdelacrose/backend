@@ -669,3 +669,50 @@ class DocumentIssuerLookupTests(OriginBase):
         client.force_authenticate(user=user)
         self.assertEqual(client.get(self.BROAD).status_code, 403)
         self.assertEqual(self.get(user).status_code, 200)  # the lookup still works
+
+
+class DocumentOriginCompanyScopeTests(OriginBase):
+    """LOT 3D-3D1 pre-flight A: a Company Document's origin is always INTERNAL, immutably --
+    previously only enforced by the frontend (it never sends anything else for a Company
+    Document); this proves the backend now rejects a bypass too, the same way an origin change
+    once a workflow exists is already rejected (_validate_origin)."""
+
+    def setUp(self):
+        super().setUp()
+        from project_management.models import Folder
+
+        # OriginBase/FilelessBase's fixture is project-scoped (self.project/self.folder) and
+        # has no separate self.company -- reuses that same project's own company_profile for a
+        # genuinely Company-scoped (no project) folder here instead of inventing a second one.
+        self.company_folder = Folder.objects.create(
+            company_profile=self.project.company_profile, name="Company Origin Test Folder",
+        )
+
+    def test_a_company_document_defaults_to_internal(self):
+        # discipline="" here: this Company-scoped folder has no project ECPMPConfig, so the
+        # default payload's "Structure" discipline has no configured reference code to resolve
+        # (unrelated to this test's own concern -- origin, not discipline/reference).
+        document = self.create(folder=self.company_folder.id, discipline="")
+        self.assertEqual(document.document_origin, INTERNAL)
+
+    def test_a_company_document_explicitly_sent_as_internal_is_accepted(self):
+        document = self.create(folder=self.company_folder.id, document_origin="INTERNAL", discipline="")
+        self.assertEqual(document.document_origin, INTERNAL)
+
+    def test_a_company_document_cannot_be_created_as_client(self):
+        errors = self.errors_of(self.payload(folder=self.company_folder.id, document_origin="CLIENT"))
+        self.assertIn("document_origin", errors)
+
+    def test_a_company_document_cannot_be_created_as_supplier(self):
+        errors = self.errors_of(self.payload(folder=self.company_folder.id, document_origin="SUPPLIER"))
+        self.assertIn("document_origin", errors)
+
+    def test_a_company_document_cannot_be_reclassified_by_a_direct_update_either(self):
+        document = self.create(folder=self.company_folder.id, discipline="")
+        errors = self.errors_of({"document_origin": "CLIENT"}, instance=document, partial=True)
+        self.assertIn("document_origin", errors)
+
+    def test_a_project_document_is_unaffected_by_this_rule(self):
+        # self.folder (OriginBase/FilelessBase) is project-scoped -- CLIENT/SUPPLIER still work.
+        document = self.create(document_origin="CLIENT", external_issuer_company=self.client_company.id)
+        self.assertEqual(document.document_origin, CLIENT)

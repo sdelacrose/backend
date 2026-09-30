@@ -16,7 +16,26 @@ from project_management.services.correspondence_response import (
     validate_parent_correspondence,
     validate_status_for_direction,
 )
+from project_management.services.correspondence_workflow import (
+    is_content_locked,
+    ready_to_send,
+    validation_state,
+)
+from project_management.services.correspondence_send import resolve_recipient
 from project_management.serializers.time_expense import get_valid_choices
+
+# LOT 3D-3D1 section 8: fields locked once an OUT Correspondence's internal validation is
+# active or approved -- "what is being approved" content, inspected field by field rather than
+# copied from Document's own locking rule (Correspondence has different fields). Deliberately
+# NOT locked: responsible, response_required, response_due_date (assignment/response-tracking
+# metadata, not the content being validated).
+_WORKFLOW_LOCKED_FIELDS = (
+    "direction", "status", "reference", "external_reference",
+    "project", "company_profile", "freelancer",
+    "correspondence_type", "subject", "message",
+    "sender_company", "sender_contact", "recipient_company", "recipient_contact",
+    "issue_date", "received_date", "parent_correspondence",
+)
 
 
 def _owner_scope_for_user(user, project):
@@ -33,20 +52,42 @@ def _owner_scope_for_user(user, project):
 class CorrespondenceSerializer(serializers.ModelSerializer):
     response_status = serializers.SerializerMethodField()
     created_by = serializers.SerializerMethodField()
+    responsible_name = serializers.SerializerMethodField()
+    # LOT 3D-3C0B: the smallest read-only addition needed for the drawer's compact "Related
+    # Correspondences" section (View mode) -- reuses the existing parent_correspondence FK and
+    # its `responses` reverse relation, never a second relationship/model.
+    parent_reference = serializers.SerializerMethodField()
+    responses = serializers.SerializerMethodField()
+    # LOT 3D-3D1: the ONE derived validation state (section 5) and the ONE canonical
+    # can_send/ready_to_send rule (section 15) -- both computed server-side, never re-encoded
+    # on the frontend. Always None/False for IN (validation applies to OUT only, section 2).
+    validation_state = serializers.SerializerMethodField()
+    ready_to_send = serializers.SerializerMethodField()
+    content_locked = serializers.SerializerMethodField()
+    # LOT 3D-3D2 section 4: the exact {email, name} SEND will use -- reuses
+    # services.correspondence_send.resolve_recipient rather than re-deriving "which Network
+    # field is the TO address" on the frontend. None whenever no usable recipient email exists
+    # (never a guessed company-generic address).
+    resolved_recipient = serializers.SerializerMethodField()
 
     class Meta:
         model = Correspondence
         fields = [
-            "id", "reference", "direction", "status", "project", "company_profile", "freelancer",
+            "id", "reference", "external_reference", "direction", "status",
+            "project", "company_profile", "freelancer",
             "correspondence_type", "subject", "message",
             "sender_company", "sender_contact", "recipient_company", "recipient_contact",
             "issue_date", "received_date",
             "response_required", "response_due_date", "response_status",
-            "parent_correspondence",
+            "parent_correspondence", "parent_reference", "responses",
+            "responsible", "responsible_name",
+            "validation_state", "ready_to_send", "content_locked", "resolved_recipient",
             "created_by", "created_at", "updated_at",
         ]
         read_only_fields = [
             "id", "reference", "company_profile", "freelancer", "response_status",
+            "responsible_name", "parent_reference", "responses",
+            "validation_state", "ready_to_send", "content_locked", "resolved_recipient",
             "created_by", "created_at", "updated_at",
         ]
 
@@ -57,6 +98,52 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
         if not obj.created_by_id:
             return None
         return {"id": obj.created_by_id, "name": obj.created_by.full_name}
+
+    def get_responsible_name(self, obj):
+        if not obj.responsible_id:
+            return None
+        return obj.responsible.full_name
+
+    def get_parent_reference(self, obj):
+        if not obj.parent_correspondence_id:
+            return None
+        # LOT 3D-3C0C section 8: the direction-aware display reference (never the raw
+        # internally-generated `reference` alone) -- an IN parent with no generated reference
+        # falls back to its own display_reference logic rather than surfacing blank/undefined.
+        return obj.parent_correspondence.display_reference or None
+
+    def get_validation_state(self, obj):
+        if obj.pk is None:
+            return None
+        return validation_state(obj)
+
+    def get_ready_to_send(self, obj):
+        if obj.pk is None:
+            return False
+        return ready_to_send(obj)
+
+    def get_content_locked(self, obj):
+        if obj.pk is None:
+            return False
+        return is_content_locked(obj)
+
+    def get_resolved_recipient(self, obj):
+        if obj.pk is None or obj.direction != Correspondence.Direction.OUT:
+            return None
+        return resolve_recipient(obj)
+
+    def get_responses(self, obj):
+        if obj.pk is None:
+            return []
+        return [
+            {
+                "id": response.id,
+                "reference": response.display_reference,
+                "direction": response.direction,
+                "status": response.status,
+            }
+            for response in obj.responses.all().order_by("-created_at")
+        ]
 
     # --- shared validation -----------------------------------------------------------
 
@@ -73,12 +160,54 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
         status = attrs.get("status", instance.status if instance else Correspondence.Status.ISSUED)
         validate_status_for_direction(direction, status)
 
+        # LOT 3D-3D1 section 8/14: content is locked server-side while an internal validation
+        # workflow is active or approved -- frontend disabling alone is never sufficient.
+        if instance is not None and is_content_locked(instance):
+            # Compares the VALUE, not mere presence: the frontend always resends every field on
+            # save (not a diff), so presence alone would wrongly reject e.g. a responsible-only
+            # change that happens to resend an unchanged subject/direction/etc alongside it.
+            locked_fields_changed = [
+                field for field in _WORKFLOW_LOCKED_FIELDS
+                if field in attrs and attrs[field] != getattr(instance, field)
+            ]
+            if locked_fields_changed:
+                raise serializers.ValidationError(
+                    {
+                        field: (
+                            "This cannot be changed while an internal validation workflow "
+                            "is active or approved."
+                        )
+                        for field in locked_fields_changed
+                    }
+                )
+
         sender_company = attrs.get("sender_company", instance.sender_company if instance else None)
         sender_contact = attrs.get("sender_contact", instance.sender_contact if instance else None)
         recipient_company = attrs.get("recipient_company", instance.recipient_company if instance else None)
         recipient_contact = attrs.get("recipient_contact", instance.recipient_contact if instance else None)
         self._validate_contact_belongs_to_company(sender_company, sender_contact, "sender_contact")
         self._validate_contact_belongs_to_company(recipient_company, recipient_contact, "recipient_contact")
+
+        # LOT 3D-3D1 pre-flight B: a NEW IN never gets an internally generated reference (LOT
+        # 3D-3C0C section 6/7) -- external_reference is its only meaningful reference, so it is
+        # now required going forward. Historical IN records that predate this rule (blank
+        # external_reference, no DB constraint added -- no destructive migration) stay freely
+        # editable on every OTHER field; this only rejects a create or an update that itself
+        # would leave external_reference blank on an IN, never merely for existing that way.
+        if direction == Correspondence.Direction.IN:
+            new_external_reference = attrs.get(
+                "external_reference", instance.external_reference if instance else None
+            )
+            reference_being_set = instance is None or "external_reference" in attrs
+            if reference_being_set and not (new_external_reference or "").strip():
+                raise serializers.ValidationError(
+                    {
+                        "external_reference": (
+                            "The sender's own reference is required for an incoming "
+                            "correspondence."
+                        )
+                    }
+                )
 
         if instance is None:
             request = self.context.get("request")
@@ -153,7 +282,10 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
                 "company_profile_id": attrs["company_profile"].id if attrs.get("company_profile") else (instance.company_profile_id if instance else None),
                 "freelancer_id": attrs["freelancer"].id if attrs.get("freelancer") else (instance.freelancer_id if instance else None),
             }
-            validate_parent_correspondence(attrs["parent_correspondence"], direction, child_scope)
+            validate_parent_correspondence(
+                attrs["parent_correspondence"], direction, child_scope,
+                exclude_child_id=instance.id if instance else None,
+            )
 
         return attrs
 
@@ -168,11 +300,19 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
         )
         validated_data["created_by"] = user
         with transaction.atomic():
-            validated_data["reference"] = generate_correspondence_reference(
-                project=validated_data.get("project"),
-                company_profile=validated_data.get("company_profile"),
-                freelancer=validated_data.get("freelancer"),
-            )
+            # LOT 3D-3C0C section 6/7: only an OUTGOING Correspondence gets an internally
+            # generated LINKS reference (and consumes a CorrespondenceReferenceCounter
+            # sequence) -- an IN has already been received from outside, so a system-minted
+            # number for it has no meaning; its `reference` stays blank (the model's own
+            # default) and the sender's own external_reference (already a plain writable field
+            # on this serializer) is what the user enters manually instead. Never touched here:
+            # historical rows, already generated before this lot, are never rewritten.
+            if validated_data["direction"] == Correspondence.Direction.OUT:
+                validated_data["reference"] = generate_correspondence_reference(
+                    project=validated_data.get("project"),
+                    company_profile=validated_data.get("company_profile"),
+                    freelancer=validated_data.get("freelancer"),
+                )
             instance = super().create(validated_data)
             apply_response_link(instance)
         return instance

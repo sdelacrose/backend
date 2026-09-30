@@ -1174,6 +1174,11 @@ class CorrespondencePermission(BaseModulePermission):
     DocumentPermission, but Correspondence already carries its own project/company_profile
     fields directly, so scope is read straight from the object/payload -- no folder-style
     indirection is needed (LOT 3B section 12).
+
+    LOT 3D-3: documents.full_access is honored as an override at whatever scope is being
+    checked, matching the established Documents-adjacent convention (DocumentPermission etc.)
+    -- granular correspondence_* keys keep working exactly as before; this only adds another
+    way to pass the same check, never a broader/different one.
     """
 
     def __init__(self, action='view', scope='company'):
@@ -1184,6 +1189,11 @@ class CorrespondencePermission(BaseModulePermission):
             return 'project', {'project': project}
         return 'company', {}
 
+    def _check_action_or_full_access(self, user, action, scope, context):
+        return self._check_permission(
+            user, self.module, action, scope, context
+        ) or self._check_permission(user, self.module, 'full_access', scope, context)
+
     def has_permission(self, request, view):
         if request.method == 'POST':
             project = None
@@ -1191,12 +1201,12 @@ class CorrespondencePermission(BaseModulePermission):
             if project_id:
                 project = Project.objects.filter(pk=project_id).first()
             scope, context = self._scope_and_context(project)
-            return self._check_permission(
-                request.user, self.module, 'correspondence_create', scope, context
+            return self._check_action_or_full_access(
+                request.user, 'correspondence_create', scope, context
             )
         if request.method == 'GET' and getattr(view, 'action', None) == 'list':
-            return self._check_permission(
-                request.user, self.module, 'correspondence_view', self.scope, {}
+            return self._check_action_or_full_access(
+                request.user, 'correspondence_view', self.scope, {}
             )
         return True
 
@@ -1207,13 +1217,19 @@ class CorrespondencePermission(BaseModulePermission):
         # from request.method here would be wrong for POST (attachment upload), which needs
         # "update" rather than whatever a generic method->action mapping would guess.
         scope, context = self._scope_and_context(obj.project)
-        return self._check_permission(request.user, self.module, self.action, scope, context)
+        return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
 class TransmittalPermission(BaseModulePermission):
     """documents.transmittal_<action>: same module ("documents") and scope mechanism as
     CorrespondencePermission -- Transmittal likewise carries its own project/company_profile
     fields directly, so scope is read straight from the object/payload (LOT 3C section 16).
+
+    LOT 3D-3: documents.full_access override, same note as CorrespondencePermission above.
+    This never widens WHERE Transmittal data can appear -- Transmittal stays structurally
+    project-only (services.correspondances_register excludes it from company scope
+    regardless of permission); this only changes how the transmittal_* actions themselves are
+    authorized.
     """
 
     def __init__(self, action='view', scope='company'):
@@ -1224,6 +1240,11 @@ class TransmittalPermission(BaseModulePermission):
             return 'project', {'project': project}
         return 'company', {}
 
+    def _check_action_or_full_access(self, user, action, scope, context):
+        return self._check_permission(
+            user, self.module, action, scope, context
+        ) or self._check_permission(user, self.module, 'full_access', scope, context)
+
     def has_permission(self, request, view):
         if request.method == 'POST' and getattr(view, 'action', None) == 'create':
             project = None
@@ -1231,12 +1252,12 @@ class TransmittalPermission(BaseModulePermission):
             if project_id:
                 project = Project.objects.filter(pk=project_id).first()
             scope, context = self._scope_and_context(project)
-            return self._check_permission(
-                request.user, self.module, 'transmittal_create', scope, context
+            return self._check_action_or_full_access(
+                request.user, 'transmittal_create', scope, context
             )
         if request.method == 'GET' and getattr(view, 'action', None) == 'list':
-            return self._check_permission(
-                request.user, self.module, 'transmittal_view', self.scope, {}
+            return self._check_action_or_full_access(
+                request.user, 'transmittal_view', self.scope, {}
             )
         return True
 
@@ -1245,7 +1266,7 @@ class TransmittalPermission(BaseModulePermission):
         # main viewset, or explicitly for the items/events sub-resources and the issue action)
         # -- never re-derived from request.method (see CorrespondencePermission's own fix).
         scope, context = self._scope_and_context(obj.project)
-        return self._check_permission(request.user, self.module, self.action, scope, context)
+        return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
 class ECPMPConfigPermission(BaseModulePermission):

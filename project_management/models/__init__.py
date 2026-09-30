@@ -4,6 +4,8 @@ from .document_control import DocumentControl
 from .document_revision import DocumentRevision
 from .document_attachment import DocumentAttachment
 from .correspondence import Correspondence, CorrespondenceAttachment, CorrespondenceReferenceCounter
+from .correspondence_workflow import CorrespondenceValidationWorkflow, CorrespondenceValidationEvent
+from .correspondence_send import CorrespondenceSendEvent
 from .transmittal import Transmittal, TransmittalEvent, TransmittalItem, TransmittalReferenceCounter
 from .document_workflow import DocumentWorkflow, DocumentWorkflowEvent
 from .document_search import (

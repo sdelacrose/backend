@@ -14,6 +14,10 @@ from project_management.filters import CorrespondenceFilter
 from project_management.models import Correspondence, CorrespondenceAttachment
 from project_management.permissions import CorrespondencePermission
 from project_management.serializers.correspondence import CorrespondenceSerializer
+from project_management.services.correspondence_response import (
+    recompute_parent_response_status_from_responses,
+)
+from project_management.services.correspondence_workflow import is_content_locked
 
 # Same mapping style as DocumentViewSet.get_permissions: one CorrespondencePermission action
 # per DRF action, never a broader/narrower check than the request actually needs.
@@ -27,6 +31,24 @@ _ACTION_TO_PERMISSION = {
 }
 
 
+def correspondence_queryset_for_user(user):
+    """The Correspondence rows `user` may see, by tenant scope -- shared with
+    CorrespondenceViewSet.get_queryset() and the LOT 3D-2 unified Correspondances aggregation
+    (services.correspondances_register), so both apply the exact same tenant scope."""
+    queryset = Correspondence.objects.select_related(
+        "project", "company_profile", "freelancer",
+        "sender_company", "sender_contact", "recipient_company", "recipient_contact",
+        "parent_correspondence", "created_by",
+    )
+    if user.is_freelancer:
+        return queryset.filter(
+            Q(freelancer=user) | Q(project__user=user)
+        ).distinct()
+    return queryset.filter(
+        Q(company_profile=user.company) | Q(project__company_profile=user.company)
+    ).distinct()
+
+
 class CorrespondenceViewSet(viewsets.ModelViewSet):
     serializer_class = CorrespondenceSerializer
     filterset_class = CorrespondenceFilter
@@ -37,24 +59,24 @@ class CorrespondenceViewSet(viewsets.ModelViewSet):
         return [CorrespondencePermission(_ACTION_TO_PERMISSION.get(self.action, "view"))]
 
     def get_queryset(self):
-        user = self.request.user
-        queryset = Correspondence.objects.select_related(
-            "project", "company_profile", "freelancer",
-            "sender_company", "sender_contact", "recipient_company", "recipient_contact",
-            "parent_correspondence", "created_by",
-        )
-        if user.is_freelancer:
-            return queryset.filter(
-                Q(freelancer=user) | Q(project__user=user)
-            ).distinct()
-        return queryset.filter(
-            Q(company_profile=user.company) | Q(project__company_profile=user.company)
-        ).distinct()
+        return correspondence_queryset_for_user(self.request.user)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context["user"] = self.request.user
         return context
+
+    def perform_destroy(self, instance):
+        # LOT 3D-3C0C: deleting a response (child) must not leave its surviving parent's
+        # response_status stale -- recomputed from whichever responses remain right after the
+        # delete, in the same request/transaction. Deleting a PARENT is unaffected: its own
+        # children already survive via parent_correspondence's on_delete=SET_NULL (model field),
+        # and there is no parent-of-a-parent to recompute here.
+        parent = instance.parent_correspondence
+        with transaction.atomic():
+            instance.delete()
+            if parent is not None:
+                recompute_parent_response_status_from_responses(parent)
 
 
 def _user_reference(user):
@@ -119,6 +141,13 @@ class CorrespondenceAttachmentViewSet(viewsets.GenericViewSet):
 
     def create(self, request, correspondence_id=None, *args, **kwargs):
         correspondence = self._correspondence(request, correspondence_id, "update")
+        # LOT 3D-3D1 section 8/14: attachments are part of "what is being approved" -- locked
+        # the same way the Correspondence's own content fields are, server-side.
+        if is_content_locked(correspondence):
+            return Response(
+                {"file": "Attachments cannot be changed while an internal validation workflow is active or approved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         uploaded = request.FILES.get("file")
         if uploaded is None:
             return Response(
@@ -148,6 +177,11 @@ class CorrespondenceAttachmentViewSet(viewsets.GenericViewSet):
 
     def destroy(self, request, correspondence_id=None, attachment_id=None, *args, **kwargs):
         correspondence = self._correspondence(request, correspondence_id, "update")
+        if is_content_locked(correspondence):
+            return Response(
+                {"file": "Attachments cannot be changed while an internal validation workflow is active or approved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         attachment = self._attachment(correspondence, attachment_id)
         stored = attachment.file
         with transaction.atomic():

@@ -18,12 +18,17 @@ from project_management.views.correspondence import (
     CorrespondenceViewSet,
     CorrespondenceAttachmentViewSet,
 )
+from project_management.views.correspondence_workflow import (
+    CorrespondenceValidationWorkflowViewSet,
+)
+from project_management.views.correspondence_send import CorrespondenceSendViewSet
 from project_management.views.transmittal import (
     TransmittalEventViewSet,
     TransmittalIssueView,
     TransmittalItemViewSet,
     TransmittalViewSet,
 )
+from project_management.views.correspondances_register import CorrespondancesRegisterView
 from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.document_search import (
@@ -570,6 +575,14 @@ urlpatterns = [
     path('correspondence/<int:correspondence_id>/attachments', CorrespondenceAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-attachments'),
     path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>', CorrespondenceAttachmentViewSet.as_view({'delete': 'destroy'}), name='correspondence-attachment-detail'),
     path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>/download', CorrespondenceAttachmentViewSet.as_view({'get': 'download'}), name='correspondence-attachment-download'),
+    # LOT 3D-3D1: internal validation workflow of an OUT Correspondence (NOT DocumentWorkflow --
+    # see models/correspondence_workflow.py for why).
+    path('correspondence/<int:correspondence_id>/workflow', CorrespondenceValidationWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='correspondence-workflow'),
+    path('correspondence/<int:correspondence_id>/workflow/actions', CorrespondenceValidationWorkflowViewSet.as_view({'post': 'act'}), name='correspondence-workflow-action'),
+    path('correspondence/<int:correspondence_id>/workflow/actors', CorrespondenceValidationWorkflowViewSet.as_view({'get': 'actor_options'}), name='correspondence-workflow-actors'),
+    # LOT 3D-3D2: the SEND step for an approved OUT Correspondence (see
+    # services/correspondence_send.py).
+    path('correspondence/<int:correspondence_id>/send', CorrespondenceSendViewSet.as_view({'get': 'retrieve', 'post': 'send'}), name='correspondence-send'),
 
     # LOT 3C: Transmittal -- a formal transmission record/bordereau, not a Correspondence.
     path('transmittal', TransmittalViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittals'),
@@ -580,6 +593,10 @@ urlpatterns = [
     path('transmittal/<int:transmittal_id>/items/<int:item_id>', TransmittalItemViewSet.as_view({'delete': 'destroy'}), name='transmittal-item-detail'),
     path('transmittal/<int:transmittal_id>/issue', TransmittalIssueView.as_view({'post': 'create'}), name='transmittal-issue'),
     path('transmittal/<int:transmittal_id>/events', TransmittalEventViewSet.as_view({'get': 'list'}), name='transmittal-events'),
+
+    # LOT 3D-2: unified read-only Correspondances register (Correspondence + Transmittal
+    # projection). No new model/table -- see services.correspondances_register.
+    path('correspondances', CorrespondancesRegisterView.as_view(), name='correspondances-register'),
 
     path('document/<int:document_id>/workflow', DocumentWorkflowViewSet.as_view({'post': 'start_current'}), name='document-workflow-start'),
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow', DocumentWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='document-revision-workflow'),

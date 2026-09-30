@@ -408,6 +408,19 @@ class DocumentSerializer(serializers.ModelSerializer):
 
         current_origin = instance.document_origin if instance else DocumentOrigin.INTERNAL
         origin = attrs.get("document_origin", current_origin)
+
+        # LOT 3D-3D1 pre-flight A: a Company Document is never a Project deliverable and is
+        # never distributed via Transmittal (LOT 3D-3C0) -- its origin is always INTERNAL,
+        # immutably, and this was previously enforced by the frontend only (it always sends
+        # INTERNAL for a Company Document and never offers another choice), leaving a client
+        # that bypasses the UI free to submit CLIENT/SUPPLIER directly. Enforced here too now,
+        # regardless of workflow state, since it is a scope rule, not a workflow-lock rule.
+        origin_folder = attrs.get("folder") or (instance.folder if instance else None)
+        if origin != DocumentOrigin.INTERNAL and origin_folder is not None and origin_folder.company_profile_id:
+            raise serializers.ValidationError(
+                {"document_origin": "A Company Document's origin is always Internal."}
+            )
+
         if (
             instance
             and origin_sent

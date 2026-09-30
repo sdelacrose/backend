@@ -81,6 +81,12 @@ class CorrespondenceTestBase(NoNotificationsMixin, TestCase):
             "recipient_company": self.client_company.id,
             **data,
         }
+        # LOT 3D-3D1 pre-flight B: a new IN now requires external_reference -- auto-filled here
+        # so every existing IN-creating test (not itself testing that requirement) keeps working
+        # unchanged; a test that wants to test the requirement passes external_reference itself
+        # (including explicitly blank/omitted, via a raw serializer call, not this helper).
+        if payload.get("direction") == "IN" and not payload.get("external_reference"):
+            payload["external_reference"] = "TEST-EXTERNAL-REF"
         serializer = CorrespondenceSerializer(data=payload, context={"user": self.owner})
         self.assertTrue(serializer.is_valid(), serializer.errors)
         return serializer.save()
@@ -96,9 +102,28 @@ class CorrespondenceTestBase(NoNotificationsMixin, TestCase):
 
 class CorrespondenceCreationTests(CorrespondenceTestBase):
     def test_in_create(self):
+        # LOT 3D-3C0C section 6: an IN correspondence never gets an internally generated
+        # reference -- it stays blank (the model's own default) unless/until the sender's own
+        # external_reference is entered manually.
         correspondence = self.create(direction="IN", sender_company=self.client_company.id)
         self.assertEqual(correspondence.direction, "IN")
-        self.assertTrue(correspondence.reference)
+        self.assertEqual(correspondence.reference, "")
+
+    def test_in_create_with_manual_external_reference(self):
+        correspondence = self.create(
+            direction="IN", sender_company=self.client_company.id,
+            external_reference="ACME-LETTER-042",
+        )
+        self.assertEqual(correspondence.reference, "")
+        self.assertEqual(correspondence.external_reference, "ACME-LETTER-042")
+        self.assertEqual(correspondence.display_reference, "ACME-LETTER-042")
+
+    def test_in_create_does_not_consume_a_reference_sequence(self):
+        # The counter is untouched by an IN create -- the very next OUT still allocates 00001,
+        # not 00002, proving IN never silently consumed a sequence number.
+        self.create(direction="IN", sender_company=self.client_company.id)
+        out_correspondence = self.create(direction="OUT")
+        self.assertTrue(out_correspondence.reference.endswith("-COR-00001"))
 
     def test_out_create(self):
         correspondence = self.create(direction="OUT")
@@ -150,13 +175,16 @@ class CorrespondenceReferenceTests(CorrespondenceTestBase):
         self.assertNotEqual(Correspondence.objects.get(pk=correspondence.pk).reference, "HACKED-00001")
 
     def test_company_reference_format(self):
+        # LOT 3D-3C0 section 9: aligned with the Project Document reference's own convention
+        # (owner code leads, COR fills the type-code slot, sequence last) -- was
+        # COR-<code>-00001 (COR leading) under the original LOT 3B format.
         correspondence = self.create()
-        self.assertEqual(correspondence.reference, f"COR-{self.company.company_code}-00001")
+        self.assertEqual(correspondence.reference, f"{self.company.company_code}-COR-00001")
 
     def test_project_reference_format(self):
         correspondence = self.create(project=self.project.id)
         self.project.refresh_from_db()
-        self.assertEqual(correspondence.reference, f"COR-{self.project.project_code}-00001")
+        self.assertEqual(correspondence.reference, f"{self.project.project_code}-COR-00001")
 
     def test_sequence_independent_from_document_counter(self):
         folder = Folder.objects.create(company_profile=self.company, name="Corr Test Folder")

@@ -29,6 +29,18 @@ def _to_drf_error(error):
     return DRFValidationError(detail)
 
 
+def transmittal_queryset_for_user(user):
+    """The Transmittal rows `user` may see, by tenant scope (always via its project, LOT 3C
+    amendment) -- shared with TransmittalViewSet.get_queryset() and the LOT 3D-2 unified
+    Correspondances aggregation (services.correspondances_register)."""
+    queryset = Transmittal.objects.select_related(
+        "project", "external_company", "created_by",
+    ).prefetch_related("items", "external_contacts")
+    if user.is_freelancer:
+        return queryset.filter(project__user=user).distinct()
+    return queryset.filter(project__company_profile=user.company).distinct()
+
+
 class TransmittalViewSet(viewsets.ModelViewSet):
     serializer_class = TransmittalSerializer
     filterset_class = TransmittalFilter
@@ -39,13 +51,7 @@ class TransmittalViewSet(viewsets.ModelViewSet):
         return [TransmittalPermission(_ACTION_TO_PERMISSION.get(self.action, "view"))]
 
     def get_queryset(self):
-        user = self.request.user
-        queryset = Transmittal.objects.select_related(
-            "project", "external_company", "created_by",
-        ).prefetch_related("items", "external_contacts")
-        if user.is_freelancer:
-            return queryset.filter(project__user=user).distinct()
-        return queryset.filter(project__company_profile=user.company).distinct()
+        return transmittal_queryset_for_user(self.request.user)
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
