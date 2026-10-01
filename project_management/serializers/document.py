@@ -78,6 +78,9 @@ class DocumentSerializer(serializers.ModelSerializer):
     workflow = serializers.SerializerMethodField()
     internal_status = serializers.SerializerMethodField()
     revision_label = serializers.SerializerMethodField()
+    # D13: the external issuer's own revision designation of the CURRENT version (Supplier,
+    # potentially Client) -- distinct from revision_label (INTERNAL-origin, approval-only).
+    current_external_revision = serializers.SerializerMethodField()
     origin_locked = serializers.SerializerMethodField()
 
     class Meta:
@@ -99,6 +102,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'uploaded_at',
             'updated_at',
             'identification_number',
+            'client_reference',
             'category',
             'discipline',
             'discipline_group',
@@ -117,6 +121,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'workflow',
             'internal_status',
             'revision_label',
+            'current_external_revision',
             'file_size',
             'description',
             'tags',
@@ -603,19 +608,25 @@ class DocumentSerializer(serializers.ModelSerializer):
             validated_data['author'] = request_user
 
         with transaction.atomic():
-            # Permanent reference, generated ONCE here (PROJECT-DISCIPLINE-DOCUMENT_TYPE-SEQUENCE by
-            # default, configurable per project/company); never recalculated afterwards.
-            (
-                validated_data['sequence_number'],
-                validated_data['full_document_number'],
-            ) = generate_document_reference(
-                validated_data['folder'],
-                document_type=validated_data.get('document_type'),
-                discipline=validated_data.get('discipline'),
-                discipline_code=validated_data.get('discipline_code'),
-                category=validated_data.get('category'),
-                config=config,
-            )
+            # D13 live review section 8: the Internal Ref. (full_document_number) is a
+            # LINKS/company-controlled reference -- it must never be forced onto a document the
+            # company did not itself originate. Only INTERNAL-origin documents (including legacy
+            # documents, whose default is INTERNAL) get one; SUPPLIER/CLIENT documents keep both
+            # fields blank unless a future workflow explicitly assigns one. Permanent once
+            # generated -- never recalculated afterwards.
+            origin = validated_data.get('document_origin') or DocumentOrigin.INTERNAL
+            if origin == DocumentOrigin.INTERNAL:
+                (
+                    validated_data['sequence_number'],
+                    validated_data['full_document_number'],
+                ) = generate_document_reference(
+                    validated_data['folder'],
+                    document_type=validated_data.get('document_type'),
+                    discipline=validated_data.get('discipline'),
+                    discipline_code=validated_data.get('discipline_code'),
+                    category=validated_data.get('category'),
+                    config=config,
+                )
             validated_data['created_by'] = request_user
             validated_data['assignee'] = validated_data.get('author')
             instance = super().create(validated_data)
@@ -722,6 +733,18 @@ class DocumentSerializer(serializers.ModelSerializer):
             '-created_at', '-id'
         ).first()
         return current.revision_label if current else None
+
+    def get_current_external_revision(self, obj):
+        # D13: the external issuer's own revision designation of the CURRENT version -- same
+        # include_control gating and annotation-first pattern as get_revision_label above.
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'current_external_revision'):
+            return obj.current_external_revision
+        current = DocumentRevision.objects.filter(document=obj).order_by(
+            '-created_at', '-id'
+        ).first()
+        return current.external_revision if current else None
 
     def get_origin_locked(self, obj):
         # True once an internal workflow (active or historical) exists: the origin is then

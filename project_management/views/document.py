@@ -597,7 +597,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
     ordering_natural_fields = ordering_text_fields
     ordering = ["-uploaded_at", "-id"]
 
-    search_fields = ["file_name", "author__first_name", "author__last_name", "id", "document_type", "full_document_number", "identification_number"]
+    # D13 live review section 14: all three business references (Internal/Supplier/Client) are
+    # searchable -- full_document_number/identification_number already were; client_reference
+    # added here, same trivial extension, no new search system.
+    search_fields = ["file_name", "author__first_name", "author__last_name", "id", "document_type", "full_document_number", "identification_number", "client_reference"]
 
     def get_serializer(self, *args, **kwargs):
         serializer = super(DocumentViewSet, self).get_serializer(*args, **kwargs)

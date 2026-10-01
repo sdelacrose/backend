@@ -90,6 +90,11 @@ def annotate_current_workflow(queryset):
     ).annotate(
         # Official Revision of the CURRENT version (null until it is approved).
         current_revision_label=Subquery(current_revision.values("revision_label")[:1]),
+        # D13: the external issuer's own revision designation of the CURRENT version
+        # (Supplier/Client origin, primarily).
+        current_external_revision=Subquery(
+            current_revision.values("external_revision")[:1]
+        ),
         wf_status=Subquery(latest_workflow.values("status")[:1]),
         wf_expected_actor_id=Subquery(
             latest_workflow.annotate(expected=expected).values("expected")[:1]

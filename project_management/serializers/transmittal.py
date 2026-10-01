@@ -40,6 +40,8 @@ class TransmittalItemSerializer(serializers.ModelSerializer):
                 "id": revision.pk,
                 "version_number": revision.version_number,
                 "revision_label": revision.revision_label,
+                # D13: the external issuer's own revision designation (IN items, primarily).
+                "external_revision": revision.external_revision,
                 "file_name": revision.file_name,
             },
         }

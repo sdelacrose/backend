@@ -122,6 +122,8 @@ def build_item_evidence_snapshot(document_revision, distribution_purpose):
             "id": document_revision.pk,
             "version_number": document_revision.version_number,
             "revision_label": document_revision.revision_label,
+            # D13: the external issuer's own revision designation (IN items, primarily).
+            "external_revision": document_revision.external_revision,
             "file_name": document_revision.file_name,
             "file_sha256": document_revision.file_sha256,
         },

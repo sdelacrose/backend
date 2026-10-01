@@ -182,7 +182,14 @@ class Document(models.Model):
     file = models.FileField(upload_to=get_upload_path, blank=True)
     file_name = models.CharField(max_length=500, null=True, blank=True)
     document_type = models.CharField(max_length=255, null=True, blank=True)
+    # D13 live review: the three independent, non-mutually-exclusive business references a
+    # Document may carry. identification_number is the pre-existing generic field, reused as the
+    # canonical SUPPLIER reference (already its only real-world use, LOT 3E-1C2 reception) --
+    # never also used for Client. full_document_number (below) remains the canonical INTERNAL
+    # reference, now only ever generated for INTERNAL-origin documents (see the serializer's own
+    # create()). client_reference is new: no prior field represented it at all.
     identification_number = models.CharField(max_length=255, null=True, blank=True)
+    client_reference = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=255, null=True, blank=True)
     # Legacy documents predate this distinction and keep the internal Document Control behaviour.
     document_origin = models.CharField(

@@ -335,6 +335,7 @@ def add_document_revision(
     major_revision=None,
     revision_type=MINOR,
     comment="",
+    external_revision=None,
 ):
     """Store a new immutable version of `document` and make it the current file.
 
@@ -385,6 +386,9 @@ def add_document_revision(
             # Calculated from the upload itself (no download from storage), before it is stored.
             file_sha256=sha256_of_file(uploaded_file),
             comment=comment,
+            # D13: the external issuer's own revision designation (never revision_label -- that
+            # stays exclusively the INTERNAL-approval-assigned value, untouched here).
+            external_revision=(external_revision or "").strip() or None,
             created_by=user,
         )
         revision.file = uploaded_file
@@ -414,11 +418,15 @@ def is_first_main_file_upload(document):
     ).exists()
 
 
-def create_document_revision(document, uploaded_file, user, revision_type, comment):
+def create_document_revision(
+    document, uploaded_file, user, revision_type, comment, external_revision=None
+):
     """Validated entry point used by the API: new file + reason are mandatory.
 
     Exception: the FIRST main file of a document that has none (TO_CREATE) only needs the
-    file; the version type and the comment may be omitted.
+    file; the version type and the comment may be omitted. `external_revision` (D13) is always
+    optional here -- an external issuer may send a document with no stated revision -- and is
+    never required by this validation regardless of origin.
     """
     if is_first_main_file_upload(document):
         if uploaded_file is None:
@@ -429,6 +437,7 @@ def create_document_revision(document, uploaded_file, user, revision_type, comme
             user,
             revision_type=MINOR,
             comment=(comment or "").strip(),
+            external_revision=external_revision,
         )
     errors = {}
     if revision_type not in REVISION_TYPES:
@@ -446,4 +455,5 @@ def create_document_revision(document, uploaded_file, user, revision_type, comme
         user,
         revision_type=revision_type,
         comment=comment,
+        external_revision=external_revision,
     )

@@ -53,6 +53,9 @@ def serialize_revision(revision, request, document, workflow=None):
         "id": revision.id,
         "version_number": revision.version_number,
         "revision_label": revision.revision_label,
+        # D13: the EXTERNAL issuer's own revision designation (Supplier, potentially Client) --
+        # distinct from revision_label (INTERNAL-origin, workflow-approval-only).
+        "external_revision": revision.external_revision,
         "major_revision": revision.major_revision,
         "minor_revision": revision.minor_revision,
         "label": revision.label,
@@ -114,6 +117,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                     "id": None,
                     "version_number": 1,
                     "revision_label": None,
+                    "external_revision": None,
                     "major_revision": major,
                     "minor_revision": 0,
                     "label": f"{major}-00",
@@ -155,6 +159,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                 request.user,
                 request.data.get("revision_type"),
                 request.data.get("comment"),
+                external_revision=request.data.get("external_revision"),
             )
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)

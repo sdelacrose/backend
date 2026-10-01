@@ -20,7 +20,10 @@ from project_management.services.document_revision import (
     get_revision_history,
     increment_major,
 )
-from project_management.views.document_revision import DocumentRevisionViewSet
+from project_management.views.document_revision import (
+    DocumentRevisionViewSet,
+    serialize_revision,
+)
 
 class NoNotificationsMixin:
     # Notifications read license tables owned by the admin server (absent in the test DB).
@@ -378,3 +381,174 @@ class DocumentRevisionCreateApiTests(NoNotificationsMixin, TestCase):
         ):
             self.assertEqual(self.post(self.payload()).status_code, 403)
         self.assertFalse(DocumentRevision.objects.exists())
+
+
+@override_settings(MEDIA_ROOT=MEDIA)
+class ExternalRevisionTests(NoNotificationsMixin, TestCase):
+    """D13: DocumentRevision.external_revision -- the EXTERNAL issuer's own revision
+    designation (Supplier, potentially Client), distinct from revision_label (INTERNAL-origin,
+    workflow-approval-only) and from comment (free-text note). Section 21 test matrix A-I."""
+
+    def setUp(self):
+        self.silence_notifications()
+        self.user, self.document = make_document()
+        self.document.document_origin = "SUPPLIER"
+        self.document.save(update_fields=["document_origin"])
+
+    def test_add_document_revision_accepts_external_revision(self):  # A
+        revision = add_document_revision(
+            self.document,
+            ContentFile(b"rev-a", name="plan.txt"),
+            self.user,
+            external_revision="A",
+        )
+        revision.refresh_from_db()
+        self.assertEqual(revision.external_revision, "A")
+
+    def make_fileless_supplier_document(self):
+        # A genuine TO_CREATE register entry (no Document.file, no DocumentRevision rows) --
+        # unlike self.document (make_document() pre-sets .file), this is the real
+        # is_first_main_file_upload state the "first upload" branch of
+        # create_document_revision needs to be exercised.
+        folder = self.document.folder
+        document = Document(
+            folder=folder, file_name="", created_by=self.user, document_origin="SUPPLIER",
+        )
+        document.save()
+        return document
+
+    def test_create_document_revision_accepts_external_revision_on_first_upload(self):  # A
+        # is_first_main_file_upload path -- external_revision must still be threaded through.
+        fileless = self.make_fileless_supplier_document()
+        revision = create_document_revision(
+            fileless, ContentFile(b"first", name="plan.txt"), self.user,
+            None, None, external_revision="A",
+        )
+        self.assertEqual(revision.external_revision, "A")
+        self.assertIsNone(revision.revision_label)  # C
+
+    def test_serializer_returns_external_revision(self):  # B
+        revision = add_document_revision(
+            self.document, ContentFile(b"rev-a", name="plan.txt"), self.user,
+            external_revision="A",
+        )
+        request = APIRequestFactory().get("/")
+        data = serialize_revision(revision, request, self.document)
+        self.assertEqual(data["external_revision"], "A")
+
+    def test_supplier_revision_has_no_internal_revision_label(self):  # C
+        revision = add_document_revision(
+            self.document, ContentFile(b"rev-a", name="plan.txt"), self.user,
+            external_revision="A",
+        )
+        self.assertEqual(revision.external_revision, "A")
+        self.assertIsNone(revision.revision_label)
+
+    def test_second_revision_same_document_identity_different_external_revision(self):  # D
+        first = add_document_revision(
+            self.document, ContentFile(b"rev-a", name="plan.txt"), self.user,
+            external_revision="A",
+        )
+        # make_document() pre-sets Document.file directly (legacy-style), so the FIRST real
+        # add_document_revision call also materializes an implicit legacy revision for it
+        # (_materialize_first_revision) -- count the delta from here, not an absolute 2.
+        count_after_first = DocumentRevision.objects.filter(document=self.document).count()
+        second = create_document_revision(
+            self.document, ContentFile(b"rev-b", name="plan.txt"), self.user,
+            "minor", "Received via IN Transmittal reception", external_revision="B",
+        )
+        self.assertEqual(first.document_id, second.document_id)
+        self.assertEqual(
+            DocumentRevision.objects.filter(document=self.document).count(),
+            count_after_first + 1,
+        )
+        self.assertEqual(second.external_revision, "B")
+
+    def make_internal_document(self):
+        # A second Document reusing the already-created user/company (avoids make_document()'s
+        # own hardcoded, unique-per-test-run email colliding with itself).
+        folder = self.document.folder
+        document = Document(
+            folder=folder, file_name="internal.txt", created_by=self.user,
+            document_origin="INTERNAL",
+        )
+        document.file.save("internal.txt", ContentFile(b"internal"), save=False)
+        document.save()
+        return document
+
+    def test_internal_revision_behavior_unchanged(self):  # E
+        internal_document = self.make_internal_document()
+        revision = add_document_revision(
+            internal_document, ContentFile(b"v1", name="plan.txt"), self.user,
+        )
+        self.assertIsNone(revision.external_revision)
+        self.assertIsNone(revision.revision_label)
+
+    def test_internal_workflow_approval_still_assigns_revision_label_and_never_touches_external_revision(self):  # F/G
+        from project_management.services.document_workflow import start_workflow, perform_action
+
+        # The internal workflow only ever runs on INTERNAL-origin documents
+        # (assert_internal_origin) -- a fresh document, not self.document (SUPPLIER).
+        internal_document = self.make_internal_document()
+        revision = add_document_revision(
+            internal_document, ContentFile(b"v1", name="plan.txt"), self.user,
+        )
+        approver = User.objects.create_user(
+            email="approver.tester@links-local.invalid", first_name="App", last_name="Rover",
+            title="Mr", user_type="company_user",
+        )
+        workflow = start_workflow(
+            revision, "TWO_STEP", self.user, None, approver, self.user,
+        )
+        perform_action(workflow, self.user, "SIGN", "author sign")
+        perform_action(workflow, approver, "APPROVE", "approved")
+        revision.refresh_from_db()
+        self.assertIsNotNone(revision.revision_label)  # F: internal approval still works
+        self.assertIsNone(revision.external_revision)  # G: never touched by internal approval
+
+    def test_existing_callers_without_external_revision_remain_valid(self):  # H
+        fileless = self.make_fileless_supplier_document()
+        revision = create_document_revision(
+            fileless, ContentFile(b"v1", name="plan.txt"), self.user, None, None,
+        )
+        self.assertIsNone(revision.external_revision)
+
+    def test_comment_remains_a_plain_comment_not_overloaded_with_external_revision(self):  # I
+        revision = add_document_revision(
+            self.document, ContentFile(b"v1", name="plan.txt"), self.user,
+            comment="A real free-text note", external_revision="A",
+        )
+        self.assertEqual(revision.comment, "A real free-text note")
+        self.assertEqual(revision.external_revision, "A")
+        self.assertNotEqual(revision.comment, revision.external_revision)
+
+    def test_api_create_accepts_external_revision(self):
+        view = DocumentRevisionViewSet.as_view({"post": "create"}, permission_classes=[])
+        request = APIRequestFactory().post(
+            "/x/",
+            {
+                "file": SimpleUploadedFile("plan.txt", b"api"),
+                "revision_type": "minor",
+                "comment": "API revision",
+                "external_revision": "A",
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.user)
+        with patch(
+            "project_management.views.document_revision.get_register_document_or_404",
+            return_value=self.document,
+        ), patch("project_management.views.document_revision.assert_can_update_document"):
+            response = view(request, document_id=self.document.id)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["external_revision"], "A")
+
+    def test_document_serializer_exposes_current_external_revision(self):
+        add_document_revision(
+            self.document, ContentFile(b"v1", name="plan.txt"), self.user,
+            external_revision="A",
+        )
+        from project_management.serializers.document import DocumentSerializer
+
+        data = DocumentSerializer(self.document, context={"include_control": True}).data
+        self.assertEqual(data["current_external_revision"], "A")
