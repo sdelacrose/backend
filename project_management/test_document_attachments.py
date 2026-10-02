@@ -13,6 +13,7 @@ from project_management.models import (
     DocumentWorkflow,
     DocumentWorkflowEvent,
 )
+from project_management.serializers.document import DocumentSerializer
 from project_management.services.document_revision import add_document_revision
 from project_management.services.document_workflow import perform_action
 from project_management.test_document_workflow import THREE, TWO, WorkflowTestBase
@@ -225,3 +226,71 @@ class AttachmentIsolationTests(AttachmentTestBase):
         self.assertEqual(wf.events.count(), 1)
         self.assertEqual(self.snapshot(), before)
         self.assertEqual(DocumentAttachment.objects.filter(document=self.document).count(), 1)
+
+
+class AttachmentCreationFlowTests(AttachmentTestBase):
+    """L2B: the exact frontend sequence -- create the Document (Main Document file) first,
+    then upload each staged Attachment against the returned id. Never one combined request,
+    never a second Document/DocumentRevision for an attachment."""
+
+    def create_document_with_main_file(self, name="main.txt"):
+        # Same minimal direct-create pattern as test_document_reference.py's
+        # OriginAwareReferenceTests -- .create() bypasses unrelated is_valid() concerns
+        # (issuer/network/document-type-code validation) that aren't under test here.
+        with patch.object(DocumentSerializer, "get_config", return_value=None):
+            return DocumentSerializer(context={"user": self.creator}).create(
+                {
+                    "folder": self.document.folder,
+                    "author": self.creator,
+                    "file_name": name,
+                    "file": SimpleUploadedFile(name, b"main file content"),
+                }
+            )
+
+    def test_document_creation_with_main_document_only_has_zero_attachments(self):
+        document = self.create_document_with_main_file()
+        response = self.api("list", document=document)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["count"], 0)
+
+    def test_document_creation_with_main_document_plus_multiple_attachments(self):
+        document = self.create_document_with_main_file()
+        # Revisions materialize lazily elsewhere (e.g. the first workflow/version action) --
+        # not under test here. What matters: uploading attachments never changes that count.
+        revisions_before = DocumentRevision.objects.filter(document=document).count()
+        first = self.upload("annex-a.txt", b"a", document=document)
+        second = self.upload("annex-b.txt", b"b", document=document)
+        self.assertEqual(
+            self.api("list", document=document).data["count"], 2
+        )
+        # Neither attachment created an independent Document or DocumentRevision.
+        self.assertEqual(Document.objects.filter(pk__in=[first["id"], second["id"]]).count(), 0)
+        self.assertEqual(
+            DocumentRevision.objects.filter(document=document).count(), revisions_before
+        )
+        # The Main Document's own controlled file is untouched by the attachment uploads.
+        document.refresh_from_db()
+        self.assertTrue(document.file)
+        self.assertEqual(document.file.read(), b"main file content")
+
+    def test_attachments_do_not_create_independent_documentattachment_rows_for_other_documents(
+        self,
+    ):
+        document_a = self.create_document_with_main_file("a.txt")
+        document_b = self.create_document_with_main_file("b.txt")
+        self.upload("only-on-a.txt", document=document_a)
+        self.assertEqual(self.api("list", document=document_a).data["count"], 1)
+        self.assertEqual(self.api("list", document=document_b).data["count"], 0)
+
+    def test_a_historical_document_with_no_attachments_still_serializes_and_lists_cleanly(self):
+        # A pre-L2B / legacy Document with zero DocumentAttachment rows: the Document's own
+        # serializer never embeds attachments (a wholly separate endpoint/query), so it must
+        # load exactly as before, and the attachments list endpoint must return an empty,
+        # well-formed result rather than erroring.
+        document = self.create_document_with_main_file("legacy.txt")
+        data = DocumentSerializer(document, context={"include_control": True}).data
+        self.assertNotIn("supporting_attachments", data)
+        self.assertNotIn("attachments", data)
+        response = self.api("list", document=document)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, {"count": 0, "results": []})
