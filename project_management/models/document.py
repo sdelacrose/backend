@@ -208,7 +208,29 @@ class Document(models.Model):
     )
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
+    # L2A: "Client Transmittal Category" -- how this document is intended to be transmitted to
+    # the Client (Not sent / For review / For information, project/company-configurable via
+    # GC_TRANSMITTAL_CATEGORIES). Pre-existing field, reused as-is: already the exact field
+    # services.transmittal_eligibility checks for OUT Transmittal eligibility. Applies to
+    # INTERNAL and SUPPLIER origin (never CLIENT -- a Client-origin document is already received
+    # FROM the Client, not part of outbound-to-Client distribution classification); enforced by
+    # the frontend form only (origin-conditional visibility/submission), not at this model layer.
     transmittal_category = models.CharField(max_length=255, null=True, blank=True)
+
+    class SupplierTransmittalCategory(models.TextChoices):
+        FOR_INFORMATION = "FOR_INFORMATION", "For information"
+        FOR_REVIEW = "FOR_REVIEW", "For review"
+
+    # L2A: "Supplier Transmittal Category" -- why the Supplier sent us this document (SUPPLIER
+    # origin only). A distinct, inbound concept from transmittal_category above (never reused for
+    # it): fixed canonical values, not project/company-configurable. Nullable/blank: optional,
+    # and never meaningful for INTERNAL/CLIENT documents or historical records.
+    supplier_transmittal_category = models.CharField(
+        max_length=20,
+        choices=SupplierTransmittalCategory.choices,
+        null=True,
+        blank=True,
+    )
     # Document identity metadata (not versioned): plain-text context and lightweight tags.
     description = models.TextField(blank=True, default="")
     tags = ArrayField(

@@ -40,6 +40,7 @@ class DocumentHistorySerializer(serializers.ModelSerializer):
             'internal_review_status',
             'external_review_status',
             'transmittal_category',
+            'supplier_transmittal_category',
             'author'
         ]
         read_only_fields = fields
@@ -99,6 +100,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'internal_review_status',
             'external_review_status',
             'transmittal_category',
+            'supplier_transmittal_category',
             'uploaded_at',
             'updated_at',
             'identification_number',
