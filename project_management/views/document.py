@@ -572,9 +572,18 @@ class DocumentViewSet(viewsets.ModelViewSet):
         "file_name",
         "full_document_number",
         "identification_number",
+        # L1A: Document.client_reference (D13's third canonical business reference) -- same
+        # plain CharField shape as full_document_number/identification_number above, same
+        # text-field ordering treatment, no annotation needed.
+        "client_reference",
         "revision",
         "folder__name",
         "author_name",
+        # L1A: Creator/Approver columns (DocumentTableView's "creator"/"approver" fields) --
+        # annotated below exactly like author_name, so the Register's Creator/Approver headers
+        # have a real, deterministic server-side ordering key instead of silently no-op'ing.
+        "creator_name",
+        "approver_name",
         "uploaded_at",
         "updated_at",
         "created_at",
@@ -587,9 +596,12 @@ class DocumentViewSet(viewsets.ModelViewSet):
         "file_name",
         "folder__name",
         "author_name",
+        "creator_name",
+        "approver_name",
         "status",
         "identification_number",
         "full_document_number",
+        "client_reference",
         "document_type",
         "category",
         "discipline",
@@ -754,6 +766,21 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 Coalesce(F("author__first_name"), Value("")),
                 Value(" "),
                 Coalesce(F("author__last_name"), Value("")),
+                output_field=CharField(),
+            ),
+            # L1A: same shape as author_name above, for the Register's Creator/Approver columns
+            # (DocumentSerializer.get_creator/get_approver -- created_by and control.approver
+            # respectively), which previously had no real backend ordering key at all.
+            creator_name=Concat(
+                Coalesce(F("created_by__first_name"), Value("")),
+                Value(" "),
+                Coalesce(F("created_by__last_name"), Value("")),
+                output_field=CharField(),
+            ),
+            approver_name=Concat(
+                Coalesce(F("control__approver__first_name"), Value("")),
+                Value(" "),
+                Coalesce(F("control__approver__last_name"), Value("")),
                 output_field=CharField(),
             ),
         )
