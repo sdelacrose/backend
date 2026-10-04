@@ -8,6 +8,7 @@ from .correspondence_workflow import CorrespondenceValidationWorkflow, Correspon
 from .correspondence_send import CorrespondenceSendEvent
 from .transmittal import Transmittal, TransmittalEvent, TransmittalItem, TransmittalReferenceCounter
 from .document_workflow import DocumentWorkflow, DocumentWorkflowEvent
+from .supplier_surveillance import SupplierSurveillance, SupplierSurveillanceReferenceCounter
 from .document_search import (
     DocumentContentSegment,
     DocumentIndexAttempt,

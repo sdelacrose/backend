@@ -31,6 +31,7 @@ from project_management.views.transmittal import (
 from project_management.views.correspondances_register import CorrespondancesRegisterView
 from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.document_workflow import DocumentWorkflowViewSet
+from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet
 from project_management.views.document_search import (
     DocumentContentSearchAPIView,
     DocumentIndexBackfillAPIView,
@@ -601,6 +602,8 @@ urlpatterns = [
     path('document/<int:document_id>/workflow', DocumentWorkflowViewSet.as_view({'post': 'start_current'}), name='document-workflow-start'),
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow', DocumentWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='document-revision-workflow'),
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow/actions', DocumentWorkflowViewSet.as_view({'post': 'act'}), name='document-revision-workflow-action'),
+    # L3B: Supplier Surveillance foundation -- on-demand creation only, no update/delete/close.
+    path('document/<int:document_id>/revisions/<int:revision_id>/supplier-surveillance', SupplierSurveillanceViewSet.as_view({'get': 'retrieve', 'post': 'create'}), name='document-revision-supplier-surveillance'),
     path('document-control/<int:control_id>', DocumentRegisterViewSet.as_view({
         'get': 'retrieve',
         'patch': 'partial_update',
