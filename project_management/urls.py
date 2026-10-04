@@ -618,6 +618,8 @@ urlpatterns = [
     path('supplier-surveillance/<int:surveillance_id>/my-review/responses', SupplierSurveillanceReviewViewSet.as_view({'post': 'save_my_responses'}), name='supplier-surveillance-my-review-responses'),
     path('supplier-surveillance/<int:surveillance_id>/my-review/complete', SupplierSurveillanceReviewViewSet.as_view({'post': 'complete_my_review'}), name='supplier-surveillance-my-review-complete'),
     path('supplier-surveillance/<int:surveillance_id>/events', SupplierSurveillanceReviewViewSet.as_view({'get': 'events'}), name='supplier-surveillance-events'),
+    # L3E: the one-way READY_FOR_CLOSURE -> CLOSED transition.
+    path('supplier-surveillance/<int:surveillance_id>/close', SupplierSurveillanceReviewViewSet.as_view({'post': 'close_surveillance_action'}), name='supplier-surveillance-close'),
     path('document-control/<int:control_id>', DocumentRegisterViewSet.as_view({
         'get': 'retrieve',
         'patch': 'partial_update',

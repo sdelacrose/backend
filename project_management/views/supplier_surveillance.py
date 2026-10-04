@@ -46,6 +46,9 @@ def serialize_supplier_surveillance(surveillance):
         "created_by": user_reference(surveillance.created_by),
         "created_at": surveillance.created_at,
         "closed_at": surveillance.closed_at,
+        # L3E: server-derived only, never accepted from frontend input.
+        "closed_by": user_reference(surveillance.closed_by),
+        "closure_comment": surveillance.closure_comment,
     }
 
 

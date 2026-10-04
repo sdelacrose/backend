@@ -42,6 +42,13 @@ def assert_snapshot_executable(surveillance):
         )
 
 
+def assert_not_closed(surveillance):
+    """L3E section 11: once CLOSED, Reviewer management/execution is permanently frozen --
+    reconfirmed server-side here regardless of any frontend control being disabled."""
+    if surveillance.status == SupplierSurveillance.Status.CLOSED:
+        raise ValidationError("This Surveillance is closed and can no longer be modified.")
+
+
 def snapshot_items(surveillance):
     """Flat list of every Item dict across every Section of the frozen snapshot, or None if
     there is no snapshot at all (L3D section 27)."""
@@ -62,6 +69,7 @@ def assign_reviewer(*, surveillance, reviewer, actor):
     """L3D section 5/6/8/18/19: eligible internal User, no duplicate, blocked once the
     Surveillance is READY_FOR_CLOSURE."""
     assert_snapshot_executable(surveillance)
+    assert_not_closed(surveillance)
     if surveillance.status == SupplierSurveillance.Status.READY_FOR_CLOSURE:
         raise ValidationError(
             "Reviewers cannot be changed once the Surveillance is ready for closure."
@@ -92,6 +100,7 @@ def remove_reviewer(*, assignment, actor):
     """L3D section 18/19: only while ASSIGNED and untouched, never once work has started,
     never once the Surveillance is READY_FOR_CLOSURE."""
     surveillance = assignment.surveillance
+    assert_not_closed(surveillance)
     if surveillance.status == SupplierSurveillance.Status.READY_FOR_CLOSURE:
         raise ValidationError(
             "Reviewers cannot be changed once the Surveillance is ready for closure."
@@ -116,6 +125,7 @@ def assert_can_respond(assignment, user):
     or documents.update holder included) -- and never once completed (read-only evidence)."""
     if assignment.reviewer_id != user.id:
         raise PermissionDenied("You can only answer your own Surveillance review.")
+    assert_not_closed(assignment.surveillance)
     if assignment.status == Status.COMPLETED:
         raise ValidationError("This review is completed and its responses are read-only.")
 
@@ -226,6 +236,7 @@ def complete_review(*, assignment, actor):
     if any required Item is missing a valid answer."""
     if assignment.reviewer_id != actor.id:
         raise PermissionDenied("You can only complete your own Surveillance review.")
+    assert_not_closed(assignment.surveillance)
     if assignment.status == Status.COMPLETED:
         raise ValidationError("This review is already completed.")
     missing = missing_required_item_labels(assignment)
@@ -272,3 +283,67 @@ def compute_progress(assignment):
         elif (response.text_value or "").strip():
             answered += 1
     return round(100 * answered / len(pool))
+
+
+def close_supplier_surveillance(*, surveillance, actor, result, closure_comment):
+    """L3E: the one-way READY_FOR_CLOSURE -> CLOSED transition with an explicit final result.
+
+    Never touches ReviewerAssignments/Responses/template_snapshot (L3E section 12) -- those
+    remain exactly as completed, historical evidence. Locks the Surveillance row first (mirrors
+    create_supplier_surveillance's own lock-then-check pattern) so two concurrent closure
+    attempts can never both succeed (L3E section 7/10).
+    """
+    Result = SupplierSurveillance.Result
+    if result not in Result.values:
+        raise ValidationError({"result": "A valid final result is required."})
+    comment = (closure_comment or "").strip()
+    if result in (Result.COMMENTED, Result.REJECTED) and not comment:
+        raise ValidationError(
+            {"closure_comment": "A closure comment is required for this result."}
+        )
+
+    with transaction.atomic():
+        locked = SupplierSurveillance.objects.select_for_update().get(pk=surveillance.pk)
+        if locked.status == SupplierSurveillance.Status.CLOSED:
+            raise ValidationError("This Surveillance is already closed.")
+        if locked.status != SupplierSurveillance.Status.READY_FOR_CLOSURE:
+            raise ValidationError(
+                "The Surveillance must be ready for closure before it can be closed."
+            )
+        assignments = list(locked.reviewer_assignments.all())
+        if not assignments or any(a.status != Status.COMPLETED for a in assignments):
+            # Defensive: READY_FOR_CLOSURE should already guarantee this (L3D), but closure
+            # itself never trusts a status flag alone (L3E section 8).
+            raise ValidationError(
+                "All Reviewer assignments must be completed before closure."
+            )
+
+        new_revision_required = result != Result.REVIEWED
+        locked.result = result
+        locked.new_revision_required = new_revision_required
+        locked.status = SupplierSurveillance.Status.CLOSED
+        locked.closed_by = actor
+        locked.closed_at = timezone.now()
+        locked.closure_comment = comment
+        locked.save(
+            update_fields=[
+                "result",
+                "new_revision_required",
+                "status",
+                "closed_by",
+                "closed_at",
+                "closure_comment",
+                "updated_at",
+            ]
+        )
+        record_event(
+            locked,
+            EventType.SURVEILLANCE_CLOSED,
+            actor,
+            metadata={
+                "result": result,
+                "new_revision_required": new_revision_required,
+                "has_closure_comment": bool(comment),
+            },
+        )
+    return locked

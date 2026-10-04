@@ -13,11 +13,13 @@ from project_management.services.document_register import (
 )
 from project_management.services.supplier_surveillance_review import (
     assign_reviewer,
+    close_supplier_surveillance,
     complete_review,
     compute_progress,
     remove_reviewer,
     save_responses,
 )
+from project_management.views.supplier_surveillance import serialize_supplier_surveillance
 
 
 def _error_payload(error):
@@ -171,3 +173,23 @@ class SupplierSurveillanceReviewViewSet(viewsets.GenericViewSet):
         surveillance = self._surveillance(request, surveillance_id)
         events = surveillance.events.select_related("actor")
         return Response({"events": [serialize_event(event) for event in events]})
+
+    def close_surveillance_action(self, request, surveillance_id=None, *args, **kwargs):
+        """L3E: closure is a management/finalization action, not restricted to the individual
+        Reviewers -- same documents.update permission as reviewer management (L3E section 6).
+        status/new_revision_required/closed_at/closed_by are never accepted from the request;
+        the service derives every one of them (L3E section 15)."""
+        surveillance = self._surveillance(request, surveillance_id)
+        assert_can_update_document(request.user, surveillance.document_revision.document)
+        result = request.data.get("result")
+        closure_comment = request.data.get("closure_comment") or ""
+        try:
+            surveillance = close_supplier_surveillance(
+                surveillance=surveillance,
+                actor=request.user,
+                result=result,
+                closure_comment=closure_comment,
+            )
+        except DjangoValidationError as error:
+            return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
+        return Response(serialize_supplier_surveillance(surveillance))

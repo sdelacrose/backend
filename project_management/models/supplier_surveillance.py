@@ -77,6 +77,20 @@ class SupplierSurveillance(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     # Reserved for L3E closure: never set by L3B.
     closed_at = models.DateTimeField(null=True, blank=True)
+    # L3E: who performed the final closure decision -- SET_NULL like created_by/assigned_by
+    # (informational provenance, never load-bearing for the Surveillance's own business meaning).
+    # Never accepted from frontend input; always server-derived at closure time (L3E section 5).
+    closed_by = models.ForeignKey(
+        User,
+        related_name="closed_supplier_surveillances",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    # L3E: the final closure decision's auditable explanation. Required for COMMENTED/REJECTED,
+    # optional for REVIEWED (L3E section 4) -- a distinct field from any Reviewer response text,
+    # Document comment or DocumentWorkflow comment.
+    closure_comment = models.TextField(blank=True, default="")
 
     class Meta:
         ordering = ["-created_at", "-id"]

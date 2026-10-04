@@ -130,6 +130,7 @@ class SupplierSurveillanceEvent(models.Model):
         RESPONSE_UPDATED = "RESPONSE_UPDATED", "Response updated"
         REVIEW_COMPLETED = "REVIEW_COMPLETED", "Review completed"
         READY_FOR_CLOSURE = "READY_FOR_CLOSURE", "Ready for closure"
+        SURVEILLANCE_CLOSED = "SURVEILLANCE_CLOSED", "Surveillance closed"
 
     surveillance = models.ForeignKey(
         SupplierSurveillance, related_name="events", on_delete=models.CASCADE,
