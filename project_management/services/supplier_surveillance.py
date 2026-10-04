@@ -108,7 +108,7 @@ def create_supplier_surveillance(*, document_revision, actor, template):
             )
         reference = generate_supplier_surveillance_reference(project=project)
         snapshot = build_template_snapshot(template)
-        return SupplierSurveillance.objects.create(
+        instance = SupplierSurveillance.objects.create(
             project=project,
             document_revision=locked_revision,
             reference=reference,
@@ -117,6 +117,13 @@ def create_supplier_surveillance(*, document_revision, actor, template):
             # status defaults to DRAFT; result/new_revision_required stay NULL -- L3B/L3C never
             # populate them (closure remains L3E).
         )
+        # L3D section 21: record creation for every NEW Surveillance from here on -- L3B rows
+        # created before this lot are never backfilled.
+        from project_management.services.supplier_surveillance_review import record_event
+        from project_management.models.supplier_surveillance_review import SupplierSurveillanceEvent
+
+        record_event(instance, SupplierSurveillanceEvent.EventType.SURVEILLANCE_CREATED, actor)
+        return instance
 
 
 def get_supplier_surveillance_for_revision(document_revision):

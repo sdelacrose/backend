@@ -14,6 +14,11 @@ from .supplier_surveillance_template import (
     SupplierSurveillanceTemplateItem,
     SupplierSurveillanceTemplateSection,
 )
+from .supplier_surveillance_review import (
+    SupplierSurveillanceEvent,
+    SupplierSurveillanceReviewerAssignment,
+    SupplierSurveillanceResponse,
+)
 from .document_search import (
     DocumentContentSegment,
     DocumentIndexAttempt,
