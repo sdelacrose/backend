@@ -32,6 +32,7 @@ from project_management.views.correspondances_register import CorrespondancesReg
 from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet
+from project_management.views.supplier_surveillance_template import SupplierSurveillanceTemplateViewSet
 from project_management.views.document_search import (
     DocumentContentSearchAPIView,
     DocumentIndexBackfillAPIView,
@@ -604,6 +605,11 @@ urlpatterns = [
     path('document/<int:document_id>/revisions/<int:revision_id>/workflow/actions', DocumentWorkflowViewSet.as_view({'post': 'act'}), name='document-revision-workflow-action'),
     # L3B: Supplier Surveillance foundation -- on-demand creation only, no update/delete/close.
     path('document/<int:document_id>/revisions/<int:revision_id>/supplier-surveillance', SupplierSurveillanceViewSet.as_view({'get': 'retrieve', 'post': 'create'}), name='document-revision-supplier-surveillance'),
+    # L3C: active Surveillance Templates available for this exact revision's Project/Company.
+    path('document/<int:document_id>/revisions/<int:revision_id>/supplier-surveillance-templates', SupplierSurveillanceViewSet.as_view({'get': 'templates'}), name='document-revision-supplier-surveillance-templates'),
+    # L3C: Surveillance Template library editor (Company-scoped, Project-configuration-permission-gated).
+    path('supplier-surveillance-templates', SupplierSurveillanceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='supplier-surveillance-templates'),
+    path('supplier-surveillance-templates/<int:pk>', SupplierSurveillanceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='supplier-surveillance-template-detail'),
     path('document-control/<int:control_id>', DocumentRegisterViewSet.as_view({
         'get': 'retrieve',
         'patch': 'partial_update',

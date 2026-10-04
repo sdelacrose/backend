@@ -4,7 +4,7 @@ from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework import status
 
-from project_management.models import DocumentRevision
+from project_management.models import DocumentRevision, SupplierSurveillanceTemplate
 from project_management.serializers.document_register import user_reference
 from project_management.services.document_register import (
     assert_can_update_document,
@@ -13,11 +13,18 @@ from project_management.services.document_register import (
 from project_management.services.supplier_surveillance import (
     create_supplier_surveillance,
     get_supplier_surveillance_for_revision,
+    resolve_project_for_surveillance,
+)
+from project_management.services.supplier_surveillance_template import (
+    resolve_company_for_project,
 )
 
 
 def serialize_supplier_surveillance(surveillance):
     document = surveillance.document_revision.document
+    # L3C section 25/26: an L3B row may have template_snapshot = NULL -- tolerate it, never
+    # retroactively invent one.
+    snapshot = surveillance.template_snapshot or {}
     return {
         "id": surveillance.id,
         "reference": surveillance.reference,
@@ -34,9 +41,21 @@ def serialize_supplier_surveillance(surveillance):
         "supplier_reference": document.identification_number,
         "supplier_revision": surveillance.document_revision.external_revision,
         "supplier_transmittal_category": document.supplier_transmittal_category,
+        "template_name": snapshot.get("template_name"),
+        "template_version": snapshot.get("template_version"),
         "created_by": user_reference(surveillance.created_by),
         "created_at": surveillance.created_at,
         "closed_at": surveillance.closed_at,
+    }
+
+
+def serialize_available_template(template):
+    return {
+        "id": template.id,
+        "name": template.name,
+        "version": template.version,
+        "sections_count": template.sections.count(),
+        "items_count": sum(section.items.count() for section in template.sections.all()),
     }
 
 
@@ -75,13 +94,37 @@ class SupplierSurveillanceViewSet(viewsets.GenericViewSet):
     def create(self, request, document_id=None, revision_id=None, *args, **kwargs):
         document, revision = self._revision(request, document_id, revision_id)
         assert_can_update_document(request.user, document)
+        template_id = request.data.get("template") or request.data.get("template_id")
+        template = SupplierSurveillanceTemplate.objects.filter(pk=template_id).first()
+        if template is None:
+            return Response(
+                {"template": "A Surveillance Template is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             surveillance = create_supplier_surveillance(
-                document_revision=revision, actor=request.user
+                document_revision=revision, actor=request.user, template=template
             )
         except DjangoValidationError as error:
             detail = error.message_dict if hasattr(error, "message_dict") else {"detail": error.messages}
             return Response(detail, status=status.HTTP_400_BAD_REQUEST)
         return Response(
             serialize_supplier_surveillance(surveillance), status=status.HTTP_201_CREATED
+        )
+
+    def templates(self, request, document_id=None, revision_id=None, *args, **kwargs):
+        """L3C: active Surveillance Templates available for THIS exact revision's Project's
+        Company -- the one the frontend's Create Surveillance Sheet selector offers."""
+        document, revision = self._revision(request, document_id, revision_id)
+        project = resolve_project_for_surveillance(document)
+        company_id = resolve_company_for_project(project) if project else None
+        queryset = (
+            SupplierSurveillanceTemplate.objects.filter(
+                company_id=company_id, is_active=True
+            )
+            if company_id
+            else SupplierSurveillanceTemplate.objects.none()
+        )
+        return Response(
+            {"templates": [serialize_available_template(t) for t in queryset]}
         )

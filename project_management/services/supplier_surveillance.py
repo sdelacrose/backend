@@ -16,6 +16,11 @@ from project_management.models.supplier_surveillance import (
     SupplierSurveillanceReferenceCounter,
 )
 from project_management.services.project_codes import propose_unique_project_code
+from project_management.services.supplier_surveillance_template import (
+    assert_template_usable_for_surveillance,
+    build_template_snapshot,
+    resolve_company_for_project,
+)
 
 SEQUENCE_WIDTH = 5
 
@@ -74,12 +79,14 @@ def generate_supplier_surveillance_reference(*, project):
     return reference
 
 
-def create_supplier_surveillance(*, document_revision, actor):
-    """Create the (one and only) Supplier Surveillance of `document_revision`.
+def create_supplier_surveillance(*, document_revision, actor, template):
+    """Create the (one and only) Supplier Surveillance of `document_revision`, capturing an
+    immutable snapshot of `template` (L3C section 14).
 
     Atomic: locks the revision row first (mirrors services.document_workflow.start_workflow's
     own lock-then-check pattern) so two concurrent requests for the same revision can never both
-    pass the duplicate check and both allocate a reference.
+    pass the duplicate check and both allocate a reference. The Template itself is read (never
+    written) here -- its own rows stay exactly as they were; only a frozen copy is stored.
     """
     document = document_revision.document
     assert_supplier_origin(document)
@@ -88,6 +95,8 @@ def create_supplier_surveillance(*, document_revision, actor):
         raise ValidationError(
             "Supplier Surveillance is only available for a Project Document (Livrable)."
         )
+    company_id = resolve_company_for_project(project)
+    assert_template_usable_for_surveillance(template, company_id=company_id)
 
     with transaction.atomic():
         locked_revision = DocumentRevision.objects.select_for_update().get(
@@ -98,13 +107,15 @@ def create_supplier_surveillance(*, document_revision, actor):
                 "This Supplier Revision already has a Supplier Surveillance."
             )
         reference = generate_supplier_surveillance_reference(project=project)
+        snapshot = build_template_snapshot(template)
         return SupplierSurveillance.objects.create(
             project=project,
             document_revision=locked_revision,
             reference=reference,
             created_by=actor,
-            # status defaults to DRAFT; result/new_revision_required/template_snapshot stay
-            # NULL -- L3B never populates them (L3B sections 25/26/27).
+            template_snapshot=snapshot,
+            # status defaults to DRAFT; result/new_revision_required stay NULL -- L3B/L3C never
+            # populate them (closure remains L3E).
         )
 
 
