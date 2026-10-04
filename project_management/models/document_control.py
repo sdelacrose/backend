@@ -93,6 +93,17 @@ class DocumentControl(models.Model):
         null=True,
         blank=True,
     )
+    # L2D-1: preferred Verifier, mirroring `approver` above exactly -- a preselection default
+    # only (INTERNAL documents), never the authoritative workflow actor. The authoritative
+    # per-revision verifier remains exclusively DocumentWorkflow.verifier, set once at launch
+    # and immutable evidence afterwards; this field is just the launch dialog's prefill source.
+    verifier = models.ForeignKey(
+        User,
+        related_name="verifier_document_controls",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -716,3 +716,91 @@ class DocumentOriginCompanyScopeTests(OriginBase):
         # self.folder (OriginBase/FilelessBase) is project-scoped -- CLIENT/SUPPLIER still work.
         document = self.create(document_origin="CLIENT", external_issuer_company=self.client_company.id)
         self.assertEqual(document.document_origin, CLIENT)
+
+
+class L2D1AuthorRequirementTests(OriginBase):
+    """L2D-1 section 13/17: Author is required for an INTERNAL creation -- but never
+    retroactively, never for SUPPLIER/CLIENT, and the pre-existing "default author to the
+    current user" convenience (DocumentSerializer.create) already satisfies it, so this never
+    regresses a caller that simply omits `author` and relies on that fallback."""
+
+    def test_internal_creation_without_author_and_without_a_fallback_user_is_rejected(self):
+        # No `author` in the payload AND no context user at all: nothing for create() to fall
+        # back to, so this is the one case the validate()-level check must actually catch.
+        serializer = DocumentSerializer(data=self.payload(), context={})
+        with self.relaxed():
+            self.assertFalse(serializer.is_valid())
+        self.assertIn("author", serializer.errors)
+
+    def test_internal_creation_without_explicit_author_falls_back_to_the_context_user(self):
+        # The real create endpoint always injects context['user'] (DocumentViewSet.get_serializer)
+        # -- this is the realistic "Author omitted" case, and must still succeed.
+        document = self.create()
+        self.assertEqual(document.author_id, self.creator.id)
+
+    def test_internal_creation_with_an_explicit_author_succeeds(self):
+        document = self.create(author=self.creator.id)
+        self.assertEqual(document.author_id, self.creator.id)
+
+    def test_supplier_creation_does_not_require_author(self):
+        # self.create() already asserts is_valid() is True -- the real assertion here is simply
+        # that omitting `author` never raises a validation error for SUPPLIER (unlike INTERNAL
+        # with no context user). The pre-existing "default author to the current user" fallback
+        # (create(), unconditional on origin) still applies regardless -- that is unrelated,
+        # unchanged behaviour, not the "required" rule this lot adds.
+        document = self.create(
+            document_origin="SUPPLIER", external_issuer_company=self.supplier_company.id
+        )
+        self.assertEqual(document.document_origin, SUPPLIER)
+
+    def test_client_creation_does_not_require_author(self):
+        document = self.create(
+            document_origin="CLIENT", external_issuer_company=self.client_company.id
+        )
+        self.assertEqual(document.document_origin, CLIENT)
+
+    def test_updating_an_existing_document_never_requires_author_even_when_null(self):
+        # Never retroactive: an existing Document with author=NULL must keep saving fine.
+        document = self.create()
+        document.author = None
+        document.save(update_fields=["author"])
+        updated = self.update(document, description="updated")
+        self.assertEqual(updated.description, "updated")
+
+
+class L2D1PreferredVerifierAndApproverTests(OriginBase):
+    """L2D-1 section 4/5/17: DocumentControl.verifier persists through the same mechanism as the
+    existing DocumentControl.approver -- both are preselection defaults only, never the
+    authoritative DocumentWorkflow actors (untouched by this lot)."""
+
+    def test_preferred_verifier_can_be_persisted_on_create(self):
+        document = self.create(verifier=self.creator.id)
+        document.refresh_from_db()
+        self.assertEqual(document.control.verifier_id, self.creator.id)
+
+    def test_preferred_verifier_can_be_persisted_on_update(self):
+        document = self.create()
+        self.update(document, verifier=self.creator.id)
+        document.refresh_from_db()
+        self.assertEqual(document.control.verifier_id, self.creator.id)
+
+    def test_existing_preferred_approver_behavior_is_unchanged(self):
+        document = self.create(approver=self.creator.id)
+        document.refresh_from_db()
+        self.assertEqual(document.control.approver_id, self.creator.id)
+
+    def test_verifier_and_approver_persist_and_clear_independently(self):
+        document = self.create(verifier=self.creator.id, approver=self.creator.id)
+        self.update(document, verifier="")
+        document.refresh_from_db()
+        self.assertIsNone(document.control.verifier_id)
+        self.assertEqual(document.control.approver_id, self.creator.id)
+
+    def test_serializer_exposes_both_under_include_control(self):
+        document = self.create(verifier=self.creator.id, approver=self.creator.id)
+        read = DocumentSerializer(
+            Document.objects.get(pk=document.pk),
+            context={"user": self.creator, "include_control": True},
+        ).data
+        self.assertEqual(read["verifier"]["id"], self.creator.id)
+        self.assertEqual(read["approver"]["id"], self.creator.id)

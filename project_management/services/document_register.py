@@ -175,5 +175,8 @@ def save_document_control(document, validated_data):
         control.owner = validated_data["owner"]
     if "approver" in validated_data:
         control.approver = validated_data["approver"]
+    # L2D-1: preferred Verifier, same optional-write shape as approver above.
+    if "verifier" in validated_data:
+        control.verifier = validated_data["verifier"]
     control.save()
     return control

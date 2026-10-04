@@ -4,7 +4,7 @@ from rest_framework import serializers
 from django.conf import settings
 from django.db import transaction
 
-from models.models import CompanyConfig, CompanyProfile
+from models.models import CompanyConfig, CompanyProfile, User
 from models.hierarchical_configurations import (
     DOCUMENT_DISCIPLINES_KEY,
     resolve_nested_configurations,
@@ -69,6 +69,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     project = serializers.SerializerMethodField()
     creator = serializers.SerializerMethodField()
     approver = serializers.SerializerMethodField()
+    verifier = serializers.SerializerMethodField()
     file_size = serializers.SerializerMethodField()
     # Blank entries are accepted here and dropped by validate_tags.
     tags = serializers.ListField(
@@ -120,6 +121,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'project',
             'creator',
             'approver',
+            'verifier',
             'workflow',
             'internal_status',
             'revision_label',
@@ -491,6 +493,29 @@ class DocumentSerializer(serializers.ModelSerializer):
                     {"file_name": "A title is required when no file is provided."}
                 )
 
+        # L2D-1 section 13: Author is required when creating an INTERNAL register Document --
+        # narrowly scoped (create only, never update/edit; register entries only, via `folder`,
+        # never the unrelated record-type path which has no Origin concept at all) so this never
+        # retroactively invalidates existing Documents with author=NULL, and never affects
+        # SUPPLIER/CLIENT creation (Author belongs only to the internal workflow). Origin
+        # resolution mirrors _validate_origin's own default-to-INTERNAL-when-omitted logic.
+        # This must NOT fire when create() is about to default the author to the current user
+        # (the pre-existing "ensure author is set to the current user if not provided"
+        # convenience a few lines below, in create()) -- that fallback already guarantees a
+        # non-null author whenever a request user is available (DocumentViewSet.get_serializer
+        # always injects context['user'], so this is a true no-op for the real create endpoint);
+        # this check only ever catches a creation with no author AND no user to fall back to.
+        if self.instance is None and attrs.get("folder") is not None:
+            origin = attrs.get("document_origin", DocumentOrigin.INTERNAL)
+            if (
+                origin == DocumentOrigin.INTERNAL
+                and not attrs.get("author")
+                and not self.context.get("user")
+            ):
+                raise serializers.ValidationError(
+                    {"author": "An Author is required for an internal document."}
+                )
+
         status = attrs.get("status")
         internal_review_status = attrs.get("internal_review_status")
         external_review_status = attrs.get("external_review_status")
@@ -632,6 +657,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             validated_data['created_by'] = request_user
             validated_data['assignee'] = validated_data.get('author')
             instance = super().create(validated_data)
+            self._save_review_preferences(instance)
             return instance
 
     def update(self, instance, validated_data):
@@ -671,7 +697,43 @@ class DocumentSerializer(serializers.ModelSerializer):
         if 'revision' not in validated_data:
             validated_data['revision'] = instance.revision
         validated_data['assignee'] = instance.author if "author" not in validated_data else validated_data.get('author')
-        return super().update(instance, validated_data)
+        updated = super().update(instance, validated_data)
+        self._save_review_preferences(updated)
+        return updated
+
+    def _save_review_preferences(self, document):
+        """L2D-1: preferred Verifier/Approver (DocumentControl.verifier/approver) -- launch
+        dialog preselection defaults only, never the authoritative DocumentWorkflow actors of an
+        already-launched workflow (those remain exclusively on DocumentWorkflow, per revision).
+        approver/verifier are read-only SerializerMethodFields (their {id, name} shape differs
+        from the raw PK this accepts), so the write side reads the raw request keys directly --
+        same pattern validate_author already uses via self.initial_data -- and reuses the exact
+        same write service services.document_register.save_document_control already uses for
+        DocumentControl.approver, rather than duplicating that logic here. A key simply absent
+        from the request leaves the stored preference untouched (same "only touch what was
+        sent" convention as every other optional field on this serializer); an explicitly blank
+        value clears it.
+        """
+        raw = getattr(self, 'initial_data', None)
+        if not raw or not any(key in raw for key in ('approver', 'verifier')):
+            return
+        from project_management.services.document_register import save_document_control
+
+        control_data = {}
+        if 'approver' in raw:
+            control_data['approver'] = self._resolve_user(raw.get('approver'))
+        if 'verifier' in raw:
+            control_data['verifier'] = self._resolve_user(raw.get('verifier'))
+        save_document_control(document, control_data)
+
+    @staticmethod
+    def _resolve_user(value):
+        if value in (None, ''):
+            return None
+        try:
+            return User.objects.filter(pk=int(value)).first()
+        except (TypeError, ValueError):
+            return None
 
     def get_history(self, obj):
         include_history = self.context.get('include_history', False)
@@ -708,6 +770,15 @@ class DocumentSerializer(serializers.ModelSerializer):
             return None
         control = getattr(obj, 'control', None)
         return self._user_ref(control.approver) if control else None
+
+    def get_verifier(self, obj):
+        # L2D-1: preferred Verifier, same optional Document Control data shape as approver
+        # above -- a launch-dialog preselection default only, never the authoritative
+        # DocumentWorkflow.verifier of an actual revision/workflow.
+        if not self.context.get('include_control'):
+            return None
+        control = getattr(obj, 'control', None)
+        return self._user_ref(control.verifier) if control else None
 
     def get_workflow(self, obj):
         # Register indicator only: status of the CURRENT revision's workflow and whether the
