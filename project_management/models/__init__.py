@@ -20,6 +20,11 @@ from .supplier_surveillance_review import (
     SupplierSurveillanceResponse,
 )
 from .supplier_surveillance_evidence import SupplierSurveillanceEvidence
+from .document_type_review_duration import (
+    DEFAULT_REVIEW_DURATION_DAYS,
+    DURATION_FIELD_NAMES,
+    DocumentTypeReviewDuration,
+)
 from .document_search import (
     DocumentContentSegment,
     DocumentIndexAttempt,

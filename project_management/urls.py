@@ -33,6 +33,7 @@ from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet
 from project_management.views.supplier_surveillance_template import SupplierSurveillanceTemplateViewSet
+from project_management.views.document_type_review_duration import DocumentReviewDurationViewSet
 from project_management.views.supplier_surveillance_review import SupplierSurveillanceReviewViewSet
 from project_management.views.document_search import (
     DocumentContentSearchAPIView,
@@ -611,6 +612,9 @@ urlpatterns = [
     # L3C: Surveillance Template library editor (Company-scoped, Project-configuration-permission-gated).
     path('supplier-surveillance-templates', SupplierSurveillanceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='supplier-surveillance-templates'),
     path('supplier-surveillance-templates/<int:pk>', SupplierSurveillanceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='supplier-surveillance-template-detail'),
+    # L3H-1: Review Durations configuration (Project + Document Type scoped) -- configuration
+    # only, no due date/overdue (those remain L3H-2/L3H-3/future lots).
+    path('document-review-durations', DocumentReviewDurationViewSet.as_view({'get': 'list', 'post': 'upsert'}), name='document-review-durations'),
     # L3D: Reviewers + execution of one Supplier Surveillance (keyed by the Surveillance's own id).
     path('supplier-surveillance/<int:surveillance_id>/reviewers', SupplierSurveillanceReviewViewSet.as_view({'get': 'list_reviewers', 'post': 'assign_reviewer_action'}), name='supplier-surveillance-reviewers'),
     path('supplier-surveillance/<int:surveillance_id>/reviewers/<int:assignment_id>', SupplierSurveillanceReviewViewSet.as_view({'delete': 'remove_reviewer_action'}), name='supplier-surveillance-reviewer-detail'),
