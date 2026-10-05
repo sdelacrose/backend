@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from project_management.models import Transmittal, TransmittalItem
@@ -14,16 +15,29 @@ class TransmittalItemSerializer(serializers.ModelSerializer):
     # mirrors build_item_evidence_snapshot's own field names/shape exactly, so the frontend can
     # treat a live revision and a frozen snapshot the same way once ISSUED.
     document_revision_detail = serializers.SerializerMethodField()
+    # L3H-3: the frozen Client Review timing snapshot (review_duration_days/review_due_date are
+    # plain model fields, null unless this was an OUT+FOR_REVIEW item at successful issuance)
+    # plus the derived, never-persisted overdue condition (section 16/17/18/19/20) -- the
+    # TransmittalItem serializer is the natural, exact-revision-correct source: never a
+    # replacement for the existing Client business status derived elsewhere (L3F).
+    is_overdue = serializers.SerializerMethodField()
 
     class Meta:
         model = TransmittalItem
         fields = [
             "id", "transmittal", "document_revision", "document_revision_detail",
             "distribution_purpose", "evidence_snapshot", "created_at",
+            "review_duration_days", "review_due_date", "is_overdue",
         ]
         read_only_fields = [
             "id", "transmittal", "document_revision_detail", "evidence_snapshot", "created_at",
+            "review_duration_days", "review_due_date", "is_overdue",
         ]
+
+    def get_is_overdue(self, obj):
+        if obj.review_due_date is None:
+            return False
+        return obj.review_due_date < timezone.localdate()
 
     def get_document_revision_detail(self, obj):
         revision = obj.document_revision

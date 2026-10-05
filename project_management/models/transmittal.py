@@ -178,6 +178,18 @@ class TransmittalItem(models.Model):
     # Frozen at finalization only: document permanent reference, revision label, file name,
     # file SHA-256, distribution purpose. Never touches DocumentRevision.
     evidence_snapshot = models.JSONField(null=True, blank=True)
+    # L3H-3: the frozen Client Review timing snapshot -- populated ONLY at successful OUT
+    # finalization (never on a DRAFT item), and ONLY for a FOR_REVIEW item (never
+    # FOR_INFORMATION, section 7/10/11). Computed ONCE from the L3H-1 effective
+    # client_review_duration_days + this exact Transmittal's own issued_at -- never recomputed
+    # later, even if the Project/Document Type configuration subsequently changes (section 9).
+    # Both nullable: a DRAFT item, a FOR_INFORMATION item, and every historical row created
+    # before L3H-3 (never backfilled, section 26) legitimately have neither value. `is_overdue`
+    # is deliberately NOT a field here -- it stays a derived read-time condition (serializers.
+    # transmittal.TransmittalItemSerializer.get_is_overdue), never a stored column and never
+    # folded into the Client business status (section 16).
+    review_duration_days = models.PositiveIntegerField(null=True, blank=True)
+    review_due_date = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
