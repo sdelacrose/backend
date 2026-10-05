@@ -46,6 +46,13 @@ UPLOAD_PATH_FREELANCER   = "documents/freelancer_{freelancer_id}/folder_{folder_
 # New template for object assessment uploads:
 UPLOAD_PATH_ASSESSMENT   = "object_assessment/project_{project_id}/{record_type}/{filename}"
 
+# L3G-1: Supplier Surveillance final evidence (never a Document/Folder -- the evidence PDF
+# must never appear in Project -> Documents -> Livrables, see project_management.models.
+# supplier_surveillance_evidence).
+UPLOAD_PATH_SUPPLIER_SURVEILLANCE_EVIDENCE = (
+    "supplier_surveillance_evidence/project_{project_id}/{surveillance_reference}/{filename}"
+)
+
 S3_URL_TEMPLATE        = "https://{bucket}.s3.{region}.amazonaws.com/{file_name}"
 
 MS_OAUTH_AUTHORIZE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"

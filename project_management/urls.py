@@ -620,6 +620,9 @@ urlpatterns = [
     path('supplier-surveillance/<int:surveillance_id>/events', SupplierSurveillanceReviewViewSet.as_view({'get': 'events'}), name='supplier-surveillance-events'),
     # L3E: the one-way READY_FOR_CLOSURE -> CLOSED transition.
     path('supplier-surveillance/<int:surveillance_id>/close', SupplierSurveillanceReviewViewSet.as_view({'post': 'close_surveillance_action'}), name='supplier-surveillance-close'),
+    # L3G-2: manual retry when automatic post-closure evidence generation failed (section 23) --
+    # idempotent, same generation path as the automatic attempt.
+    path('supplier-surveillance/<int:surveillance_id>/evidence/generate', SupplierSurveillanceReviewViewSet.as_view({'post': 'generate_evidence_action'}), name='supplier-surveillance-evidence-generate'),
     path('document-control/<int:control_id>', DocumentRegisterViewSet.as_view({
         'get': 'retrieve',
         'patch': 'partial_update',

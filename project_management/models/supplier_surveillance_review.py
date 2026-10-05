@@ -131,6 +131,8 @@ class SupplierSurveillanceEvent(models.Model):
         REVIEW_COMPLETED = "REVIEW_COMPLETED", "Review completed"
         READY_FOR_CLOSURE = "READY_FOR_CLOSURE", "Ready for closure"
         SURVEILLANCE_CLOSED = "SURVEILLANCE_CLOSED", "Surveillance closed"
+        # L3G-1: enum added now, never emitted until L3G-2 actually creates the evidence file.
+        PDF_GENERATED = "PDF_GENERATED", "Evidence PDF generated"
 
     surveillance = models.ForeignKey(
         SupplierSurveillance, related_name="events", on_delete=models.CASCADE,

@@ -19,6 +19,7 @@ from .supplier_surveillance_review import (
     SupplierSurveillanceReviewerAssignment,
     SupplierSurveillanceResponse,
 )
+from .supplier_surveillance_evidence import SupplierSurveillanceEvidence
 from .document_search import (
     DocumentContentSegment,
     DocumentIndexAttempt,

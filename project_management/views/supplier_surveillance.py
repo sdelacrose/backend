@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
 from rest_framework import viewsets
@@ -20,11 +22,33 @@ from project_management.services.supplier_surveillance_template import (
 )
 
 
-def serialize_supplier_surveillance(surveillance):
+def _absolute_url(request, url):
+    """Same convention as views.document_revision._absolute_url."""
+    return url if str(url).startswith("http") else request.build_absolute_uri(url)
+
+
+def serialize_evidence_pdf(evidence, request=None):
+    """L3G-2 section 24: the minimum L3G-3 needs -- url + generated_at (+ file_name). Never
+    storage internals, server paths, the full evidence_metadata JSON, or the hash (section 24)."""
+    if evidence is None:
+        return None
+    url = evidence.file.url
+    return {
+        "url": _absolute_url(request, url) if request is not None else url,
+        "generated_at": evidence.generated_at,
+        "file_name": Path(evidence.file.name).name,
+    }
+
+
+def serialize_supplier_surveillance(surveillance, request=None):
     document = surveillance.document_revision.document
     # L3C section 25/26: an L3B row may have template_snapshot = NULL -- tolerate it, never
     # retroactively invent one.
     snapshot = surveillance.template_snapshot or {}
+    # L3G-1's OneToOne reverse accessor raises RelatedObjectDoesNotExist (an AttributeError
+    # subclass) when no Evidence exists yet -- getattr(..., None) is the documented-safe way to
+    # read it without an extra query or a try/except DoesNotExist import.
+    evidence = getattr(surveillance, "evidence", None)
     return {
         "id": surveillance.id,
         "reference": surveillance.reference,
@@ -49,6 +73,9 @@ def serialize_supplier_surveillance(surveillance):
         # L3E: server-derived only, never accepted from frontend input.
         "closed_by": user_reference(surveillance.closed_by),
         "closure_comment": surveillance.closure_comment,
+        # L3G-2 section 24: null until generation succeeds (automatic post-closure attempt or
+        # manual retry) -- never created/implied for a non-CLOSED Surveillance.
+        "evidence_pdf": serialize_evidence_pdf(evidence, request=request),
     }
 
 
@@ -89,7 +116,9 @@ class SupplierSurveillanceViewSet(viewsets.GenericViewSet):
         return Response(
             {
                 "supplier_surveillance": (
-                    serialize_supplier_surveillance(surveillance) if surveillance else None
+                    serialize_supplier_surveillance(surveillance, request=request)
+                    if surveillance
+                    else None
                 )
             }
         )
@@ -112,7 +141,8 @@ class SupplierSurveillanceViewSet(viewsets.GenericViewSet):
             detail = error.message_dict if hasattr(error, "message_dict") else {"detail": error.messages}
             return Response(detail, status=status.HTTP_400_BAD_REQUEST)
         return Response(
-            serialize_supplier_surveillance(surveillance), status=status.HTTP_201_CREATED
+            serialize_supplier_surveillance(surveillance, request=request),
+            status=status.HTTP_201_CREATED,
         )
 
     def templates(self, request, document_id=None, revision_id=None, *args, **kwargs):

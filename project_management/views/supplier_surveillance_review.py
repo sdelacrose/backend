@@ -1,3 +1,5 @@
+import logging
+
 from django.core.exceptions import PermissionDenied as DjangoPermissionDenied
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
@@ -11,6 +13,9 @@ from project_management.services.document_register import (
     assert_can_update_document,
     get_register_document_or_404,
 )
+from project_management.services.supplier_surveillance_evidence import (
+    generate_supplier_surveillance_evidence,
+)
 from project_management.services.supplier_surveillance_review import (
     assign_reviewer,
     close_supplier_surveillance,
@@ -20,6 +25,8 @@ from project_management.services.supplier_surveillance_review import (
     save_responses,
 )
 from project_management.views.supplier_surveillance import serialize_supplier_surveillance
+
+logger = logging.getLogger(__name__)
 
 
 def _error_payload(error):
@@ -178,7 +185,14 @@ class SupplierSurveillanceReviewViewSet(viewsets.GenericViewSet):
         """L3E: closure is a management/finalization action, not restricted to the individual
         Reviewers -- same documents.update permission as reviewer management (L3E section 6).
         status/new_revision_required/closed_at/closed_by are never accepted from the request;
-        the service derives every one of them (L3E section 15)."""
+        the service derives every one of them (L3E section 15).
+
+        L3G-2 section 3/22: closure itself is already fully committed and successful by the time
+        we reach this point -- evidence PDF generation is a strictly separate, best-effort
+        follow-up attempted ONLY after that success, and its outcome (including any exception of
+        any kind) must never turn a successful business closure into a failure response. A
+        failure here is logged, never raised to the caller; L3G-3's workspace can still see
+        Surveillance CLOSED with evidence_pdf null and offer a manual retry (section 23)."""
         surveillance = self._surveillance(request, surveillance_id)
         assert_can_update_document(request.user, surveillance.document_revision.document)
         result = request.data.get("result")
@@ -192,4 +206,26 @@ class SupplierSurveillanceReviewViewSet(viewsets.GenericViewSet):
             )
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
-        return Response(serialize_supplier_surveillance(surveillance))
+        try:
+            generate_supplier_surveillance_evidence(surveillance=surveillance, actor=request.user)
+        except Exception:
+            logger.exception(
+                "Supplier Surveillance evidence generation failed after closure "
+                "(surveillance_id=%s).",
+                surveillance.id,
+            )
+        return Response(serialize_supplier_surveillance(surveillance, request=request))
+
+    def generate_evidence_action(self, request, surveillance_id=None, *args, **kwargs):
+        """L3G-2 section 23: the manual retry endpoint -- the SAME generation path as the
+        automatic post-closure attempt (never a second one). Same documents.update permission as
+        closure/reviewer management (section 25). Idempotent: an already-existing Evidence is
+        simply returned, never regenerated (section 6)."""
+        surveillance = self._surveillance(request, surveillance_id)
+        assert_can_update_document(request.user, surveillance.document_revision.document)
+        try:
+            generate_supplier_surveillance_evidence(surveillance=surveillance, actor=request.user)
+        except DjangoValidationError as error:
+            return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
+        surveillance.refresh_from_db()
+        return Response(serialize_supplier_surveillance(surveillance, request=request))
