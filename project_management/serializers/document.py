@@ -17,6 +17,11 @@ from project_management.services.document_workflow import (
     document_has_workflow,
     get_internal_status,
 )
+from project_management.services.document_register_status import (
+    compute_client_control_status,
+    compute_internal_control_status,
+    compute_supplier_control_status,
+)
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
     resolve_document_library_scope,
@@ -84,6 +89,14 @@ class DocumentSerializer(serializers.ModelSerializer):
     # potentially Client) -- distinct from revision_label (INTERNAL-origin, approval-only).
     current_external_revision = serializers.SerializerMethodField()
     origin_locked = serializers.SerializerMethodField()
+    # L3F: Register control status, three independent axes (never one generic status trying to
+    # combine Internal/Supplier/Client business processes) -- see services.
+    # document_register_status for the full derivation. Distinct from the existing coarse
+    # `internal_status` (TO_CREATE/DRAFT/IN_VALIDATION/APPROVED) above, kept unchanged for
+    # whatever already reads it.
+    internal_control_status = serializers.SerializerMethodField()
+    supplier_control_status = serializers.SerializerMethodField()
+    client_control_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -124,6 +137,9 @@ class DocumentSerializer(serializers.ModelSerializer):
             'verifier',
             'workflow',
             'internal_status',
+            'internal_control_status',
+            'supplier_control_status',
+            'client_control_status',
             'revision_label',
             'current_external_revision',
             'file_size',
@@ -834,6 +850,26 @@ class DocumentSerializer(serializers.ModelSerializer):
         if not self.context.get('include_control'):
             return None
         return get_internal_status(obj)
+
+    def get_internal_control_status(self, obj):
+        # L3F: richer Register axis (DRAFT/IN_PROGRESS/TO_REVIEW/TO_VERIFY/TO_APPROVE/APPROVED/
+        # REJECTED) -- distinct from get_internal_status above. None for a non-INTERNAL document.
+        if not self.context.get('include_control'):
+            return None
+        return compute_internal_control_status(obj)
+
+    def get_supplier_control_status(self, obj):
+        # L3F: None for a non-SUPPLIER document or a FOR_INFORMATION one with no Surveillance.
+        if not self.context.get('include_control'):
+            return None
+        return compute_supplier_control_status(obj)
+
+    def get_client_control_status(self, obj):
+        # L3F: independent from Internal/Supplier -- gated by whichever of those applies, plus
+        # actual OUT Transmittal evidence for the exact CURRENT revision.
+        if not self.context.get('include_control'):
+            return None
+        return compute_client_control_status(obj)
 
     def get_file_size(self, obj):
         # Detail page only: may hit the storage backend.

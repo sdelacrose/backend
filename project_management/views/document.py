@@ -35,6 +35,9 @@ from project_management.services.document_workflow import (
     document_has_evidence,
     folder_has_evidence,
 )
+from project_management.services.document_register_status import (
+    annotate_register_control_status,
+)
 from project_management.services.document_bulk_update import (
     BulkDocumentUpdateRequestSerializer,
     DocumentBulkUpdateService,
@@ -759,6 +762,9 @@ class DocumentViewSet(viewsets.ModelViewSet):
                     DocumentWorkflow.objects.filter(revision__document=OuterRef("pk"))
                 )
             )
+            # L3F: Internal/Supplier/Client Register control status -- same correlated-subquery,
+            # no-N+1 pattern as annotate_current_workflow above (idempotent, safe to chain).
+            queryset = annotate_register_control_status(queryset)
         return queryset.select_related(
             "control", "control__approver", "created_by", "folder__project", "external_issuer_company"
         ).annotate(

@@ -48,6 +48,13 @@ class DocumentFilter(filters.FilterSet):
     my_validation = filters.BooleanFilter(method="filter_my_validation")
     date_from = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__gte")
     date_to = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__lte")
+    # L3F: the three independent Register control-status axes (L3F section 29) -- same
+    # method-filter precedent as my_validation above, each delegating to services.
+    # document_register_status so the filter logic is never duplicated from the serializer's own
+    # derivation.
+    internal_control_status = filters.CharFilter(method="filter_internal_control_status")
+    supplier_control_status = filters.CharFilter(method="filter_supplier_control_status")
+    client_control_status = filters.CharFilter(method="filter_client_control_status")
 
     class Meta:
         model = Document
@@ -80,6 +87,27 @@ class DocumentFilter(filters.FilterSet):
         )
 
         return filter_awaiting_user(queryset, self.request.user)
+
+    def filter_internal_control_status(self, queryset, name, value):
+        from project_management.services.document_register_status import (
+            filter_by_internal_control_status,
+        )
+
+        return filter_by_internal_control_status(queryset, value)
+
+    def filter_supplier_control_status(self, queryset, name, value):
+        from project_management.services.document_register_status import (
+            filter_by_supplier_control_status,
+        )
+
+        return filter_by_supplier_control_status(queryset, value)
+
+    def filter_client_control_status(self, queryset, name, value):
+        from project_management.services.document_register_status import (
+            filter_by_client_control_status,
+        )
+
+        return filter_by_client_control_status(queryset, value)
 
 class MilestoneFilter(filters.FilterSet):
     due_date = filters.DateFromToRangeFilter(field_name='due_date', label='Due Date Range')

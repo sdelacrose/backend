@@ -18,6 +18,7 @@ from project_management.models import (
     Folder,
     Project,
     ProjectTeamMembers,
+    SupplierSurveillance,
     Transmittal,
     TransmittalEvent,
     TransmittalItem,
@@ -180,13 +181,32 @@ class TransmittalTestBase(NoNotificationsMixin, TestCase):
         revision = self.add_revision(document)
         return self.approve(revision)
 
-    def make_supplier_revision(self, folder=None):
+    def make_supplier_revision(self, folder=None, category=None, client_category=None):
         document = self.make_document(folder=folder, origin=DocumentOrigin.SUPPLIER, name="supplier.txt")
+        if category is not None:
+            document.supplier_transmittal_category = category
+        if client_category is not None:
+            document.transmittal_category = client_category
+        if category is not None or client_category is not None:
+            document.save(update_fields=["supplier_transmittal_category", "transmittal_category"])
         return self.add_revision(document, content=b"supplier-v1")
 
     def make_client_revision(self, folder=None):
         document = self.make_document(folder=folder, origin=DocumentOrigin.CLIENT, name="client.txt")
         return self.add_revision(document, content=b"client-v1")
+
+    # L3F.1: the Supplier OUT gate only ever reads SupplierSurveillance.status/.result (never
+    # writes) -- a plain ORM row is enough here, the full Reviewer/Closure service machinery
+    # (L3B-E, deliberately untouched by this lot) is exercised elsewhere.
+    def make_surveillance(self, revision, status, result=None):
+        return SupplierSurveillance.objects.create(
+            project=self.project,
+            document_revision=revision,
+            reference=f"SR-TEST-{revision.id}",
+            status=status,
+            result=result,
+            created_by=self.owner,
+        )
 
     # --- transmittal helpers ---------------------------------------------------
 
@@ -508,11 +528,130 @@ class TransmittalEligibilityTests(TransmittalTestBase):
         with self.assertRaises(ValidationError):
             add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
 
-    def test_out_rejects_supplier_origin_document(self):
+    # --- L3F.1: Supplier OUT eligibility (section 5/6/8/9/10) -- a SUPPLIER-origin revision is
+    # now ALSO eligible for OUT distribution, gated by its own exact-revision SupplierSurveillance
+    # (never "any Supplier revision", the original, now-superseded absolute rule this single test
+    # used to assert). Section 22 test matrix B.
+
+    def test_out_rejects_supplier_with_no_surveillance_at_all(self):  # B.3
         transmittal = self.create_transmittal()
-        revision = self.make_supplier_revision()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
         with self.assertRaises(ValidationError):
             add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_supplier_surveillance_draft(self):  # B.4
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+        self.make_surveillance(revision, SupplierSurveillance.Status.DRAFT)
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_supplier_surveillance_under_review(self):  # B.5
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+        self.make_surveillance(revision, SupplierSurveillance.Status.UNDER_REVIEW)
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_supplier_surveillance_ready_for_closure(self):  # B.6
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+        self.make_surveillance(revision, SupplierSurveillance.Status.READY_FOR_CLOSURE)
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_supplier_closed_commented(self):  # B.7
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+        self.make_surveillance(
+            revision, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.COMMENTED,
+        )
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_supplier_closed_rejected(self):  # B.8
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+        self.make_surveillance(
+            revision, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REJECTED,
+        )
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_accepts_supplier_closed_reviewed(self):  # B.9
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+        self.make_surveillance(
+            revision, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REVIEWED,
+        )
+        item = add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+        self.assertEqual(item.document_revision_id, revision.id)
+
+    def test_out_accepts_supplier_for_information_without_surveillance(self):  # C.10
+        # Established L3B/L3D/L3F semantic: FOR_INFORMATION carries no mandatory Surveillance --
+        # the Supplier gate is satisfied without one.
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(
+            category="FOR_INFORMATION", client_category="For information",
+        )
+        item = add_transmittal_item(transmittal, revision, "FOR_INFORMATION", self.owner)
+        self.assertEqual(item.document_revision_id, revision.id)
+
+    def test_out_rejects_supplier_reviewed_but_client_purpose_not_sent(self):  # F.14
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="Not sent")
+        self.make_surveillance(
+            revision, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REVIEWED,
+        )
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_rejects_supplier_reviewed_but_client_purpose_missing(self):
+        transmittal = self.create_transmittal()
+        revision = self.make_supplier_revision(category="FOR_REVIEW")  # no client_category
+        self.make_surveillance(
+            revision, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REVIEWED,
+        )
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+
+    def test_out_exact_revision_rev_b_under_review_not_eligible_despite_rev_a_reviewed(self):  # D.11
+        document = self.make_document(origin=DocumentOrigin.SUPPLIER, name="exact-rev.txt")
+        document.supplier_transmittal_category = "FOR_REVIEW"
+        document.transmittal_category = "For review"
+        document.save(update_fields=["supplier_transmittal_category", "transmittal_category"])
+        revision_a = self.add_revision(document, content=b"rev-a")
+        self.make_surveillance(
+            revision_a, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REVIEWED,
+        )
+        revision_b = self.add_revision(document, content=b"rev-b")
+        self.make_surveillance(revision_b, SupplierSurveillance.Status.UNDER_REVIEW)
+
+        transmittal = self.create_transmittal()
+        # Rev A (its own Surveillance is REVIEWED) remains eligible on its own exact terms.
+        item = add_transmittal_item(transmittal, revision_a, "FOR_REVIEW", self.owner)
+        self.assertEqual(item.document_revision_id, revision_a.id)
+        # Rev B must NOT inherit Rev A's REVIEWED result -- its own Surveillance is UNDER_REVIEW.
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision_b, "FOR_REVIEW", self.owner)
+
+    def test_out_crafted_request_still_rejected_server_side(self):  # section 18
+        # Simulates a client bypassing any frontend picker filtering -- the service itself must
+        # still reject every non-eligible Supplier state.
+        transmittal = self.create_transmittal()
+        for status, result in (
+            (SupplierSurveillance.Status.UNDER_REVIEW, None),
+            (SupplierSurveillance.Status.READY_FOR_CLOSURE, None),
+            (SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.COMMENTED),
+            (SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REJECTED),
+        ):
+            revision = self.make_supplier_revision(category="FOR_REVIEW", client_category="For review")
+            self.make_surveillance(revision, status, result)
+            with self.assertRaises(ValidationError):
+                add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
+        client_revision = self.make_client_revision()
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, client_revision, "FOR_REVIEW", self.owner)
 
     def test_in_accepts_supplier_origin_document(self):
         transmittal = self.create_in_transmittal()
