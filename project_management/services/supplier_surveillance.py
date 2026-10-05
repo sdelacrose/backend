@@ -7,13 +7,19 @@ never triggered by Document creation, Revision creation or Transmittal reception
 19); nothing in this module is wired to a signal.
 """
 
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
-from project_management.models import DocumentOrigin, DocumentRevision
+from project_management.models import Document, DocumentOrigin, DocumentRevision
 from project_management.models.supplier_surveillance import (
     SupplierSurveillance,
     SupplierSurveillanceReferenceCounter,
+)
+from project_management.services.document_type_review_duration import (
+    resolve_review_durations,
 )
 from project_management.services.project_codes import propose_unique_project_code
 from project_management.services.supplier_surveillance_template import (
@@ -23,6 +29,27 @@ from project_management.services.supplier_surveillance_template import (
 )
 
 SEQUENCE_WIDTH = 5
+
+
+def resolve_review_duration_snapshot(*, project, document_revision):
+    """L3H-2 section 2/3/4/6/9: the frozen (duration_days, due_date) pair for a NEW Supplier
+    Surveillance, or (None, None) when no mandatory deadline applies.
+
+    FOR_REVIEW only (section 9) -- a FOR_INFORMATION document's exceptional/manual Surveillance
+    never gets a mandatory deadline, preserving "FOR_INFORMATION creates no automatic
+    operational obligation" exactly as the L3H architecture checkpoint already established for
+    the Register's own derivation. Computed ONCE from the L3H-1 effective
+    supplier_review_duration_days (never duplicating its null-fallback-to-15 logic) and
+    document_revision.created_at (never SupplierSurveillance.created_at -- the deadline must
+    not depend on when a user happens to click "Create Surveillance", section 3).
+    """
+    document = document_revision.document
+    if document.supplier_transmittal_category != Document.SupplierTransmittalCategory.FOR_REVIEW:
+        return None, None
+    effective = resolve_review_durations(project=project, document_type=document.document_type)
+    duration_days = effective["supplier_review_duration_effective_days"]
+    due_date = document_revision.created_at.date() + timedelta(days=duration_days)
+    return duration_days, due_date
 
 
 def assert_supplier_origin(document):
@@ -108,12 +135,20 @@ def create_supplier_surveillance(*, document_revision, actor, template):
             )
         reference = generate_supplier_surveillance_reference(project=project)
         snapshot = build_template_snapshot(template)
+        review_duration_days, review_due_date = resolve_review_duration_snapshot(
+            project=project, document_revision=locked_revision,
+        )
         instance = SupplierSurveillance.objects.create(
             project=project,
             document_revision=locked_revision,
             reference=reference,
             created_by=actor,
             template_snapshot=snapshot,
+            # L3H-2: frozen once, here, at creation -- never recomputed later even if the
+            # Project/Document Type configuration subsequently changes (section 6/7). NULL/NULL
+            # for a FOR_INFORMATION exceptional Surveillance (section 9).
+            review_duration_days=review_duration_days,
+            review_due_date=review_due_date,
             # status defaults to DRAFT; result/new_revision_required stay NULL -- L3B/L3C never
             # populate them (closure remains L3E).
         )
@@ -129,3 +164,25 @@ def create_supplier_surveillance(*, document_revision, actor, template):
 def get_supplier_surveillance_for_revision(document_revision):
     """The Surveillance of `document_revision`, or None. Read-only, no side effects."""
     return SupplierSurveillance.objects.filter(document_revision=document_revision).first()
+
+
+# L3H-2 section 10: all three non-CLOSED statuses remain overdue-eligible -- the contractual/
+# internal review process is not yet fully closed in any of them.
+OVERDUE_ELIGIBLE_STATUSES = (
+    SupplierSurveillance.Status.DRAFT,
+    SupplierSurveillance.Status.UNDER_REVIEW,
+    SupplierSurveillance.Status.READY_FOR_CLOSURE,
+)
+
+
+def compute_is_overdue(surveillance):
+    """L3H-2 section 10/11/12: a DERIVED condition -- never persisted, never folded into
+    `status`. False whenever review_due_date is null (historical row or FOR_INFORMATION
+    exceptional Surveillance, section 12) or the Surveillance is CLOSED (section 10). A due
+    date of exactly today is NOT YET overdue (section 11) -- only strictly in the past is.
+    """
+    if surveillance.review_due_date is None:
+        return False
+    if surveillance.status not in OVERDUE_ELIGIBLE_STATUSES:
+        return False
+    return surveillance.review_due_date < timezone.localdate()

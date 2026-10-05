@@ -13,6 +13,7 @@ from project_management.services.document_register import (
     get_register_document_or_404,
 )
 from project_management.services.supplier_surveillance import (
+    compute_is_overdue,
     create_supplier_surveillance,
     get_supplier_surveillance_for_revision,
     resolve_project_for_surveillance,
@@ -76,6 +77,12 @@ def serialize_supplier_surveillance(surveillance, request=None):
         # L3G-2 section 24: null until generation succeeds (automatic post-closure attempt or
         # manual retry) -- never created/implied for a non-CLOSED Surveillance.
         "evidence_pdf": serialize_evidence_pdf(evidence, request=request),
+        # L3H-2: the frozen operational snapshot (null for historical rows and FOR_INFORMATION
+        # exceptional Surveillances, section 9/12) + the derived, never-persisted overdue
+        # condition (section 10/13) -- never a replacement for `status`.
+        "review_duration_days": surveillance.review_duration_days,
+        "review_due_date": surveillance.review_due_date,
+        "is_overdue": compute_is_overdue(surveillance),
     }
 
 

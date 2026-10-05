@@ -91,6 +91,17 @@ class SupplierSurveillance(models.Model):
     # optional for REVIEWED (L3E section 4) -- a distinct field from any Reviewer response text,
     # Document comment or DocumentWorkflow comment.
     closure_comment = models.TextField(blank=True, default="")
+    # L3H-2: the frozen operational review deadline, computed ONCE at creation from the L3H-1
+    # effective Supplier Review Duration + document_revision.created_at (never
+    # SupplierSurveillance.created_at, section 3) -- never recomputed later, even if the
+    # Project/Document Type configuration subsequently changes (section 7). Both nullable:
+    # historical rows created before L3H-2 (never backfilled, section 20) and exceptional
+    # FOR_INFORMATION Surveillances (section 9, no mandatory deadline) legitimately have
+    # neither value. `is_overdue` is deliberately NOT a field here -- it stays a derived
+    # read-time condition (services.supplier_surveillance.compute_is_overdue), never a stored
+    # column and never folded into `status` (section 10).
+    review_duration_days = models.PositiveIntegerField(null=True, blank=True)
+    review_due_date = models.DateField(null=True, blank=True)
 
     class Meta:
         ordering = ["-created_at", "-id"]
