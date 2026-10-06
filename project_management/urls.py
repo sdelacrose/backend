@@ -30,6 +30,7 @@ from project_management.views.transmittal import (
 )
 from project_management.views.correspondances_register import CorrespondancesRegisterView
 from project_management.views.document_revision import DocumentRevisionViewSet
+from project_management.views.client_distribution_history import ClientDistributionHistoryView
 from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet
 from project_management.views.supplier_surveillance_template import SupplierSurveillanceTemplateViewSet
@@ -567,6 +568,9 @@ urlpatterns = [
     }), name='document-register-detail'),
     path('document/<int:document_id>/revisions', DocumentRevisionViewSet.as_view({'get': 'list', 'post': 'create'}), name='document-revisions'),
     path('document/<int:document_id>/revisions/<int:revision_id>/download', DocumentRevisionViewSet.as_view({'get': 'download'}), name='document-revision-download'),
+    # HISTORY-2: a tiny, read-only Client Distribution History -- section 12/13 (never a
+    # replacement for the Transmittal API itself).
+    path('document/<int:document_id>/client-distribution-history', ClientDistributionHistoryView.as_view(), name='document-client-distribution-history'),
     path('document/<int:document_id>/attachments', DocumentAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='document-attachments'),
     path('document/<int:document_id>/attachments/<int:attachment_id>', DocumentAttachmentViewSet.as_view({'delete': 'destroy'}), name='document-attachment-detail'),
     path('document/<int:document_id>/attachments/<int:attachment_id>/download', DocumentAttachmentViewSet.as_view({'get': 'download'}), name='document-attachment-download'),

@@ -2,6 +2,7 @@ from .contact import Contact, ContactCompany, ContactUser
 from .document import Document, DocumentOrigin, DocumentReferenceCounter, Folder
 from .document_control import DocumentControl
 from .document_revision import DocumentRevision
+from .client_issue import ClientIssue
 from .document_attachment import DocumentAttachment
 from .correspondence import Correspondence, CorrespondenceAttachment, CorrespondenceReferenceCounter
 from .correspondence_workflow import CorrespondenceValidationWorkflow, CorrespondenceValidationEvent

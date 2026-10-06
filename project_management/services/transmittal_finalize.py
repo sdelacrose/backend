@@ -14,6 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from project_management.models import ContactCompany, Transmittal, TransmittalEvent
+from project_management.services.client_issue import get_or_create_client_issue
 from project_management.services.document_type_review_duration import (
     resolve_review_durations,
 )
@@ -21,6 +22,17 @@ from project_management.services.transmittal_eligibility import (
     build_item_evidence_snapshot,
     validate_item_eligibility,
 )
+
+
+def is_review_overdue(review_due_date):
+    """HISTORY-2: the single source of truth for the derived, never-persisted overdue
+    condition (L3H-3 section 16/17/18/19/20) -- extracted here (from
+    serializers.transmittal.TransmittalItemSerializer.get_is_overdue, which now calls this
+    too) so a second read path can reuse the EXACT same formula rather than reconstructing it.
+    """
+    if review_due_date is None:
+        return False
+    return review_due_date < timezone.localdate()
 
 
 def resolve_client_review_duration_snapshot(*, project, document_revision, issued_at):
@@ -89,6 +101,18 @@ def finalize_transmittal(transmittal, actor):
             item.document_revision, item.distribution_purpose
         )
         update_fields = ["evidence_snapshot"]
+        # HISTORY-1: every real OUT distribution gets/reuses a ClientIssue -- FOR_REVIEW and
+        # FOR_INFORMATION alike (section 18/19), never for IN, never for a DRAFT that never
+        # reaches this point ("ready to send != sent", section 11). Reuse (retransmission,
+        # same revision + same external company) resolves to the exact same row -- see
+        # services.client_issue.get_or_create_client_issue.
+        if locked.direction == Transmittal.Direction.OUT:
+            item.client_issue = get_or_create_client_issue(
+                document_revision=item.document_revision,
+                client_company=locked.external_company,
+                actor=actor,
+            )
+            update_fields.append("client_issue")
         # L3H-3 section 7/10/11: OUT + FOR_REVIEW only -- never for IN, never for
         # FOR_INFORMATION. A DRAFT item that never reaches this point never gets a snapshot.
         if (

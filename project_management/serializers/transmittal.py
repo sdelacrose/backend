@@ -1,8 +1,8 @@
 from django.db import transaction
-from django.utils import timezone
 from rest_framework import serializers
 
 from project_management.models import Transmittal, TransmittalItem
+from project_management.services.transmittal_finalize import is_review_overdue
 from project_management.services.transmittal_reference import generate_transmittal_number
 
 
@@ -21,6 +21,12 @@ class TransmittalItemSerializer(serializers.ModelSerializer):
     # TransmittalItem serializer is the natural, exact-revision-correct source: never a
     # replacement for the existing Client business status derived elsewhere (L3F).
     is_overdue = serializers.SerializerMethodField()
+    # HISTORY-1: the minimum useful read-only surface -- the stable Client Issue identity this
+    # occurrence belongs to (survives retransmission) plus its label (NULL until a future lot
+    # assigns one, never fabricated here). client_issue itself is a plain FK (writable only by
+    # services.transmittal_finalize, never by this serializer -- no create/update endpoint for
+    # it exists in this lot, section 21/22).
+    client_revision_label = serializers.SerializerMethodField()
 
     class Meta:
         model = TransmittalItem
@@ -28,16 +34,19 @@ class TransmittalItemSerializer(serializers.ModelSerializer):
             "id", "transmittal", "document_revision", "document_revision_detail",
             "distribution_purpose", "evidence_snapshot", "created_at",
             "review_duration_days", "review_due_date", "is_overdue",
+            "client_issue", "client_revision_label",
         ]
         read_only_fields = [
             "id", "transmittal", "document_revision_detail", "evidence_snapshot", "created_at",
             "review_duration_days", "review_due_date", "is_overdue",
+            "client_issue", "client_revision_label",
         ]
 
     def get_is_overdue(self, obj):
-        if obj.review_due_date is None:
-            return False
-        return obj.review_due_date < timezone.localdate()
+        return is_review_overdue(obj.review_due_date)
+
+    def get_client_revision_label(self, obj):
+        return obj.client_issue.client_revision_label if obj.client_issue_id else None
 
     def get_document_revision_detail(self, obj):
         revision = obj.document_revision

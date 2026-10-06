@@ -24,6 +24,7 @@ from simple_history.models import HistoricalRecords
 
 from models.models import User
 
+from .client_issue import ClientIssue
 from .contact import ContactCompany, ContactUser
 from .document_revision import DocumentRevision
 from .project import Project
@@ -190,6 +191,16 @@ class TransmittalItem(models.Model):
     # folded into the Client business status (section 16).
     review_duration_days = models.PositiveIntegerField(null=True, blank=True)
     review_due_date = models.DateField(null=True, blank=True)
+    # HISTORY-1: the stable Client Revision identity this occurrence belongs to -- set ONLY at
+    # successful OUT finalization (never for IN, never for a DRAFT item), for EVERY OUT item
+    # (FOR_REVIEW and FOR_INFORMATION alike, L3H-History section 18/19). Multiple TransmittalItems
+    # across multiple Transmittals legitimately share the same ClientIssue (retransmission,
+    # section 13) -- this is exactly why the identity could never safely live directly on this
+    # model alone (it must be looked up/reused, not owned here).
+    client_issue = models.ForeignKey(
+        ClientIssue, related_name="transmittal_items", on_delete=models.PROTECT,
+        null=True, blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
