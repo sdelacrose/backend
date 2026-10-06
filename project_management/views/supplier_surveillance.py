@@ -41,7 +41,20 @@ def serialize_evidence_pdf(evidence, request=None):
     }
 
 
-def serialize_supplier_surveillance(surveillance, request=None):
+def serialize_supplier_surveillance_event(event):
+    """HISTORY-3 section 12: the Supplier equivalent of views.document_workflow.
+    serialize_workflow's own events[] shape -- event_type/actor/metadata/created_at, oldest
+    first (SupplierSurveillanceEvent.Meta.ordering, unchanged)."""
+    return {
+        "id": event.id,
+        "event_type": event.event_type,
+        "actor": user_reference(event.actor),
+        "metadata": event.metadata,
+        "created_at": event.created_at,
+    }
+
+
+def serialize_supplier_surveillance(surveillance, request=None, include_events=False):
     document = surveillance.document_revision.document
     # L3C section 25/26: an L3B row may have template_snapshot = NULL -- tolerate it, never
     # retroactively invent one.
@@ -83,6 +96,20 @@ def serialize_supplier_surveillance(surveillance, request=None):
         "review_duration_days": surveillance.review_duration_days,
         "review_due_date": surveillance.review_due_date,
         "is_overdue": compute_is_overdue(surveillance),
+        # HISTORY-3 section 12/17: only on a single-object fetch (this function's existing
+        # per-revision retrieve caller) -- never on the bulk Revision History list, which
+        # would turn N revisions into N extra event queries. Same opt-in convention as
+        # services.document_workflow's own retrieve-only `events[]` exposure.
+        **(
+            {
+                "events": [
+                    serialize_supplier_surveillance_event(event)
+                    for event in surveillance.events.select_related("actor").all()
+                ]
+            }
+            if include_events
+            else {}
+        ),
     }
 
 
@@ -123,7 +150,9 @@ class SupplierSurveillanceViewSet(viewsets.GenericViewSet):
         return Response(
             {
                 "supplier_surveillance": (
-                    serialize_supplier_surveillance(surveillance, request=request)
+                    serialize_supplier_surveillance(
+                        surveillance, request=request, include_events=True,
+                    )
                     if surveillance
                     else None
                 )

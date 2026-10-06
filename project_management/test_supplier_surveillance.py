@@ -727,3 +727,64 @@ class NoAutomaticCreationTests(SupplierSurveillanceBase):
     def test_no_automatic_surveillance_on_supplier_revision_creation(self):
         self.make_supplier_revision()
         self.assertEqual(SupplierSurveillance.objects.count(), 0)
+
+
+class SupplierSurveillanceEventsApiTests(SupplierSurveillanceBase):
+    """HISTORY-3 section 12/17: the existing per-revision supplier-surveillance retrieve
+    endpoint now also exposes events[] (include_events=True, retrieve only -- never on the
+    bulk Revision History list). Reuses the exact request helper GetSupplierSurveillanceApiTests
+    already established."""
+
+    def _request(self, document, revision_id):
+        factory = APIRequestFactory()
+        request = factory.get("/x/")
+        force_authenticate(request, user=self.creator)
+        view = SupplierSurveillanceViewSet.as_view({"get": "retrieve"}, permission_classes=[])
+        with patch(ACCESS, return_value=document), patch(CAN_UPDATE):
+            return view(request, document_id=document.id, revision_id=revision_id)
+
+    def test_retrieve_exposes_events_in_chronological_order(self):
+        revision = self.make_supplier_revision()
+        create_supplier_surveillance(
+            document_revision=revision, actor=self.creator, template=self.make_template(),
+        )
+        response = self._request(revision.document, revision.id)
+        events = response.data["supplier_surveillance"]["events"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "SURVEILLANCE_CREATED")
+        self.assertEqual(events[0]["actor"]["id"], self.creator.id)
+        self.assertIsNotNone(events[0]["created_at"])
+        timestamps = [event["created_at"] for event in events]
+        self.assertEqual(timestamps, sorted(timestamps))
+
+    def test_events_belong_only_to_their_own_exact_surveillance(self):
+        revision_a = self.make_supplier_revision(external_revision="A")
+        revision_b = self.make_supplier_revision(external_revision="B")
+        template = self.make_template()
+        create_supplier_surveillance(
+            document_revision=revision_a, actor=self.creator, template=template,
+        )
+        create_supplier_surveillance(
+            document_revision=revision_b, actor=self.creator, template=template,
+        )
+        response_a = self._request(revision_a.document, revision_a.id)
+        response_b = self._request(revision_b.document, revision_b.id)
+        surveillance_a_id = response_a.data["supplier_surveillance"]["id"]
+        surveillance_b_id = response_b.data["supplier_surveillance"]["id"]
+        self.assertNotEqual(surveillance_a_id, surveillance_b_id)
+        self.assertEqual(len(response_a.data["supplier_surveillance"]["events"]), 1)
+        self.assertEqual(len(response_b.data["supplier_surveillance"]["events"]), 1)
+
+    def test_bulk_revision_history_summary_never_includes_events(self):
+        """The OTHER read path (DocumentRevisionViewSet.list, HISTORY-3's new `surveillance`
+        summary key) must stay a summary -- never fetch events for every revision."""
+        from project_management.views.supplier_surveillance import (
+            serialize_supplier_surveillance,
+        )
+
+        revision = self.make_supplier_revision()
+        surveillance = create_supplier_surveillance(
+            document_revision=revision, actor=self.creator, template=self.make_template(),
+        )
+        summary = serialize_supplier_surveillance(surveillance)
+        self.assertNotIn("events", summary)

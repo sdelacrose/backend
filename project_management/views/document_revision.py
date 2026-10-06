@@ -7,7 +7,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 
-from project_management.models import DocumentWorkflow
+from project_management.models import DocumentWorkflow, SupplierSurveillance
 from project_management.serializers.document_register import user_reference
 from project_management.services.document_register import (
     assert_can_update_document,
@@ -20,6 +20,9 @@ from project_management.services.document_revision import (
     create_document_revision,
     get_next_versions,
     get_revision_history,
+)
+from project_management.views.supplier_surveillance import (
+    serialize_supplier_surveillance,
 )
 
 
@@ -46,10 +49,23 @@ def serialize_workflow_summary(workflow):
     }
 
 
-def serialize_revision(revision, request, document, workflow=None):
+def serialize_revision(revision, request, document, workflow=None, surveillance=None):
     return {
         # Latest workflow of this revision (summary only; events: the workflow endpoint).
+        # Only ever non-None for an INTERNAL-origin revision (services.document_workflow.
+        # start_workflow asserts INTERNAL origin) -- never fabricated for SUPPLIER/CLIENT.
         "workflow": serialize_workflow_summary(workflow),
+        # HISTORY-3 section 9/18: this exact revision's own Supplier Surveillance (summary
+        # only -- events: the existing per-revision supplier-surveillance endpoint, now with
+        # include_events=True). Only ever non-None for a SUPPLIER-origin revision
+        # (services.supplier_surveillance.create_supplier_surveillance asserts SUPPLIER
+        # origin) -- never fabricated for INTERNAL/CLIENT, and legitimately None for a
+        # FOR_INFORMATION Supplier revision with no mandatory Surveillance (section 11).
+        "surveillance": (
+            serialize_supplier_surveillance(surveillance, request=request)
+            if surveillance is not None
+            else None
+        ),
         "id": revision.id,
         "version_number": revision.version_number,
         "revision_label": revision.revision_label,
@@ -102,8 +118,25 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
             revision__in=revisions
         ).select_related("verifier", "approver").order_by("created_at", "id"):
             workflows[workflow.revision_id] = workflow  # latest wins
+        # HISTORY-3: this exact revision's own Supplier Surveillance (OneToOne, L3B) -- one
+        # bulk query for every revision of this Document, same N+1-avoidance convention as
+        # `workflows` just above (never one query per revision).
+        surveillances = {}
+        for surveillance in SupplierSurveillance.objects.filter(
+            document_revision__in=revisions
+        ).select_related(
+            "document_revision__document__external_issuer_company",
+            "created_by",
+            "closed_by",
+            # serialize_supplier_surveillance reads the reverse OneToOne Evidence row (L3G-1)
+            # per surveillance -- without this, every row triggers its own extra query.
+            "evidence",
+        ):
+            surveillances[surveillance.document_revision_id] = surveillance
         results = [
-            serialize_revision(r, request, document, workflows.get(r.id))
+            serialize_revision(
+                r, request, document, workflows.get(r.id), surveillances.get(r.id),
+            )
             for r in revisions
         ]
 
@@ -129,6 +162,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                     "file_url": file_url,
                     "comment": "",
                     "workflow": None,
+                    "surveillance": None,
                     "created_at": document.uploaded_at,
                     "created_by": user_reference(document.created_by),
                     "download_url": file_url,
