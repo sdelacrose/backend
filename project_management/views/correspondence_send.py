@@ -19,7 +19,7 @@ from rest_framework.response import Response
 
 from project_management.permissions import CorrespondencePermission
 from project_management.services.correspondence_send import send_correspondence
-from project_management.services.correspondence_workflow import ready_to_send
+from project_management.services.correspondence_workflow import can_resend, ready_to_send
 from project_management.views.correspondence import _user_reference, correspondence_queryset_for_user
 
 
@@ -78,6 +78,10 @@ class CorrespondenceSendViewSet(viewsets.GenericViewSet):
             {
                 "events": [serialize_send_event(e) for e in events],
                 "ready_to_send": ready_to_send(correspondence),
+                # CORR-DIST-2 section 6/16: a second, independent eligibility flag -- a Resend
+                # action, never conflated with the FIRST-send one above (see can_resend's own
+                # docstring for why they can never both be true for the same Correspondence).
+                "can_resend": can_resend(correspondence),
             }
         )
 

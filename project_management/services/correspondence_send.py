@@ -33,7 +33,7 @@ from django.utils import timezone
 
 from project_management.models import Correspondence, CorrespondenceAttachment, CorrespondenceSendEvent
 from project_management.services.correspondence_response import apply_response_link
-from project_management.services.correspondence_workflow import ready_to_send
+from project_management.services.correspondence_workflow import can_resend, ready_to_send
 
 Result = CorrespondenceSendEvent.Result
 
@@ -102,15 +102,19 @@ def _snapshot_attachments(attachments):
 def validate_send_request(correspondence, *, cc=None, bcc=None, attachment_ids=None):
     """Section 3/16: every eligibility and security guard, all server-side, all BEFORE any
     CorrespondenceSendEvent row (let alone a provider call) is created. Returns
-    (recipient, attachments) on success; raises SendBlocked otherwise."""
+    (recipient, attachments) on success; raises SendBlocked otherwise.
+
+    CORR-DIST-2 section 6: a Correspondence is eligible to attempt a send either as a FIRST
+    send (ready_to_send -- DRAFT, approved, has subject/recipient) OR as a RESEND (can_resend --
+    already has at least one prior SUCCESS, nothing currently in flight). Exactly one of the two
+    can ever be true for a given Correspondence (a first success flips status to ISSUED, which
+    alone already makes ready_to_send permanently False), so this is never an ambiguous OR."""
     if correspondence.direction != Correspondence.Direction.OUT:
         raise SendBlocked({"direction": "Only an outgoing correspondence can be sent."})
-    if not ready_to_send(correspondence):
+    if not ready_to_send(correspondence) and not can_resend(correspondence):
         raise SendBlocked(
-            {"ready_to_send": "This correspondence is not ready to send (not approved, not draft, or missing required content)."}
+            {"ready_to_send": "This correspondence is not ready to send: it must be approved and in draft for a first send, or already successfully sent at least once to be resent."}
         )
-    if correspondence.send_events.filter(result=Result.SUCCESS).exists():
-        raise SendBlocked({"status": "This correspondence has already been sent."})
     recipient = resolve_recipient(correspondence)
     if recipient is None:
         raise SendBlocked(
@@ -145,9 +149,11 @@ def _claim_send_slot(correspondence, *, sender, from_email, recipient, cc, bcc, 
     a concurrent duplicate attempt into an IntegrityError here, before any email is sent."""
     locked = Correspondence.objects.select_for_update().get(pk=correspondence.pk)
     # Re-checked INSIDE the lock: a second request that passed validate_send_request() a moment
-    # earlier (before this lock was acquired) must not still slip through.
-    if locked.send_events.filter(result__in=(Result.IN_PROGRESS, Result.SUCCESS)).exists():
-        raise SendBlocked({"status": "A send is already in progress or already completed."})
+    # earlier (before this lock was acquired) must not still slip through. CORR-DIST-2 section
+    # 8/9: a prior SUCCESS no longer blocks this -- only a currently IN_PROGRESS attempt does
+    # (resend is approved; concurrency protection is the only thing this guard is for now).
+    if locked.send_events.filter(result=Result.IN_PROGRESS).exists():
+        raise SendBlocked({"status": "A send is already in progress."})
     try:
         return CorrespondenceSendEvent.objects.create(
             correspondence=locked,
@@ -169,15 +175,22 @@ def _claim_send_slot(correspondence, *, sender, from_email, recipient, cc, bcc, 
 def _finalize_success(event, *, provider_message_id):
     """Section 9 steps 1-4 (evidence, ISSUED, sent_at, parent update) and step 6/7 (no longer
     sendable, content stays locked) -- one short transaction, only entered AFTER the provider
-    already confirmed success. Never touches Correspondence.issue_date (section 10)."""
+    already confirmed success. Never touches Correspondence.issue_date (section 10).
+
+    CORR-DIST-2 section 10/11: idempotent on status -- the FIRST success flips DRAFT->ISSUED;
+    every later successful RESEND finds status already ISSUED and leaves it untouched (no
+    redundant write/history row). apply_response_link is called unconditionally either way: it
+    is already its own no-op once the parent is no longer in a PENDING response state, so a
+    resend can never re-trigger or re-advance a response that a prior send already resolved."""
     event.result = Result.SUCCESS
     event.provider_message_id = provider_message_id or ""
     event.sent_at = timezone.now()
     event.save(update_fields=["result", "provider_message_id", "sent_at", "updated_at"])
 
     correspondence = event.correspondence
-    correspondence.status = Correspondence.Status.ISSUED
-    correspondence.save(update_fields=["status", "updated_at"])
+    if correspondence.status != Correspondence.Status.ISSUED:
+        correspondence.status = Correspondence.Status.ISSUED
+        correspondence.save(update_fields=["status", "updated_at"])
     # The exact existing rule (LOT 3B/3D-3C0C), never re-derived here: an ISSUED OUT child
     # answers its IN parent. A standalone OUT's own response_status (e.g. AWAITING_REPLY) was
     # already set at creation (initial_response_status) and needs no send-time change --

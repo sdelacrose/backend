@@ -69,16 +69,21 @@ class CorrespondenceSendEvent(models.Model):
     class Meta:
         ordering = ["-created_at", "-id"]
         constraints = [
-            # Section 15 (idempotency): at most one IN_PROGRESS-or-SUCCESS row per Correspondence
-            # at any time -- a concurrent second Send request racing to create its own
-            # IN_PROGRESS row hits this constraint (IntegrityError, mapped to a clean "already
-            # sending" error by the service), and once a SUCCESS row exists no further attempt
-            # can even start. FAILED rows are exempt on purpose: retrying after a failure must
-            # create a new attempt/row, preserving every prior failure as its own evidence.
+            # CORR-DIST-2 section 8: RESEND is now an approved business rule -- a historical
+            # SUCCESS must never block a later, independent distribution occurrence. The
+            # invariant this constraint now enforces is narrower and purely about concurrency:
+            # at most one IN_PROGRESS row per Correspondence at any time (a concurrent second
+            # Send/Resend request racing to create its own IN_PROGRESS row hits this constraint
+            # -- IntegrityError, mapped to a clean "already sending" error by the service).
+            # SUCCESS and FAILED rows are both exempt: every terminal attempt (success OR
+            # failure) is its own permanent, independent piece of evidence, and either one must
+            # let a subsequent attempt start. (Originally
+            # correspondence_send_event_one_in_flight_or_success, LOT 3D-3D2 -- renamed because
+            # "or_success" is no longer accurate.)
             models.UniqueConstraint(
                 fields=["correspondence"],
-                condition=Q(result__in=["IN_PROGRESS", "SUCCESS"]),
-                name="correspondence_send_event_one_in_flight_or_success",
+                condition=Q(result="IN_PROGRESS"),
+                name="correspondence_send_event_one_in_flight",
             ),
         ]
 

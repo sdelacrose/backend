@@ -20,6 +20,7 @@ from models.models import User
 
 from project_management.models import (
     Correspondence,
+    CorrespondenceSendEvent,
     CorrespondenceValidationEvent,
     CorrespondenceValidationWorkflow,
     ProjectTeamMembers,
@@ -105,6 +106,23 @@ def ready_to_send(correspondence):
     if not (correspondence.recipient_company_id or correspondence.recipient_contact_id):
         return False
     return True
+
+
+def can_resend(correspondence):
+    """CORR-DIST-2 section 6/27: the ONE canonical rule for the Resend action -- same spirit as
+    ready_to_send (never re-encoded on the frontend). TRUE only when this Correspondence has
+    already been successfully distributed at least once (resend is never the FIRST send --
+    that is ready_to_send's own job) and no attempt is currently in flight. Deliberately does
+    NOT re-check subject/recipient presence the way ready_to_send does: by the time any SUCCESS
+    event exists, content has been workflow-approved and locked (is_content_locked never
+    reverts once APPROVED), so that content cannot have been cleared since. No second validation
+    workflow is required or started for a resend (section 27)."""
+    if correspondence.direction != Correspondence.Direction.OUT:
+        return False
+    events = correspondence.send_events.values_list("result", flat=True)
+    if CorrespondenceSendEvent.Result.IN_PROGRESS in events:
+        return False
+    return CorrespondenceSendEvent.Result.SUCCESS in events
 
 
 # --- Actor scope ---------------------------------------------------------------------

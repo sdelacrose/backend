@@ -17,6 +17,7 @@ from project_management.services.correspondence_send import (
 )
 from project_management.services.correspondence_workflow import (
     WorkflowType,
+    can_resend,
     perform_action,
     ready_to_send,
     start_validation,
@@ -81,12 +82,14 @@ class SendEligibilityTests(SendTestBase):
         corr = self.approved_out()
         self.assertEqual(resolve_recipient(corr), {"email": "jane.doe@links-local.invalid", "name": "Jane Doe"})
 
-    def test_issued_cannot_send_again(self):
+    def test_issued_with_prior_success_can_be_resent(self):
+        # CORR-DIST-2 section 6: superseded LOT 3D-3D2's own "cannot send again" rule -- RESEND
+        # is now an approved business rule (same Correspondence, new independent evidence).
         corr = self.approved_out()
         send_correspondence(corr, sender=self.owner)
         corr.refresh_from_db()
-        with self.assertRaises(SendBlocked):
-            send_correspondence(corr, sender=self.owner)
+        event = send_correspondence(corr, sender=self.owner)
+        self.assertEqual(event.result, CorrespondenceSendEvent.Result.SUCCESS)
 
 
 class SuccessfulSendTests(SendTestBase):
@@ -244,6 +247,136 @@ class FailedSendTests(SendTestBase):
         self.assertEqual(corr.send_events.count(), 2)
 
 
+class ResendTests(SendTestBase):
+    """CORR-DIST-2: RESEND -- same Correspondence, a new independent CorrespondenceSendEvent,
+    never a second validation workflow, never a mutation of the first SUCCESS evidence."""
+
+    def test_can_resend_is_false_before_any_success(self):
+        corr = self.approved_out()
+        self.assertFalse(can_resend(corr))
+
+    def test_can_resend_is_true_once_a_prior_success_exists(self):
+        corr = self.approved_out()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        self.assertTrue(can_resend(corr))
+
+    def test_resend_creates_a_second_independent_success_event(self):
+        corr = self.approved_out()
+        first = send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        second = send_correspondence(corr, sender=self.owner, cc=["resend-cc@links-local.invalid"])
+        self.assertNotEqual(first.id, second.id)
+        self.assertEqual(second.result, CorrespondenceSendEvent.Result.SUCCESS)
+        self.assertEqual(second.cc_recipients, [{"email": "resend-cc@links-local.invalid"}])
+
+    def test_resend_never_mutates_the_first_success_event(self):
+        corr = self.approved_out()
+        first = send_correspondence(corr, sender=self.owner)
+        first_sent_at = first.sent_at
+        corr.refresh_from_db()
+        send_correspondence(corr, sender=self.owner)
+        first.refresh_from_db()
+        self.assertEqual(first.sent_at, first_sent_at)
+        self.assertEqual(first.result, CorrespondenceSendEvent.Result.SUCCESS)
+
+    def test_correspondence_remains_issued_after_a_successful_resend(self):
+        corr = self.approved_out()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        self.assertEqual(corr.status, Correspondence.Status.ISSUED)
+
+    def test_resend_does_not_reopen_or_require_a_new_validation_workflow(self):
+        from project_management.services.correspondence_workflow import get_latest_workflow
+
+        corr = self.approved_out()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        workflow_count_before = CorrespondenceSendEvent.objects.filter(correspondence=corr).count()
+        send_correspondence(corr, sender=self.owner)
+        self.assertEqual(get_latest_workflow(corr).status, "APPROVED")
+        # Exactly one new send event, no new workflow row of any kind was touched.
+        self.assertEqual(
+            CorrespondenceSendEvent.objects.filter(correspondence=corr).count(),
+            workflow_count_before + 1,
+        )
+
+    def test_failed_resend_creates_a_failed_event_without_altering_the_prior_success(self):
+        corr = self.approved_out()
+        first = send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        with patch("django.core.mail.message.EmailMessage.send", side_effect=Exception("SMTP down")):
+            second = send_correspondence(corr, sender=self.owner)
+        self.assertEqual(second.result, CorrespondenceSendEvent.Result.FAILED)
+        first.refresh_from_db()
+        self.assertEqual(first.result, CorrespondenceSendEvent.Result.SUCCESS)
+        corr.refresh_from_db()
+        self.assertEqual(corr.status, Correspondence.Status.ISSUED)
+
+    def test_retry_after_a_failed_resend_can_succeed(self):
+        corr = self.approved_out()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        with patch("django.core.mail.message.EmailMessage.send", side_effect=Exception("SMTP down")):
+            send_correspondence(corr, sender=self.owner)
+        third = send_correspondence(corr, sender=self.owner)
+        self.assertEqual(third.result, CorrespondenceSendEvent.Result.SUCCESS)
+        self.assertEqual(corr.send_events.count(), 3)
+        self.assertEqual(
+            corr.send_events.filter(result=CorrespondenceSendEvent.Result.SUCCESS).count(), 2,
+        )
+
+    def test_a_resend_in_flight_still_blocks_a_concurrent_attempt(self):
+        corr = self.approved_out()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        CorrespondenceSendEvent.objects.create(correspondence=corr, result=CorrespondenceSendEvent.Result.IN_PROGRESS)
+        with self.assertRaises(SendBlocked):
+            send_correspondence(corr, sender=self.owner)
+
+
+class ScopeTests(SendTestBase):
+    """CORR-DIST-2 section 24/25: the exact same send/resend service works for Company,
+    Project, and freelancer owner scope -- no scope-specific send service/model exists."""
+
+    def test_company_scoped_correspondence_can_send_and_resend(self):
+        corr = self.approved_out()  # company-scoped by default (WorkflowTestBase.create_out)
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        event = send_correspondence(corr, sender=self.owner)
+        self.assertEqual(event.result, CorrespondenceSendEvent.Result.SUCCESS)
+        self.assertEqual(corr.send_events.count(), 2)
+
+    def test_project_scoped_correspondence_can_send_and_resend(self):
+        corr = self.create_out_project(recipient_contact=self.recipient_contact.id)
+        wf = start_validation(corr, WorkflowType.ONE_STEP, self.author, None, self.approver, started_by=self.author)
+        perform_action(wf, self.approver, "APPROVE", "")
+        corr.refresh_from_db()
+        send_correspondence(corr, sender=self.owner)
+        corr.refresh_from_db()
+        event = send_correspondence(corr, sender=self.owner)
+        self.assertEqual(event.result, CorrespondenceSendEvent.Result.SUCCESS)
+        self.assertEqual(corr.send_events.count(), 2)
+
+    def test_freelancer_scoped_correspondence_send_is_not_broken(self):
+        # Constructed directly (never through the serializer's company/project scope
+        # resolution) -- this proves only that the SEND SERVICE itself has no company/project
+        # assumption baked in, exactly section 25's "do not break it, no dedicated UX required".
+        corr = Correspondence.objects.create(
+            freelancer=self.owner, direction="OUT", status="DRAFT",
+            subject="Freelancer subject", recipient_contact=self.recipient_contact,
+        )
+        wf = start_validation(corr, WorkflowType.ONE_STEP, self.owner, None, self.owner, started_by=self.owner)
+        perform_action(wf, self.owner, "APPROVE", "")
+        corr.refresh_from_db()
+        event = send_correspondence(corr, sender=self.owner)
+        self.assertEqual(event.result, CorrespondenceSendEvent.Result.SUCCESS)
+        corr.refresh_from_db()
+        self.assertEqual(corr.status, Correspondence.Status.ISSUED)
+
+
 class IdempotencyTests(SendTestBase):
     def test_a_second_send_while_one_is_in_flight_is_blocked(self):
         corr = self.approved_out()
@@ -257,13 +390,14 @@ class IdempotencyTests(SendTestBase):
         with self.assertRaises(IntegrityError):
             CorrespondenceSendEvent.objects.create(correspondence=corr, result=CorrespondenceSendEvent.Result.IN_PROGRESS)
 
-    def test_double_send_after_success_is_blocked(self):
+    def test_double_send_after_success_is_now_a_resend_not_blocked(self):
+        # CORR-DIST-2 section 6 (renamed/rewritten -- see test_issued_with_prior_success_can_be_resent
+        # for the dedicated resend test; this one specifically pins the resulting event COUNT).
         corr = self.approved_out()
         send_correspondence(corr, sender=self.owner)
         corr.refresh_from_db()
-        with self.assertRaises(SendBlocked):
-            send_correspondence(corr, sender=self.owner)
-        self.assertEqual(corr.send_events.filter(result=CorrespondenceSendEvent.Result.SUCCESS).count(), 1)
+        send_correspondence(corr, sender=self.owner)
+        self.assertEqual(corr.send_events.filter(result=CorrespondenceSendEvent.Result.SUCCESS).count(), 2)
 
 
 class SecurityGuardTests(SendTestBase):
