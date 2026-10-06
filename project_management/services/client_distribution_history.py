@@ -27,10 +27,32 @@ def _source_revision(document_revision):
     return document_revision.revision_label
 
 
+def is_actual_client_recipient(document, external_company_id):
+    """HISTORY-4.1: "OUT + ISSUED" alone does not mean "to the Client" -- direction and
+    recipient are separate concepts (checkpoint section 4). A genuine Client distribution's
+    recipient must never be the exact company that issued this SUPPLIER-origin Document to us
+    in the first place (Document.external_issuer_company): sending a revision back to that
+    same company is a Supplier-directed OUT (e.g. the future comment-return flow), never a
+    Client distribution. This is the ONE shared rule -- Client Distribution History and All
+    Events CLIENT_DISTRIBUTION both call this, never two divergent definitions (section 6).
+
+    Deliberately never a company_role/company_name check (section 7): company_role is free,
+    tenant-configurable text (project_management/serializers/contact.py's own
+    get_allowed_company_roles_for_request, validated against a per-company configurable list,
+    never a fixed Client/Supplier enum) -- never authoritative for this. Works unchanged for
+    a historical client_issue=NULL row too (section 8): it reads straight from
+    Document/Transmittal, never ClientIssue.
+    """
+    issuer_id = document.external_issuer_company_id
+    return issuer_id is None or issuer_id != external_company_id
+
+
 def list_client_distribution_history(document):
     """Every actual ISSUED OUT distribution of this Document's revisions, oldest first (so a
     retransmission naturally sorts after its own first occurrence) -- a DRAFT item is never
-    included (section 3: "ready to send != sent" extends to this read path too)."""
+    included (section 3: "ready to send != sent" extends to this read path too), and nor is an
+    OUT item whose recipient is not actually acting as the Client for this exact Document
+    (is_actual_client_recipient, HISTORY-4.1)."""
     items = (
         TransmittalItem.objects.filter(
             document_revision__document=document,
@@ -51,6 +73,8 @@ def list_client_distribution_history(document):
     results = []
     for item in items:
         transmittal = item.transmittal
+        if not is_actual_client_recipient(document, transmittal.external_company_id):
+            continue
         revision = item.document_revision
         client_issue = item.client_issue
         # A historical, pre-HISTORY-1 item (client_issue=NULL) still reports the real Client

@@ -10,6 +10,7 @@ from django.http import Http404
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from project_management.services.client_distribution_history import (
+    is_actual_client_recipient,
     list_client_distribution_history,
 )
 from project_management.services.transmittal_finalize import finalize_transmittal
@@ -177,3 +178,106 @@ class ViewWiringTests(ClientDistributionHistoryTestBase):
         ):
             response = view(request, document_id=revision.document_id)
         self.assertEqual(response.status_code, 404)
+
+
+# HISTORY-4.1: an OUT+ISSUED recipient is not necessarily the Client -- a document sent back
+# to the exact Supplier company that issued it to us (e.g. a future comment-return flow) must
+# never be presented as a Client distribution. The shared rule lives in
+# is_actual_client_recipient and is used by both this service and services.
+# document_history_events -- never two divergent definitions (section 6).
+class ActualClientRecipientTests(ClientDistributionHistoryTestBase):
+    def make_supplier_document_with_issuer(self):
+        document = self.make_document(origin="SUPPLIER", name="s.txt")
+        document.external_issuer_company = self.supplier_company
+        document.supplier_transmittal_category = "FOR_INFORMATION"
+        document.transmittal_category = "For information"
+        document.save(
+            update_fields=[
+                "external_issuer_company", "supplier_transmittal_category", "transmittal_category",
+            ]
+        )
+        return self.add_revision(document, content=b"supplier-v1")
+
+    # 1/2. A real Client recipient keeps appearing in both read paths (already covered
+    # elsewhere by the main suite; re-asserted here directly against the shared predicate).
+    def test_actual_client_company_is_accepted(self):
+        revision = self.make_supplier_document_with_issuer()
+        self.assertTrue(
+            is_actual_client_recipient(revision.document, self.client_company.id)
+        )
+
+    # 3/4. An OUT addressed back to the exact Supplier that issued this Document is excluded
+    # from Client Distribution History.
+    def test_out_to_the_documents_own_supplier_is_excluded_from_distribution_history(self):
+        revision = self.make_supplier_document_with_issuer()
+        self.issue(revision, purpose="FOR_INFORMATION")  # to self.client_company: a real one
+        back_to_supplier = self.create_transmittal(external_company=self.supplier_company.id)
+        add_transmittal_item(back_to_supplier, revision, "FOR_INFORMATION", self.owner)
+        finalize_transmittal(back_to_supplier, self.owner)
+
+        results = list_client_distribution_history(revision.document)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["client_company_id"], self.client_company.id)
+
+    def test_out_to_the_documents_own_supplier_is_excluded_from_all_events(self):
+        from project_management.services.document_history_events import (
+            list_document_history_events,
+        )
+
+        revision = self.make_supplier_document_with_issuer()
+        self.issue(revision, purpose="FOR_INFORMATION")
+        back_to_supplier = self.create_transmittal(external_company=self.supplier_company.id)
+        add_transmittal_item(back_to_supplier, revision, "FOR_INFORMATION", self.owner)
+        finalize_transmittal(back_to_supplier, self.owner)
+
+        events = list_document_history_events(revision.document)
+        distribution_events = [e for e in events if e["event_group"] == "CLIENT_DISTRIBUTION"]
+        self.assertEqual(len(distribution_events), 1)
+        self.assertEqual(
+            distribution_events[0]["metadata"]["client_company_id"], self.client_company.id,
+        )
+
+    # 5. A historical client_issue=NULL Client distribution is unaffected by this rule.
+    def test_historical_null_client_issue_distribution_still_included(self):
+        revision = self.make_approved_internal_revision()
+        finalized = self.issue(revision)
+        item = finalized.items.get()
+        item.client_issue = None
+        item.save(update_fields=["client_issue"])
+
+        results = list_client_distribution_history(revision.document)
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0]["client_issue_id"])
+
+    # 6. Without a recorded issuer at all (e.g. an INTERNAL document, or a SUPPLIER document
+    # whose issuer was never set), every OUT recipient is accepted -- never excluded by
+    # default.
+    def test_no_recorded_issuer_never_excludes_a_recipient(self):
+        revision = self.make_approved_internal_revision()
+        self.assertTrue(
+            is_actual_client_recipient(revision.document, self.supplier_company.id)
+        )
+
+    # 6. A company that is this Document's own Supplier issuer can still be a genuine Client
+    # recipient for a DIFFERENT, unrelated Document -- the rule is per-Document, never a
+    # global role tag on the company itself.
+    def test_same_company_can_be_client_for_a_different_document(self):
+        issuer_document_revision = self.make_supplier_document_with_issuer()
+        other_revision = self.make_approved_internal_revision()
+        self.assertFalse(
+            is_actual_client_recipient(
+                issuer_document_revision.document, self.supplier_company.id,
+            )
+        )
+        self.assertTrue(
+            is_actual_client_recipient(other_revision.document, self.supplier_company.id)
+        )
+
+    # 7. Retransmission behavior for a REAL Client distribution is unaffected by this rule.
+    def test_retransmission_of_a_real_client_distribution_still_grouped_together(self):
+        revision = self.make_approved_internal_revision()
+        self.issue(revision)
+        self.issue(revision)
+        results = list_client_distribution_history(revision.document)
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["client_company_id"], results[1]["client_company_id"])
