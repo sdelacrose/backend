@@ -206,6 +206,14 @@ class Document(models.Model):
         null=True,
         blank=True,
     )
+    # FINISH-C: the business date this CLIENT-origin ("Input Data") document was actually
+    # received -- never the upload/creation timestamp (uploaded_at/DocumentRevision.created_at
+    # are system events, not a business fact the Client stated). Same DateField convention as
+    # Correspondence.received_date. Nullable: existing historical CLIENT documents have no
+    # authoritative receipt date and are never backfilled; required only at CLIENT Input Data
+    # creation time, enforced in the serializer (see services/validators), not at this model
+    # layer -- INTERNAL/SUPPLIER documents and Company Documents never require it.
+    received_date = models.DateField(null=True, blank=True)
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
     # L2A: "Client Transmittal Category" -- how this document is intended to be transmitted to

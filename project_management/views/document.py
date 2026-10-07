@@ -594,6 +594,9 @@ class DocumentViewSet(viewsets.ModelViewSet):
         "status",
         "category",
         "discipline",
+        # FINISH-C: Input Data's Date Received column -- a plain nullable DateField, same
+        # ordering treatment as the other plain columns above, no annotation needed.
+        "received_date",
     ]
     ordering_text_fields = {
         "file_name",

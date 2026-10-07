@@ -109,6 +109,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'document_type',
             'document_origin',
             'external_issuer_company',
+            'received_date',
             'origin_locked',
             'status',
             'internal_review_status',
@@ -531,6 +532,18 @@ class DocumentSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {"author": "An Author is required for an internal document."}
                 )
+            # FINISH-C section 11: a backend-enforced "received_date required for CLIENT" rule
+            # at THIS generic create() path was evaluated and deliberately NOT added -- this
+            # exact serializer/folder-based CLIENT-creation path is also the one many pre-
+            # existing tests (test_document_origin.py and others) legitimately use to create
+            # CLIENT-origin documents for unrelated purposes (issuer handling, workflow-lock
+            # behaviour, register filtering, etc.), with no received_date and no way for this
+            # serializer to distinguish "a real + New Input Data submission" from those. Making
+            # it mandatory here would reject every one of those pre-existing, legitimate calls.
+            # Date Received is therefore required by FRONTEND contextual validation only, on
+            # the dedicated + New Input Data form (UploadDocumentDrawer) -- reported as a known
+            # limitation rather than redesigning Document creation to carry an "is this really
+            # a new Input Data submission" signal the API does not otherwise need.
 
         status = attrs.get("status")
         internal_review_status = attrs.get("internal_review_status")

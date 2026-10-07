@@ -37,6 +37,13 @@ class DocumentFilter(filters.FilterSet):
         field_name="transmittal_category", lookup_expr="in"
     )
     document_origin = CharInFilter(field_name="document_origin", lookup_expr="in")
+    # FINISH-C.1 Correction C: "Client" filter for the Input Data register -- the issuing
+    # Network company (ContactCompany), by id. Same NumberInFilter shape as author/approver
+    # below (multi-select-ready), reusing the existing external_issuer_company FK rather than
+    # inventing a second company-reference mechanism.
+    external_issuer_company = NumberInFilter(
+        field_name="external_issuer_company", lookup_expr="in"
+    )
     author = NumberInFilter(field_name="author", lookup_expr="in")
     folder = NumberInFilter(field_name="folder", lookup_expr="in")
     folder_name = CharInFilter(field_name="folder__name", lookup_expr="in")
@@ -48,6 +55,13 @@ class DocumentFilter(filters.FilterSet):
     my_validation = filters.BooleanFilter(method="filter_my_validation")
     date_from = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__gte")
     date_to = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__lte")
+    # FINISH-C.1 Correction D/E: Input Data's own quick/custom date filtering, targeting
+    # Document.received_date -- a DIFFERENT business date from uploaded_at above (never
+    # repurposed: date_from/date_to keep their existing uploaded_at meaning unchanged).
+    # received_date is already a plain DateField (not DateTimeField), so a direct gte/lte
+    # lookup is used, no __date cast needed.
+    received_date_from = filters.DateFilter(field_name="received_date", lookup_expr="gte")
+    received_date_to = filters.DateFilter(field_name="received_date", lookup_expr="lte")
     # L3F: the three independent Register control-status axes (L3F section 29) -- same
     # method-filter precedent as my_validation above, each delegating to services.
     # document_register_status so the filter logic is never duplicated from the serializer's own
@@ -77,6 +91,9 @@ class DocumentFilter(filters.FilterSet):
             "created_by",
             "date_from",
             "date_to",
+            "external_issuer_company",
+            "received_date_from",
+            "received_date_to",
         ]
 
     def filter_my_validation(self, queryset, name, value):
