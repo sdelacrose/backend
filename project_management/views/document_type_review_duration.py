@@ -8,6 +8,8 @@ from project_management.models import Project
 from project_management.permissions import ECPMPConfigPermission
 from project_management.services.document_type_review_duration import (
     DURATION_FIELD_NAMES,
+    MAX_BULK_REVIEW_DURATION_ROWS,
+    bulk_upsert_review_durations,
     list_effective_review_durations,
     resolve_review_durations,
     upsert_review_duration,
@@ -84,3 +86,29 @@ class DocumentReviewDurationViewSet(viewsets.GenericViewSet):
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
         return Response(resolve_review_durations(project=project, document_type=row.document_type))
+
+    def bulk_upsert(self, request, *args, **kwargs):
+        """FINISH-B section 7: one Save action for every dirty row -- narrow, transactional,
+        the exact same per-field validation as `upsert` (section 22), never a second
+        configuration model/semantics."""
+        project = _resolve_project(request)
+        _assert_permission(request, project, write=True)
+        rows = request.data.get("rows")
+        if not isinstance(rows, list) or not rows:
+            return Response(
+                {"rows": "A non-empty list of rows is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(rows) > MAX_BULK_REVIEW_DURATION_ROWS:
+            return Response(
+                {"rows": f"At most {MAX_BULK_REVIEW_DURATION_ROWS} rows per request."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("document_type"):
+                return Response(
+                    {"rows": "Each row requires a document_type."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        result = bulk_upsert_review_durations(project=project, rows=rows)
+        return Response(result)

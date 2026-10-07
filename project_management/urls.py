@@ -622,6 +622,9 @@ urlpatterns = [
     # L3H-1: Review Durations configuration (Project + Document Type scoped) -- configuration
     # only, no due date/overdue (those remain L3H-2/L3H-3/future lots).
     path('document-review-durations', DocumentReviewDurationViewSet.as_view({'get': 'list', 'post': 'upsert'}), name='document-review-durations'),
+    # FINISH-B: one Save action persists every dirty row (bulk-table UX) -- same ViewSet,
+    # narrow additive action, no second configuration model.
+    path('document-review-durations/bulk-upsert', DocumentReviewDurationViewSet.as_view({'post': 'bulk_upsert'}), name='document-review-durations-bulk-upsert'),
     # L3D: Reviewers + execution of one Supplier Surveillance (keyed by the Surveillance's own id).
     path('supplier-surveillance/<int:surveillance_id>/reviewers', SupplierSurveillanceReviewViewSet.as_view({'get': 'list_reviewers', 'post': 'assign_reviewer_action'}), name='supplier-surveillance-reviewers'),
     path('supplier-surveillance/<int:surveillance_id>/reviewers/<int:assignment_id>', SupplierSurveillanceReviewViewSet.as_view({'delete': 'remove_reviewer_action'}), name='supplier-surveillance-reviewer-detail'),

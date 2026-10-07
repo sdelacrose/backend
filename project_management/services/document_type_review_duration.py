@@ -8,12 +8,20 @@ resolves to DEFAULT_REVIEW_DURATION_DAYS without needing a persisted row at all.
 """
 
 from django.core.exceptions import ValidationError
+from django.db import transaction
 
 from project_management.models.document_type_review_duration import (
     DEFAULT_REVIEW_DURATION_DAYS,
     DURATION_FIELD_NAMES,
     DocumentTypeReviewDuration,
 )
+
+# FINISH-B section 7/22: the one user Save action persists every dirty row in a single request
+# -- narrow and transactional, reusing upsert_review_duration's own validation verbatim (never a
+# second, parallel validation path). A generous but real cap, same defensive-limit convention as
+# MAX_BULK_DOCUMENTS elsewhere, even though a project's own configured Document Types list is
+# realistically far smaller.
+MAX_BULK_REVIEW_DURATION_ROWS = 200
 
 
 def _effective_field_name(field_name):
@@ -99,3 +107,48 @@ def upsert_review_duration(*, project, document_type, values):
             setattr(row, field_name, value)
         row.save(update_fields=[*cleaned.keys(), "updated_at"])
     return row
+
+
+def bulk_upsert_review_durations(*, project, rows):
+    """FINISH-B section 7: one Save action persists every dirty row. `rows`: a list of dicts,
+    each `{"document_type": ..., <any of DURATION_FIELD_NAMES>: ...}` -- exactly the existing
+    `upsert_review_duration` call, once per row, inside one outer transaction with a per-row
+    savepoint (the same "one bad row never rolls back the others" shape
+    services.document_bulk_update.DocumentBulkUpdateService already uses). Only rows the caller
+    actually sends are touched -- the frontend is responsible for sending dirty rows only
+    (section 7's "do not send requests for unchanged rows"); this function has no opinion on
+    which rows are "dirty", it only guarantees each one it IS given is applied/validated
+    independently and never partially.
+    """
+    if len(rows) > MAX_BULK_REVIEW_DURATION_ROWS:
+        raise ValidationError(
+            {"rows": f"At most {MAX_BULK_REVIEW_DURATION_ROWS} rows per request."}
+        )
+    updated = []
+    failures = []
+    with transaction.atomic():
+        for row in rows:
+            document_type = row.get("document_type")
+            values = {
+                field_name: row[field_name]
+                for field_name in DURATION_FIELD_NAMES
+                if field_name in row
+            }
+            try:
+                with transaction.atomic():
+                    upsert_review_duration(
+                        project=project, document_type=document_type, values=values,
+                    )
+            except ValidationError as error:
+                failures.append(
+                    {"document_type": document_type, "error": _error_payload(error)}
+                )
+            else:
+                updated.append(document_type)
+    return {"updated": updated, "failures": failures}
+
+
+def _error_payload(error):
+    if hasattr(error, "message_dict"):
+        return error.message_dict
+    return {"detail": error.messages}

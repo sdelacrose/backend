@@ -15,7 +15,9 @@ from project_management.models.document_type_review_duration import (
     DURATION_FIELD_NAMES,
 )
 from project_management.services.document_type_review_duration import (
+    MAX_BULK_REVIEW_DURATION_ROWS,
     assert_document_type_known,
+    bulk_upsert_review_durations,
     list_effective_review_durations,
     resolve_review_durations,
     upsert_review_duration,
@@ -313,6 +315,132 @@ class NoSideEffectTests(ReviewDurationBase):
             response = view(request)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(DocumentTypeReviewDuration.objects.count(), 0)
+
+
+# FINISH-B: one Save action persists every dirty row in one request.
+class BulkUpsertServiceTests(ReviewDurationBase):
+    def test_multiple_rows_are_persisted_in_one_call(self):
+        project, _folder = self.make_project("Project BU1")
+        result = bulk_upsert_review_durations(
+            project=project,
+            rows=[
+                {"document_type": "Drawing", "supplier_review_duration_days": 10},
+                {"document_type": "Report", "client_review_duration_days": 20},
+            ],
+        )
+        self.assertEqual(result["updated"], ["Drawing", "Report"])
+        self.assertEqual(result["failures"], [])
+        self.assertEqual(
+            resolve_review_durations(project=project, document_type="Drawing")[
+                "supplier_review_duration_days"
+            ],
+            10,
+        )
+        self.assertEqual(
+            resolve_review_durations(project=project, document_type="Report")[
+                "client_review_duration_days"
+            ],
+            20,
+        )
+
+    def test_unchanged_fields_on_a_row_are_not_touched(self):
+        project, _folder = self.make_project("Project BU2")
+        upsert_review_duration(
+            project=project, document_type="Drawing",
+            values={"client_review_duration_days": 20},
+        )
+        bulk_upsert_review_durations(
+            project=project,
+            rows=[{"document_type": "Drawing", "supplier_review_duration_days": 10}],
+        )
+        effective = resolve_review_durations(project=project, document_type="Drawing")
+        self.assertEqual(effective["supplier_review_duration_days"], 10)
+        self.assertEqual(effective["client_review_duration_days"], 20)
+
+    def test_one_invalid_row_fails_independently_without_rolling_back_the_others(self):
+        project, _folder = self.make_project("Project BU3")
+        result = bulk_upsert_review_durations(
+            project=project,
+            rows=[
+                {"document_type": "Drawing", "supplier_review_duration_days": 10},
+                {"document_type": "Report", "supplier_review_duration_days": 0},
+            ],
+        )
+        self.assertEqual(result["updated"], ["Drawing"])
+        self.assertEqual(len(result["failures"]), 1)
+        self.assertEqual(result["failures"][0]["document_type"], "Report")
+        # The valid row's write survives even though a later row in the same request failed.
+        self.assertEqual(
+            resolve_review_durations(project=project, document_type="Drawing")[
+                "supplier_review_duration_days"
+            ],
+            10,
+        )
+        self.assertEqual(
+            resolve_review_durations(project=project, document_type="Report")[
+                "supplier_review_duration_days"
+            ],
+            None,
+        )
+
+    def test_unknown_document_type_in_one_row_is_reported_as_a_failure(self):
+        project, _folder = self.make_project("Project BU4")
+        result = bulk_upsert_review_durations(
+            project=project,
+            rows=[{"document_type": "NotConfigured", "supplier_review_duration_days": 10}],
+        )
+        self.assertEqual(result["updated"], [])
+        self.assertEqual(result["failures"][0]["document_type"], "NotConfigured")
+
+    def test_more_than_the_row_cap_is_rejected(self):
+        project, _folder = self.make_project("Project BU5")
+        rows = [
+            {"document_type": "Drawing", "supplier_review_duration_days": 10},
+        ] * (MAX_BULK_REVIEW_DURATION_ROWS + 1)
+        with self.assertRaises(ValidationError):
+            bulk_upsert_review_durations(project=project, rows=rows)
+
+
+# FINISH-B: the bulk-upsert API action reuses the exact same write permission as single upsert.
+class BulkUpsertApiTests(ReviewDurationBase):
+    def _bulk_request(self, project, rows, as_user=None):
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/x/", {"project": project.id, "rows": rows}, format="json",
+        )
+        force_authenticate(request, user=as_user or self.creator)
+        view = DocumentReviewDurationViewSet.as_view(
+            {"post": "bulk_upsert"}, permission_classes=[],
+        )
+        return view(request)
+
+    def test_bulk_upsert_permission_enforced(self):
+        project, _folder = self.make_project("Project BU6")
+        with patch(f"{PERMISSION_TARGET}._check_update_permission", return_value=False):
+            response = self._bulk_request(
+                project, [{"document_type": "Drawing", "supplier_review_duration_days": 10}],
+            )
+        self.assertEqual(response.status_code, 403)
+
+    def test_bulk_upsert_allowed_with_permission_persists_all_rows(self):
+        project, _folder = self.make_project("Project BU7")
+        with patch(f"{PERMISSION_TARGET}._check_update_permission", return_value=True):
+            response = self._bulk_request(
+                project,
+                [
+                    {"document_type": "Drawing", "supplier_review_duration_days": 10},
+                    {"document_type": "Report", "client_review_duration_days": 20},
+                ],
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["updated"], ["Drawing", "Report"])
+        self.assertEqual(response.data["failures"], [])
+
+    def test_bulk_upsert_rejects_an_empty_rows_list(self):
+        project, _folder = self.make_project("Project BU8")
+        with patch(f"{PERMISSION_TARGET}._check_update_permission", return_value=True):
+            response = self._bulk_request(project, [])
+        self.assertEqual(response.status_code, 400)
 
 
 # Structural: the four field names are the ones this whole lot is built around.

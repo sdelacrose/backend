@@ -746,6 +746,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         ).execute(
             document_ids=request_serializer.validated_data["ids"],
             changes=request_serializer.validated_data["changes"],
+            dry_run=request_serializer.validated_data.get("dry_run", False),
         )
         return Response(result, status=status.HTTP_200_OK)
 

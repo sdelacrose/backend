@@ -30,6 +30,8 @@ class BulkDocumentUpdateRequestSerializerTests(SimpleTestCase):
             "internal_review_status": "Approved",
             "status": "Submitted",
             "transmittal_category": "For approval",
+            "verifier": 21,
+            "approver": 22,
         }
         serializer = BulkDocumentUpdateRequestSerializer(
             data={"ids": [1, 2], "changes": changes}
@@ -126,6 +128,27 @@ class BulkDocumentUpdateRequestSerializerTests(SimpleTestCase):
         self.assertFalse(serializer.is_valid())
         self.assertIn("changes", serializer.errors)
 
+    def test_dry_run_defaults_to_false_and_accepts_true(self):
+        serializer = BulkDocumentUpdateRequestSerializer(
+            data={"ids": [1], "changes": {"status": "Draft"}}
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertFalse(serializer.validated_data["dry_run"])
+
+        serializer = BulkDocumentUpdateRequestSerializer(
+            data={"ids": [1], "changes": {"status": "Draft"}, "dry_run": True}
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertTrue(serializer.validated_data["dry_run"])
+
+    def test_verifier_and_approver_accept_null_to_clear_but_reject_absence_of_other_rules(self):
+        serializer = BulkDocumentUpdateRequestSerializer(
+            data={"ids": [1], "changes": {"verifier": None, "approver": 9}}
+        )
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertIsNone(serializer.validated_data["changes"]["verifier"])
+        self.assertEqual(serializer.validated_data["changes"]["approver"], 9)
+
 
 class DocumentBulkUpdateServiceTests(SimpleTestCase):
     def setUp(self):
@@ -184,7 +207,9 @@ class DocumentBulkUpdateServiceTests(SimpleTestCase):
             changes={"status": "Draft"},
         )
 
-        self.assertEqual(result, {"updated_ids": [1, 2], "failures": []})
+        self.assertEqual(
+            result, {"updated_ids": [1, 2], "failures": [], "dry_run": False},
+        )
         self.assertTrue(first._suppress_document_notifications)
         self.assertTrue(second._suppress_document_notifications)
         self.assertEqual(serializer_class.call_count, 2)
@@ -204,6 +229,147 @@ class DocumentBulkUpdateServiceTests(SimpleTestCase):
         can_update_object.assert_has_calls(
             [call(self.user, first), call(self.user, second)]
         )
+
+    # --- FINISH-B: verifier/approver (DocumentControl) + dry_run -----------------------------
+
+    @patch("project_management.services.document_bulk_update.transaction.on_commit")
+    @patch("project_management.services.document_bulk_update.transaction.atomic")
+    @patch("project_management.services.document_bulk_update.save_document_control")
+    @patch("project_management.services.document_bulk_update.DocumentSerializer")
+    @patch(
+        "project_management.services.document_bulk_update."
+        "DocumentPermission.can_update_object",
+        return_value=True,
+    )
+    @patch(
+        "project_management.services.document_bulk_update."
+        "Document.objects.select_related"
+    )
+    def test_verifier_and_approver_route_through_save_document_control(
+        self,
+        select_related,
+        can_update_object,
+        serializer_class,
+        save_document_control,
+        atomic,
+        on_commit,
+    ):
+        # verifier/approver-only change: no plain Document field present, so the
+        # DocumentSerializer is never even instantiated for this document.
+        document = self._document(1)
+        select_related.return_value.in_bulk.return_value = {1: document}
+        atomic.side_effect = lambda: nullcontext()
+        resolved_verifier = SimpleNamespace(id=10)
+        resolved_approver = SimpleNamespace(id=20)
+        serializer_class._resolve_user.side_effect = (
+            lambda value: {10: resolved_verifier, 20: resolved_approver}[value]
+        )
+
+        result = self._service().execute(
+            document_ids=[1],
+            changes={"verifier": 10, "approver": 20},
+        )
+
+        self.assertEqual(result["updated_ids"], [1])
+        self.assertEqual(result["failures"], [])
+        serializer_class.assert_not_called()
+        save_document_control.assert_called_once_with(
+            document, {"verifier": resolved_verifier, "approver": resolved_approver},
+        )
+
+    @patch("project_management.services.document_bulk_update.transaction.on_commit")
+    @patch("project_management.services.document_bulk_update.transaction.atomic")
+    @patch("project_management.services.document_bulk_update.save_document_control")
+    @patch("project_management.services.document_bulk_update.DocumentSerializer")
+    @patch(
+        "project_management.services.document_bulk_update."
+        "DocumentPermission.can_update_object",
+        return_value=True,
+    )
+    @patch(
+        "project_management.services.document_bulk_update."
+        "Document.objects.select_related"
+    )
+    def test_mixed_plain_and_control_changes_both_applied_to_the_same_document(
+        self,
+        select_related,
+        can_update_object,
+        serializer_class,
+        save_document_control,
+        atomic,
+        on_commit,
+    ):
+        document = self._document(1)
+        select_related.return_value.in_bulk.return_value = {1: document}
+        atomic.side_effect = lambda: nullcontext()
+        on_commit.side_effect = lambda callback: callback()
+        resolved_approver = SimpleNamespace(id=20)
+        serializer_class._resolve_user.return_value = resolved_approver
+        service = self._service()
+        service._enqueue_summary_notification = MagicMock()
+
+        result = service.execute(
+            document_ids=[1],
+            changes={"status": "Draft", "approver": 20},
+        )
+
+        self.assertEqual(result["updated_ids"], [1])
+        serializer_class.assert_called_once_with(
+            document,
+            data={"status": "Draft"},
+            partial=True,
+            context={"request": self.request, "user": self.user},
+        )
+        serializer_class.return_value.save.assert_called_once()
+        save_document_control.assert_called_once_with(
+            document, {"approver": resolved_approver},
+        )
+
+    @patch("project_management.services.document_bulk_update.transaction.on_commit")
+    @patch("project_management.services.document_bulk_update.transaction.atomic")
+    @patch("project_management.services.document_bulk_update.save_document_control")
+    @patch("project_management.services.document_bulk_update.DocumentSerializer")
+    @patch(
+        "project_management.services.document_bulk_update."
+        "DocumentPermission.can_update_object",
+        return_value=True,
+    )
+    @patch(
+        "project_management.services.document_bulk_update."
+        "Document.objects.select_related"
+    )
+    def test_dry_run_reports_eligibility_without_writing_anything(
+        self,
+        select_related,
+        can_update_object,
+        serializer_class,
+        save_document_control,
+        atomic,
+        on_commit,
+    ):
+        document = self._document(1)
+        select_related.return_value.in_bulk.return_value = {1: document}
+        atomic.side_effect = lambda: nullcontext()
+        service = self._service()
+        service._enqueue_summary_notification = MagicMock()
+
+        result = service.execute(
+            document_ids=[1],
+            changes={"status": "Draft", "approver": 20},
+            dry_run=True,
+        )
+
+        # Still reports the document as (would-be) eligible/updated -- permission + validation
+        # both still ran -- but nothing was actually written or scheduled.
+        self.assertEqual(
+            result, {"updated_ids": [1], "failures": [], "dry_run": True},
+        )
+        serializer_class.return_value.is_valid.assert_called_once_with(
+            raise_exception=True,
+        )
+        serializer_class.return_value.save.assert_not_called()
+        save_document_control.assert_not_called()
+        service._enqueue_summary_notification.assert_not_called()
 
     @patch("project_management.services.document_bulk_update.transaction.on_commit")
     @patch("project_management.services.document_bulk_update.transaction.atomic")
@@ -340,6 +506,7 @@ class DocumentBulkUpdateEndpointTests(SimpleTestCase):
         service_class.return_value.execute.assert_called_once_with(
             document_ids=[1],
             changes={"status": "Draft"},
+            dry_run=False,
         )
 
     @patch.object(DocumentViewSet, "get_permissions", return_value=[])
