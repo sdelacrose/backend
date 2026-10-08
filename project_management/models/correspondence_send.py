@@ -55,6 +55,18 @@ class CorrespondenceSendEvent(models.Model):
     # V1 is SMTP-only (section 2); "provider" is a plain label, not a foreign key, so a future
     # Microsoft Graph adapter needs no migration to start writing "graph" here instead.
     provider = models.CharField(max_length=20, default="smtp")
+    # MAIL-1.2A section 8: "Boîte expéditrice" -- which MailboxConnection a Microsoft Graph send
+    # actually used. Always null for provider="smtp" (no mailbox selection exists in that path).
+    # SET_NULL, not CASCADE: MailboxConnection has no delete endpoint today (MAIL-1.1C1's own
+    # docstring), but this send-evidence row must never become unreadable/deleted purely because
+    # a mailbox record was removed by some future, as-yet-unbuilt admin action.
+    mailbox = models.ForeignKey(
+        "userapis.MailboxConnection",
+        related_name="correspondence_send_events",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
     # Django's SMTP backend gives no message id -- always blank for V1 (see report section 2).
     provider_message_id = models.CharField(max_length=255, blank=True, default="")
     result = models.CharField(max_length=20, choices=Result.choices, default=Result.IN_PROGRESS)

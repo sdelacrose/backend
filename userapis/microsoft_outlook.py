@@ -358,8 +358,20 @@ def sync_outlook_events(user, access_token, project=None):
         "synced_events_count": len(fetched_events)
     }
 
-def refresh_outlook_access_token(user):
-    """Refresh an expired Microsoft access token without forcing reconnection."""
+def refresh_outlook_access_token(user, scope=MS_OUTLOOK_CALENDAR_SCOPES):
+    """Refresh an expired Microsoft access token without forcing reconnection.
+
+    MAIL-1.2A: `scope` is new and optional, defaulting to the exact string every existing
+    caller already relied on implicitly -- behavior for Calendar/Contacts is byte-for-byte
+    unchanged. It exists so userapis.mailbox_send can request MS_MAIL_SCOPES explicitly right
+    before a real Microsoft Graph send, rather than risking a token that a later, unrelated
+    Calendar-only refresh elsewhere has since narrowed back down (Calendar/Contacts/Mail all
+    share this one token pair per user -- see MS_MAIL_SCOPES's own docstring in
+    ecpmpapp/constants.py). Requesting a scope the user never actually consented to is safe to
+    attempt here: Microsoft's own token endpoint rejects a refresh_token grant for a broader
+    scope than was originally granted, so this fails closed (returns None below) rather than
+    silently fabricating elevated access.
+    """
     if not hasattr(user, "outlook_credentials"):
         return None
     credentials = user.outlook_credentials
@@ -374,7 +386,7 @@ def refresh_outlook_access_token(user):
                 "client_secret": settings.MS_CLIENT_SECRET,
                 "grant_type": "refresh_token",
                 "refresh_token": credentials.outlook_refresh_token,
-                "scope": MS_OUTLOOK_CALENDAR_SCOPES,
+                "scope": scope,
             },
             timeout=10,
         )

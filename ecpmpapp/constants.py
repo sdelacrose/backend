@@ -89,6 +89,16 @@ MS_MAIL_SCOPES = (
 # anything) -- used only to decide whether a SHARED mailbox connection may transition to
 # "active" (section 5: OAuth success alone is never treated as proof of real Exchange rights).
 MS_GRAPH_USER_MAILFOLDER_URL = "https://graph.microsoft.com/v1.0/users/{email}/mailFolders/inbox"
+# MAIL-1.2A: {email} is always the MailboxConnection's own address, for both an individual
+# mailbox (the token's own identity -- Graph treats this exactly like /me/sendMail) and a
+# shared mailbox (the delegate's token, Graph itself decides whether Send As/Send on Behalf
+# actually applies -- see userapis/mailbox_send.py). Never a second, different sender.
+MS_GRAPH_SEND_MAIL_URL = "https://graph.microsoft.com/v1.0/users/{email}/sendMail"
+# MAIL-1.2A-REVIEW section 2: a minimal, read-only identity probe -- confirms the Microsoft
+# account actually behind an access token before it is trusted to send as an INDIVIDUAL
+# MailboxConnection's own claimed email_address (nothing before this enforced that the two
+# ever matched; see _verify_individual_sender_identity in userapis/mailbox_send.py).
+MS_GRAPH_ME_URL = "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName"
 VALID_REMINDER_PATTERN = re.compile(r"^\d+\s?(day|days|week|weeks|month|months)$",re.IGNORECASE)
 
 CUSTOM_LABELS_TIMECARD = {

@@ -40,6 +40,10 @@ def serialize_send_event(event):
         "body": event.body,
         "attachments_snapshot": event.attachments_snapshot,
         "provider": event.provider,
+        # MAIL-1.2A section 8: "Boîte expéditrice" in the audit trail -- null for provider="smtp",
+        # the MailboxConnection id/address actually used for a provider="graph" send.
+        "mailbox": event.mailbox_id,
+        "mailbox_email": event.mailbox.email_address if event.mailbox_id else None,
         "provider_message_id": event.provider_message_id,
         "result": event.result,
         "error_message": event.error_message,
@@ -73,7 +77,7 @@ class CorrespondenceSendViewSet(viewsets.GenericViewSet):
         # History is read-only Correspondence data: gated by the existing view permission, not
         # the new send one (matches the validation workflow endpoint's own retrieve/act split).
         correspondence = self._correspondence(request, correspondence_id, "view")
-        events = correspondence.send_events.select_related("sender").all()
+        events = correspondence.send_events.select_related("sender", "mailbox").all()
         return Response(
             {
                 "events": [serialize_send_event(e) for e in events],
@@ -100,6 +104,9 @@ class CorrespondenceSendViewSet(viewsets.GenericViewSet):
                 subject=data.get("subject"),
                 body=data.get("body"),
                 attachment_ids=data.get("attachment_ids"),
+                # MAIL-1.2A section 4: optional -- omitted entirely reproduces the existing
+                # SMTP-only behavior exactly (send_correspondence's own default).
+                mailbox_id=data.get("mailbox_id"),
             )
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
