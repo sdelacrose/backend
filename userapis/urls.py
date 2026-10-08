@@ -1,11 +1,13 @@
 from django.urls import path, include
 
 from .views import (
+    AccessibleMailboxesView,
     ActionCountersView,
     CalendarEventViewSet,
     DisplayConfigurationView,
     FeedbackNotificationView,
     FeedbackViewSet,
+    MailboxConnectionViewSet,
     MicrosoftAuthViewSet,
     UserDashboardConfigurationViewSet,
     UserInfoViewSet,
@@ -22,6 +24,7 @@ router.register("events", CalendarEventViewSet)
 router.register('auth/outlook', MicrosoftAuthViewSet, basename="auth-outlook")
 router.register('feedback', FeedbackViewSet, basename="feedback")
 router.register('user-role', UserRoleViewSet, basename="user-role")
+router.register('mailbox-connections', MailboxConnectionViewSet, basename="mailbox-connection")
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -33,4 +36,9 @@ urlpatterns = [
         name="display_configuration",
     ),
     path("notify_user_on_feedback_update", FeedbackNotificationView.as_view(), name="feedback_notification"),
+    path(
+        "mailboxes/accessible",
+        AccessibleMailboxesView.as_view(),
+        name="accessible_mailboxes",
+    ),
 ]

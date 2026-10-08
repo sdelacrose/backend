@@ -78,6 +78,14 @@ class MailboxConnection(models.Model):
         SHARED = "shared", "Shared"
 
     class Status(models.TextChoices):
+        # MAIL-1.1C1 section 5: a configuration an administrator creates through the
+        # management API (this lot) has no OAuth delegation yet -- none of the other four
+        # values mean that ("active" specifically must never be used for a mailbox nobody has
+        # actually authenticated, per the ticket's own explicit rule). This is the new
+        # MailboxConnectionViewSet.create's only possible initial status; nothing in this lot
+        # ever transitions a connection TO "active" -- that is real OAuth's job (MAIL-1.1C2+,
+        # never simulated here).
+        PENDING = "pending", "Pending connection"
         ACTIVE = "active", "Active"
         REVOKED = "revoked", "Revoked"
         EXPIRED = "expired", "Expired"

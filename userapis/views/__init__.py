@@ -5,3 +5,4 @@ from .microsoft_auth import MicrosoftAuthViewSet
 from .feedback import FeedbackViewSet, FeedbackNotificationView
 from .user_role import UserRoleViewSet
 from .display_configuration import DisplayConfigurationView
+from .mailbox import AccessibleMailboxesView, MailboxConnectionViewSet

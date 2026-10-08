@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from models.models import CompanyProfile, Permission, Role, RolePermission, User, UserRole
 from project_management.models import Project
@@ -59,6 +60,18 @@ def _make_project(company):
         project_start_date=timezone.now().date(),
         project_end_date=timezone.now().date() + timedelta(days=30),
     )
+
+
+def _grant_mail_admin(user, company):
+    role = Role.objects.create(
+        name="Mailbox Admin", company=company, type="solution", scope="company",
+    )
+    permission, _ = Permission.objects.get_or_create(
+        key="mail.admin_shared_mailbox",
+        defaults={"name": "mail.admin_shared_mailbox", "module": "mail"},
+    )
+    RolePermission.objects.create(role=role, permission=permission)
+    UserRole.objects.create(user=user, role=role, company=company)
 
 
 class MailboxConnectionModelTests(TestCase):
@@ -360,3 +373,350 @@ class MailboxAccessControlTests(TestCase):
         )
         self.assertFalse(can_use_mailbox(user, mailbox, for_sending=True))
         self.assertFalse(can_use_mailbox(user, mailbox, for_sending=False))
+
+
+# MAIL-1.1C1: the management API itself -- userapis/views/mailbox.py.
+class MailboxManagementAPITests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.company = _make_company()
+        self.admin = _make_user("admin@example.com", self.company)
+        _grant_mail_admin(self.admin, self.company)
+        self.plain_user = _make_user("plain@example.com", self.company)
+
+    def test_admin_can_create_a_shared_mailbox_and_it_is_pending_not_active(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/user/mailbox-connections/",
+            {"provider": "microsoft", "email_address": "info@example.com", "display_name": "Info"},
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["connection_type"], "shared")
+        # Section 5: never artificially "active" -- no real OAuth happened.
+        self.assertEqual(response.data["status"], "pending")
+        mailbox = MailboxConnection.objects.get(pk=response.data["id"])
+        self.assertEqual(mailbox.company_profile_id, self.company.id)
+        self.assertIsNone(mailbox.owner_user_id)
+
+    def test_create_ignores_sensitive_fields_from_payload(self):
+        other_company = _make_company("Other")
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/user/mailbox-connections/",
+            {
+                "provider": "microsoft",
+                "email_address": "info2@example.com",
+                "company_profile": other_company.id,  # must be ignored
+                "owner_user": self.plain_user.id,  # must be ignored
+                "status": "active",  # must be ignored
+                "connected_by": self.admin.id,  # must be ignored
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        mailbox = MailboxConnection.objects.get(pk=response.data["id"])
+        self.assertEqual(mailbox.company_profile_id, self.company.id)  # not other_company
+        self.assertIsNone(mailbox.owner_user_id)
+        self.assertEqual(mailbox.status, "pending")  # not active
+        self.assertIsNone(mailbox.connected_by_id)
+
+    def test_create_without_admin_permission_is_refused(self):
+        self.client.force_authenticate(self.plain_user)
+        response = self.client.post(
+            "/api/user/mailbox-connections/",
+            {"provider": "microsoft", "email_address": "info@example.com"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_cross_company_retrieve_is_refused(self):
+        other_company = _make_company("Other")
+        other_mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="foreign@example.com",
+            company_profile=other_company,
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.get(f"/api/user/mailbox-connections/{other_mailbox.id}/")
+        self.assertIn(response.status_code, (403, 404))
+
+    def test_update_display_name(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            f"/api/user/mailbox-connections/{mailbox.id}/", {"display_name": "New Name"},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        mailbox.refresh_from_db()
+        self.assertEqual(mailbox.display_name, "New Name")
+
+    def test_patch_ignores_sensitive_fields(self):
+        other_company = _make_company("Other")
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+            status=MailboxConnection.Status.ACTIVE,
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.patch(
+            f"/api/user/mailbox-connections/{mailbox.id}/",
+            {
+                "display_name": "New Name",
+                "status": "revoked",
+                "company_profile": other_company.id,
+                "owner_user": self.plain_user.id,
+                "connected_by": self.plain_user.id,
+            },
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        mailbox.refresh_from_db()
+        self.assertEqual(mailbox.display_name, "New Name")
+        self.assertEqual(mailbox.status, MailboxConnection.Status.ACTIVE)  # unchanged
+        self.assertEqual(mailbox.company_profile_id, self.company.id)  # unchanged
+        self.assertIsNone(mailbox.owner_user_id)  # unchanged
+        self.assertIsNone(mailbox.connected_by_id)  # unchanged
+
+    def test_deactivate(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+            status=MailboxConnection.Status.ACTIVE,
+        )
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(f"/api/user/mailbox-connections/{mailbox.id}/deactivate/")
+        self.assertEqual(response.status_code, 200, response.data)
+        mailbox.refresh_from_db()
+        self.assertEqual(mailbox.status, "revoked")
+
+    def test_assign_and_unassign_project(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+        )
+        project = _make_project(self.company)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/projects/", {"project": project.id},
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(
+            MailboxProjectAssignment.objects.filter(mailbox=mailbox, project=project).exists()
+        )
+        response = self.client.delete(
+            f"/api/user/mailbox-connections/{mailbox.id}/projects/{project.id}/"
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(
+            MailboxProjectAssignment.objects.filter(mailbox=mailbox, project=project).exists()
+        )
+
+    def test_assign_project_from_another_company_is_refused(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+        )
+        foreign_project = _make_project(_make_company("Other"))
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/projects/",
+            {"project": foreign_project.id},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            MailboxProjectAssignment.objects.filter(mailbox=mailbox).exists()
+        )
+
+    def test_grant_modify_and_revoke(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+        )
+        grantee = _make_user("grantee@example.com", self.company)
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/grants/",
+            {"user": grantee.id, "can_send": True, "can_read": False},
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(
+            MailboxUserGrant.objects.get(mailbox=mailbox, user=grantee).can_send
+        )
+
+        response = self.client.patch(
+            f"/api/user/mailbox-connections/{mailbox.id}/grants/{grantee.id}/",
+            {"can_read": True},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        grant = MailboxUserGrant.objects.get(mailbox=mailbox, user=grantee)
+        self.assertTrue(grant.can_send)  # unchanged
+        self.assertTrue(grant.can_read)  # updated
+
+        response = self.client.delete(
+            f"/api/user/mailbox-connections/{mailbox.id}/grants/{grantee.id}/"
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(
+            MailboxUserGrant.objects.filter(mailbox=mailbox, user=grantee).exists()
+        )
+
+    def test_grant_for_user_outside_company_is_refused(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+        )
+        outsider = _make_user("outsider@example.com", _make_company("Other"))
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/grants/",
+            {"user": outsider.id, "can_send": True},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_replace_delegate_within_company(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+            connected_by=self.admin,
+        )
+        new_delegate = _make_user("new-delegate@example.com", self.company)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/replace-delegate/",
+            {"connected_by": new_delegate.id},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        mailbox.refresh_from_db()
+        self.assertEqual(mailbox.connected_by_id, new_delegate.id)
+
+    def test_replace_delegate_on_an_active_mailbox_forces_reconsent(self):
+        # Security fix: swapping connected_by on a previously ACTIVE mailbox must never leave
+        # it looking usable with a delegate who has not themselves completed OAuth.
+        project = _make_project(self.company)
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+            connected_by=self.admin,
+            status=MailboxConnection.Status.ACTIVE,
+        )
+        assignment = MailboxProjectAssignment.objects.create(mailbox=mailbox, project=project)
+        grant = MailboxUserGrant.objects.create(
+            mailbox=mailbox, user=self.plain_user, can_send=True, can_read=True
+        )
+        new_delegate = _make_user("new-delegate@example.com", self.company)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/replace-delegate/",
+            {"connected_by": new_delegate.id},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["status"], "needs_reconsent")
+        mailbox.refresh_from_db()
+        self.assertEqual(mailbox.connected_by_id, new_delegate.id)
+        self.assertEqual(mailbox.status, MailboxConnection.Status.NEEDS_RECONSENT)
+        # Project assignments and grants are completely untouched.
+        self.assertTrue(
+            MailboxProjectAssignment.objects.filter(pk=assignment.pk, mailbox=mailbox).exists()
+        )
+        grant.refresh_from_db()
+        self.assertTrue(grant.can_send)
+        self.assertTrue(grant.can_read)
+
+    def test_replace_delegate_on_a_non_active_mailbox_leaves_status_unchanged(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+            status=MailboxConnection.Status.PENDING,
+        )
+        new_delegate = _make_user("new-delegate@example.com", self.company)
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/replace-delegate/",
+            {"connected_by": new_delegate.id},
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        mailbox.refresh_from_db()
+        self.assertEqual(mailbox.status, MailboxConnection.Status.PENDING)
+
+    def test_replace_delegate_with_user_outside_company_is_refused(self):
+        mailbox = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+        )
+        outsider = _make_user("outsider@example.com", _make_company("Other"))
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            f"/api/user/mailbox-connections/{mailbox.id}/replace-delegate/",
+            {"connected_by": outsider.id},
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_accessible_mailboxes_consultation(self):
+        # Individual mailbox owned by plain_user.
+        individual = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.INDIVIDUAL,
+            email_address="plain@example.com",
+            company_profile=self.company,
+            owner_user=self.plain_user,
+            connected_by=self.plain_user,
+        )
+        # Shared mailbox plain_user has an explicit grant on.
+        shared = MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="info@example.com",
+            company_profile=self.company,
+            status=MailboxConnection.Status.ACTIVE,
+        )
+        MailboxUserGrant.objects.create(
+            mailbox=shared, user=self.plain_user, can_send=True, can_read=False
+        )
+        # A different shared mailbox with no grant -- must not appear.
+        MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="other@example.com",
+            company_profile=self.company,
+        )
+        # Another company's mailbox -- must never appear regardless of anything else.
+        foreign_company = _make_company("Other")
+        MailboxConnection.objects.create(
+            provider=MailboxConnection.Provider.MICROSOFT,
+            connection_type=MailboxConnection.ConnectionType.SHARED,
+            email_address="foreign@example.com",
+            company_profile=foreign_company,
+        )
+
+        self.client.force_authenticate(self.plain_user)
+        response = self.client.get("/api/user/mailboxes/accessible")
+        self.assertEqual(response.status_code, 200, response.data)
+        ids = {row["id"] for row in response.data}
+        self.assertEqual(ids, {individual.id, shared.id})
+        shared_row = next(row for row in response.data if row["id"] == shared.id)
+        self.assertTrue(shared_row["can_send"])
+        self.assertFalse(shared_row["can_read"])
