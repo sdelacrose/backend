@@ -1,8 +1,10 @@
 import unittest
 from datetime import timedelta
 
+from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError, transaction
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -71,6 +73,7 @@ from userapis.microsoft_outlook import (
     sync_outlook_events,
 )
 from userapis.views.microsoft_auth import build_outlook_oauth_url
+from userapis.token_encryption import TokenCryptoError, decrypt_token, encrypt_token
 
 
 CALENDAR_TEST_REST_FRAMEWORK = {
@@ -2032,3 +2035,566 @@ class FeedbackOrderingTests(TestCase):
                     [row["id"] for row in response.data["results"]],
                     expected,
                 )
+
+
+# SECURITY-MAIL-0C: pure encrypt/decrypt logic -- no DB, no signal involved.
+class TokenEncryptionTests(SimpleTestCase):
+    def setUp(self):
+        self.key = Fernet.generate_key().decode("ascii")
+        self.other_key = Fernet.generate_key().decode("ascii")
+
+    @override_settings(MS_TOKEN_ENCRYPTION_KEYS="")
+    def test_legacy_plaintext_passes_through_unchanged_with_no_key_configured(self):
+        self.assertEqual(decrypt_token("a-plain-legacy-token"), "a-plain-legacy-token")
+
+    @override_settings(MS_TOKEN_ENCRYPTION_KEYS="")
+    def test_none_and_empty_are_returned_unchanged(self):
+        self.assertIsNone(decrypt_token(None))
+        self.assertEqual(decrypt_token(""), "")
+        self.assertIsNone(encrypt_token(None))
+        self.assertEqual(encrypt_token(""), "")
+
+    def test_encrypt_then_decrypt_round_trips(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            encrypted = encrypt_token("super-secret-token")
+            self.assertTrue(encrypted.startswith("encv1:"))
+            self.assertNotIn("super-secret-token", encrypted)
+            self.assertEqual(decrypt_token(encrypted), "super-secret-token")
+
+    def test_legacy_plaintext_still_decrypts_unchanged_once_a_key_IS_configured(self):
+        # A key being configured must never retroactively treat an un-prefixed historical
+        # token as something to decrypt -- only ENCRYPTION_PREFIX decides that.
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            self.assertEqual(decrypt_token("legacy-plain-token"), "legacy-plain-token")
+
+    def test_encrypt_is_idempotent_never_double_encrypts(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            once = encrypt_token("a-token")
+            twice = encrypt_token(once)
+            self.assertEqual(once, twice)
+            self.assertEqual(decrypt_token(twice), "a-token")
+
+    def test_wrong_key_raises_explicit_error_never_returns_ciphertext_as_plaintext(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            encrypted = encrypt_token("a-token")
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.other_key):
+            with self.assertRaises(TokenCryptoError):
+                decrypt_token(encrypted)
+
+    def test_corrupted_ciphertext_raises_explicit_error(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            with self.assertRaises(TokenCryptoError):
+                decrypt_token("encv1:not-a-real-fernet-token")
+
+    def test_encrypted_value_with_no_key_configured_raises_rather_than_returning_ciphertext(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            encrypted = encrypt_token("a-token")
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=""):
+            with self.assertRaises(TokenCryptoError):
+                decrypt_token(encrypted)
+
+    def test_rotation_new_key_first_still_decrypts_values_encrypted_with_the_old_key(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            encrypted_with_old_key = encrypt_token("a-token")
+        # Rotation: the new key is listed first (primary for future encrypts), the old key
+        # stays listed so values already encrypted with it keep decrypting.
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_KEYS=f"{self.other_key},{self.key}"
+        ):
+            self.assertEqual(decrypt_token(encrypted_with_old_key), "a-token")
+            # New encrypts use the first (new) key -- decryptable under the rotated list too.
+            encrypted_with_new_key = encrypt_token("another-token")
+            self.assertEqual(decrypt_token(encrypted_with_new_key), "another-token")
+
+    def test_encrypt_without_any_key_configured_raises(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=""):
+            with self.assertRaises(TokenCryptoError):
+                encrypt_token("a-token")
+
+
+# SECURITY-MAIL-0C: the post_init signal wired in userapis/signals.py, exercised through the
+# real UserOutlookCredentials model -- confirms decryption is transparent at the ORM level and
+# that write-side encryption is NOT active in this lot.
+class OutlookCredentialsDecryptionSignalTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            email="mail-0c@example.com",
+            last_name="Mail0C",
+            user_type="company_user",
+        )
+        self.key = Fernet.generate_key().decode("ascii")
+
+    def test_legacy_plaintext_row_reads_back_unchanged_via_the_model(self):
+        UserOutlookCredentials.objects.create(
+            user=self.user,
+            outlook_access_token="legacy-access-token",
+            outlook_refresh_token="legacy-refresh-token",
+        )
+        fetched = UserOutlookCredentials.objects.get(user=self.user)
+        self.assertEqual(fetched.outlook_access_token, "legacy-access-token")
+        self.assertEqual(fetched.outlook_refresh_token, "legacy-refresh-token")
+
+    def test_encrypted_row_is_transparently_decrypted_on_load(self):
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            encrypted_access = encrypt_token("real-access-token")
+            encrypted_refresh = encrypt_token("real-refresh-token")
+            UserOutlookCredentials.objects.create(
+                user=self.user,
+                outlook_access_token=encrypted_access,
+                outlook_refresh_token=encrypted_refresh,
+            )
+            fetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(fetched.outlook_access_token, "real-access-token")
+            self.assertEqual(fetched.outlook_refresh_token, "real-refresh-token")
+
+    def test_write_side_encryption_is_not_enabled_in_this_lot(self):
+        # Saving a plaintext value must still store it as plain text -- no pre_save is
+        # connected yet (section 6 of the ticket). Verified by reading the raw column via
+        # .values_list(), which bypasses model instantiation and this lot's post_init
+        # receiver entirely, so it reflects exactly what is actually stored in the DB.
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            UserOutlookCredentials.objects.create(
+                user=self.user,
+                outlook_access_token="still-plain-at-rest",
+                outlook_refresh_token="still-plain-at-rest-too",
+            )
+        raw_access = UserOutlookCredentials.objects.filter(
+            user=self.user
+        ).values_list("outlook_access_token", flat=True).first()
+        self.assertEqual(raw_access, "still-plain-at-rest")
+        self.assertFalse(raw_access.startswith("encv1:"))
+
+    def test_null_token_fields_load_without_error(self):
+        UserOutlookCredentials.objects.create(user=self.user)
+        fetched = UserOutlookCredentials.objects.get(user=self.user)
+        self.assertIsNone(fetched.outlook_access_token)
+        self.assertIsNone(fetched.outlook_refresh_token)
+
+    def test_a_corrupted_encrypted_row_raises_on_load_rather_than_exposing_ciphertext(self):
+        # Simulate a corrupted/undecryptable value already sitting in the DB (as if written by
+        # some other process) via QuerySet.update(), a raw SQL UPDATE that bypasses .save() and
+        # therefore bypasses post_init's own decrypt-on-create attempt -- the row is created
+        # first with an innocuous value (no key configured yet, so creation itself is a no-op
+        # pass-through), then corrupted directly at the DB level.
+        UserOutlookCredentials.objects.create(user=self.user, outlook_access_token="x")
+        UserOutlookCredentials.objects.filter(user=self.user).update(
+            outlook_access_token="encv1:this-is-not-valid-fernet-ciphertext"
+        )
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=self.key):
+            with self.assertRaises(TokenCryptoError):
+                UserOutlookCredentials.objects.get(user=self.user)
+
+    def test_existing_refresh_flow_is_unaffected_by_the_decryption_signal(self):
+        # Full regression of the pre-existing, already-tested flow (see
+        # OutlookEventSyncTests.test_expired_outlook_token_is_refreshed_without_reconnection)
+        # -- kept minimal here, just confirming get_valid_outlook_access_token still returns
+        # the plain, usable token for a legacy (unencrypted) row with no key configured.
+        from userapis.microsoft_outlook import get_valid_outlook_access_token
+
+        UserOutlookCredentials.objects.create(
+            user=self.user,
+            outlook_access_token="still-valid-token",
+            outlook_refresh_token="refresh-token",
+            outlook_token_expires=timezone.now() + timedelta(hours=1),
+        )
+        self.assertEqual(get_valid_outlook_access_token(self.user), "still-valid-token")
+
+
+# SECURITY-MAIL-0D: write-side encryption, gated on MS_TOKEN_ENCRYPTION_WRITE_ENABLED. The
+# flag defaults False and is never set here, so every test that wants it on uses
+# override_settings explicitly -- confirming the opt-in is real, not implied.
+class WriteEncryptionTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            email="mail-0d@example.com",
+            last_name="Mail0D",
+            user_type="company_user",
+        )
+        self.key = Fernet.generate_key().decode("ascii")
+
+    def _raw_value(self, field):
+        return (
+            UserOutlookCredentials.objects.filter(user=self.user)
+            .values_list(field, flat=True)
+            .first()
+        )
+
+    @override_settings(MS_TOKEN_ENCRYPTION_WRITE_ENABLED=False)
+    def test_flag_disabled_writes_stay_plaintext(self):
+        UserOutlookCredentials.objects.create(
+            user=self.user, outlook_access_token="plain-token"
+        )
+        self.assertEqual(self._raw_value("outlook_access_token"), "plain-token")
+
+    @override_settings(MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS="")
+    def test_flag_enabled_without_a_key_refuses_rather_than_writing_plaintext(self):
+        with self.assertRaises(TokenCryptoError):
+            UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token="plain-token"
+            )
+        # Nothing should have been persisted -- the raise happens in pre_save, before Django
+        # issues the INSERT.
+        self.assertFalse(
+            UserOutlookCredentials.objects.filter(user=self.user).exists()
+        )
+
+    def test_flag_enabled_with_valid_key_encrypts_at_rest(self):
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            UserOutlookCredentials.objects.create(
+                user=self.user,
+                outlook_access_token="plain-access",
+                outlook_refresh_token="plain-refresh",
+            )
+            raw_access = self._raw_value("outlook_access_token")
+            raw_refresh = self._raw_value("outlook_refresh_token")
+            self.assertTrue(raw_access.startswith("encv1:"))
+            self.assertTrue(raw_refresh.startswith("encv1:"))
+            self.assertNotIn("plain-access", raw_access)
+
+    def test_read_after_encrypted_write_returns_plaintext_via_a_fresh_fetch(self):
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token="plain-access"
+            )
+            fetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(fetched.outlook_access_token, "plain-access")
+
+    def test_in_memory_instance_keeps_plaintext_in_its_attributes_right_after_save(self):
+        # Section 5's central requirement: a caller holding the SAME instance across a .save()
+        # call must keep seeing the plaintext it expects, never the ciphertext that was
+        # actually written to the DB.
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            credentials = UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token="plain-access"
+            )
+            self.assertEqual(credentials.outlook_access_token, "plain-access")
+            credentials.outlook_access_token = "updated-plain-access"
+            credentials.save()
+            self.assertEqual(credentials.outlook_access_token, "updated-plain-access")
+            self.assertTrue(
+                self._raw_value("outlook_access_token").startswith("encv1:")
+            )
+
+    def test_save_update_fields_only_encrypts_and_restores_the_fields_actually_written(self):
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            credentials = UserOutlookCredentials.objects.create(
+                user=self.user,
+                outlook_access_token="plain-access",
+                outlook_refresh_token="plain-refresh",
+                outlook_token_expires=timezone.now(),
+            )
+            new_expiry = timezone.now() + timedelta(hours=2)
+            credentials.outlook_token_expires = new_expiry
+            credentials.save(update_fields=["outlook_token_expires"])
+
+            # The untouched token fields stay exactly as they already were in memory
+            # (plaintext) and at rest (whatever test_flag_enabled_with_valid_key_encrypts_at_
+            # rest already proved the prior .create() wrote).
+            self.assertEqual(credentials.outlook_access_token, "plain-access")
+            raw_access = self._raw_value("outlook_access_token")
+            self.assertTrue(raw_access.startswith("encv1:"))
+
+    def test_refresh_token_renewal_flow_round_trips_through_encrypted_storage(self):
+        # Mirrors refresh_outlook_access_token's own update_fields list.
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            credentials = UserOutlookCredentials.objects.create(
+                user=self.user,
+                outlook_access_token="old-access",
+                outlook_refresh_token="old-refresh",
+                outlook_token_expires=timezone.now() - timedelta(minutes=5),
+            )
+            credentials.outlook_access_token = "new-access"
+            credentials.outlook_refresh_token = "new-refresh"
+            credentials.outlook_token_expires = timezone.now() + timedelta(hours=1)
+            credentials.save(
+                update_fields=[
+                    "outlook_access_token",
+                    "outlook_refresh_token",
+                    "outlook_token_expires",
+                ]
+            )
+            self.assertEqual(credentials.outlook_access_token, "new-access")
+            self.assertEqual(credentials.outlook_refresh_token, "new-refresh")
+            refetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(refetched.outlook_access_token, "new-access")
+            self.assertEqual(refetched.outlook_refresh_token, "new-refresh")
+
+    def test_no_double_encryption_across_repeated_saves(self):
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            credentials = UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token="plain-access"
+            )
+            credentials.save()
+            credentials.save()
+            self.assertEqual(credentials.outlook_access_token, "plain-access")
+            refetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(refetched.outlook_access_token, "plain-access")
+
+    def test_null_and_empty_token_values_are_never_encrypted(self):
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token=None, outlook_refresh_token=""
+            )
+            self.assertIsNone(self._raw_value("outlook_access_token"))
+            self.assertEqual(self._raw_value("outlook_refresh_token"), "")
+
+    def test_decryption_error_on_read_is_unaffected_by_write_flag_state(self):
+        UserOutlookCredentials.objects.create(user=self.user, outlook_access_token="x")
+        UserOutlookCredentials.objects.filter(user=self.user).update(
+            outlook_access_token="encv1:not-valid-ciphertext"
+        )
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            with self.assertRaises(TokenCryptoError):
+                UserOutlookCredentials.objects.get(user=self.user)
+
+    def test_rotation_new_writes_use_new_key_old_rows_still_readable(self):
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token="old-key-token"
+            )
+        other_key = Fernet.generate_key().decode("ascii")
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True,
+            MS_TOKEN_ENCRYPTION_KEYS=f"{other_key},{self.key}",
+        ):
+            # Still decryptable: the old key is still listed (rotation, not revocation).
+            fetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(fetched.outlook_access_token, "old-key-token")
+            # A fresh write now encrypts with the new (first-listed) key.
+            fetched.outlook_access_token = "new-key-token"
+            fetched.save(update_fields=["outlook_access_token"])
+        raw = self._raw_value("outlook_access_token")
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=other_key):
+            self.assertEqual(decrypt_token(raw), "new-key-token")
+
+
+# SECURITY-MAIL-0E: the two failure-path scenarios section 1/2 of the ticket asks to examine --
+# an encryption-step failure (now fixed, see encrypt_outlook_tokens_before_write's own
+# SECURITY-MAIL-0E comment) versus a genuine SQL-level failure after a successful encryption
+# step (an accepted, documented residual risk, not fixable without touching the model or
+# callers' own save() call sites).
+class SaveFailureSafetyTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            email="mail-0e@example.com",
+            last_name="Mail0E",
+            user_type="company_user",
+        )
+        self.key = Fernet.generate_key().decode("ascii")
+
+    def test_encryption_step_failure_leaves_the_instance_completely_unmutated(self):
+        # The fixed bug: encrypt_token() raising partway through must never leave an earlier
+        # field in the loop already overwritten with ciphertext.
+        credentials = UserOutlookCredentials(
+            user=self.user,
+            outlook_access_token="plain-access",
+            outlook_refresh_token="plain-refresh",
+        )
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=""
+        ):
+            with self.assertRaises(TokenCryptoError):
+                credentials.save()
+        # Completely untouched -- neither field was ever mutated, since encrypt_token() is
+        # called for every field into a local dict before any setattr() happens.
+        self.assertEqual(credentials.outlook_access_token, "plain-access")
+        self.assertEqual(credentials.outlook_refresh_token, "plain-refresh")
+        self.assertFalse(
+            UserOutlookCredentials.objects.filter(user=self.user).exists()
+        )
+
+    def test_sql_failure_after_successful_encryption_is_the_documented_residual_risk(self):
+        # A real SQL-level failure unrelated to encryption (OneToOneField's own implicit
+        # unique constraint on `user`), with a VALID key so the encryption step itself
+        # succeeds -- this is the one scenario the implementation cannot fully protect
+        # against without touching the model or wrapping every caller's save(). This test
+        # documents the actual, current behaviour rather than asserting a guarantee that
+        # does not exist: the failed instance is left holding ciphertext, while the
+        # already-committed first row is completely unaffected.
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True, MS_TOKEN_ENCRYPTION_KEYS=self.key
+        ):
+            UserOutlookCredentials.objects.create(
+                user=self.user, outlook_access_token="first-row-token"
+            )
+            duplicate = UserOutlookCredentials(
+                user=self.user, outlook_access_token="second-row-token"
+            )
+            with self.assertRaises(IntegrityError):
+                with transaction.atomic():
+                    duplicate.save()
+            # Documented residual state: the failed instance's attribute now holds ciphertext
+            # (encryption succeeded; the SQL write that followed did not).
+            self.assertTrue(duplicate.outlook_access_token.startswith("encv1:"))
+            # The already-committed, unrelated row is completely unaffected.
+            self.assertEqual(
+                UserOutlookCredentials.objects.get(user=self.user).outlook_access_token,
+                "first-row-token",
+            )
+
+    def test_refresh_outlook_access_token_is_compatible_with_write_encryption(self):
+        # Exercises the REAL refresh_outlook_access_token function (not a hand-rolled
+        # equivalent) with encryption enabled, mirroring OutlookEventSyncTests' own existing
+        # (unencrypted) regression test -- section 5's explicit ask.
+        from unittest.mock import patch as _patch
+
+        from userapis.microsoft_outlook import refresh_outlook_access_token
+
+        credentials = UserOutlookCredentials.objects.create(
+            user=self.user,
+            outlook_access_token="expired-token",
+            outlook_refresh_token="refresh-token",
+            outlook_token_expires=timezone.now() - timedelta(minutes=5),
+        )
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True,
+            MS_TOKEN_ENCRYPTION_KEYS=self.key,
+            MS_CLIENT_ID="client-id",
+            MS_CLIENT_SECRET="client-secret",
+        ):
+            with _patch("userapis.microsoft_outlook.requests.post") as post:
+                post.return_value.ok = True
+                post.return_value.json.return_value = {
+                    "access_token": "refreshed-token",
+                    "refresh_token": "rotated-refresh-token",
+                    "expires_in": 3600,
+                }
+                result = refresh_outlook_access_token(self.user)
+
+            self.assertEqual(result, "refreshed-token")
+            self.assertEqual(credentials.outlook_access_token, "refreshed-token")
+            self.assertEqual(credentials.outlook_refresh_token, "rotated-refresh-token")
+            raw_access = (
+                UserOutlookCredentials.objects.filter(user=self.user)
+                .values_list("outlook_access_token", flat=True)
+                .first()
+            )
+            self.assertTrue(raw_access.startswith("encv1:"))
+            refetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(refetched.outlook_access_token, "refreshed-token")
+
+
+# SECURITY-MAIL-0F: the full 9-step local validation walkthrough from the ticket, as one
+# ordered scenario against the isolated Django test database, fictitious credentials only, a
+# Fernet key generated for this test process alone (never displayed, never persisted outside
+# this run). Each step's assertion is the direct report field it validates.
+class LocalValidationWalkthroughTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create(
+            email="mail-0f@example.com",
+            last_name="Mail0F",
+            user_type="company_user",
+        )
+        self.test_key = Fernet.generate_key().decode("ascii")
+
+    def _raw(self, field):
+        return (
+            UserOutlookCredentials.objects.filter(user=self.user)
+            .values_list(field, flat=True)
+            .first()
+        )
+
+    def test_full_local_validation_walkthrough(self):
+        # 1. Write without encryption (flag off, the actual current default).
+        with override_settings(MS_TOKEN_ENCRYPTION_WRITE_ENABLED=False):
+            credentials = UserOutlookCredentials.objects.create(
+                user=self.user,
+                outlook_access_token="fictitious-access-token",
+                outlook_refresh_token="fictitious-refresh-token",
+                outlook_token_expires=timezone.now() + timedelta(hours=1),
+            )
+        self.assertEqual(self._raw("outlook_access_token"), "fictitious-access-token")
+
+        # 2/3. Enable the flag with a valid key, write a (new) fictitious token.
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True,
+            MS_TOKEN_ENCRYPTION_KEYS=self.test_key,
+        ):
+            credentials.outlook_access_token = "fictitious-access-token-v2"
+            credentials.save(update_fields=["outlook_access_token"])
+
+            # 4. The raw stored value carries the encv1: prefix.
+            raw = self._raw("outlook_access_token")
+            self.assertTrue(raw.startswith("encv1:"))
+            self.assertNotIn("fictitious-access-token-v2", raw)
+
+            # 5. Reading back through Django decrypts correctly.
+            fetched = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(fetched.outlook_access_token, "fictitious-access-token-v2")
+
+        # 6/7. Disable the write flag again, keep the key -- the already-encrypted token
+        # must stay readable (write-flag rollback is not a storage rollback).
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=False,
+            MS_TOKEN_ENCRYPTION_KEYS=self.test_key,
+        ):
+            still_readable = UserOutlookCredentials.objects.get(user=self.user)
+            self.assertEqual(
+                still_readable.outlook_access_token, "fictitious-access-token-v2"
+            )
+            # And new writes, with the flag off again, go back to plaintext (no silent
+            # "encryption stays on" behaviour tied to the key alone).
+            still_readable.outlook_access_token = "fictitious-access-token-v3"
+            still_readable.save(update_fields=["outlook_access_token"])
+            self.assertEqual(self._raw("outlook_access_token"), "fictitious-access-token-v3")
+
+        # 8. Missing/incorrect key against an already-encrypted value -> explicit error, never
+        # silently treated as plaintext. Re-encrypt first so there is an encv1: value on disk.
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True,
+            MS_TOKEN_ENCRYPTION_KEYS=self.test_key,
+        ):
+            still_readable.outlook_access_token = "fictitious-access-token-v4"
+            still_readable.save(update_fields=["outlook_access_token"])
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=""):
+            with self.assertRaises(TokenCryptoError):
+                UserOutlookCredentials.objects.get(user=self.user)
+        wrong_key = Fernet.generate_key().decode("ascii")
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=wrong_key):
+            with self.assertRaises(TokenCryptoError):
+                UserOutlookCredentials.objects.get(user=self.user)
+
+        # 9. OAuth renewal with simulated Microsoft responses, encryption active -- reuses the
+        # real refresh_outlook_access_token function (already exercised in SECURITY-MAIL-0E's
+        # own test; repeated here as part of the single ordered walkthrough).
+        from unittest.mock import patch as _patch
+
+        from userapis.microsoft_outlook import refresh_outlook_access_token
+
+        UserOutlookCredentials.objects.filter(user=self.user).update(
+            outlook_token_expires=timezone.now() - timedelta(minutes=5)
+        )
+        with override_settings(
+            MS_TOKEN_ENCRYPTION_WRITE_ENABLED=True,
+            MS_TOKEN_ENCRYPTION_KEYS=self.test_key,
+            MS_CLIENT_ID="client-id",
+            MS_CLIENT_SECRET="client-secret",
+        ):
+            with _patch("userapis.microsoft_outlook.requests.post") as post:
+                post.return_value.ok = True
+                post.return_value.json.return_value = {
+                    "access_token": "fictitious-renewed-access-token",
+                    "refresh_token": "fictitious-renewed-refresh-token",
+                    "expires_in": 3600,
+                }
+                result = refresh_outlook_access_token(self.user)
+            self.assertEqual(result, "fictitious-renewed-access-token")
+            self.assertTrue(self._raw("outlook_access_token").startswith("encv1:"))
