@@ -1,3 +1,6 @@
+import uuid
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
@@ -240,3 +243,37 @@ class MailboxUserGrant(models.Model):
 
     def __str__(self):
         return f"{self.user_id} on mailbox {self.mailbox_id} (send={self.can_send}, read={self.can_read})"
+
+
+# MAIL-1.1C2-S: fixes a real gap found in this security checkpoint -- the Mail OAuth "state"
+# previously embedded raw user_id/mailbox_id directly (predictable, no expiry, reusable
+# indefinitely), so it was a mere unverified CLAIM, never actual proof that the person
+# completing the callback is who started the flow (ticket's own explicit warning: "le préfixe
+# mail: ne doit servir qu'au routage, jamais constituer une preuve d'autorisation" -- the same
+# was true of the raw ids it wrapped). Mirrors project_management.models.sharepoint.OAuthState
+# (same UUID-token-as-unguessable-nonce precedent, already proven in this codebase for the
+# exact same class of problem) rather than inventing a new pattern, with mailbox/expiry/
+# single-use added since that model has neither and is owned by an unrelated feature
+# (SharePoint) this lot must not couple itself to.
+class MailOAuthState(models.Model):
+    EXPIRY_MINUTES = 15
+
+    token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="mail_oauth_states",
+    )
+    mailbox = models.ForeignKey(
+        MailboxConnection, on_delete=models.CASCADE, related_name="oauth_states",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    # Single-use (replay protection): set the moment the callback starts processing this
+    # token, before anything else happens -- a second attempt with the same token, whether a
+    # genuine double-submit or a replay, is rejected.
+    consumed_at = models.DateTimeField(null=True, blank=True)
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.created_at + timedelta(minutes=self.EXPIRY_MINUTES)
+
+    def __str__(self):
+        return f"mail oauth state for user {self.user_id} / mailbox {self.mailbox_id}"

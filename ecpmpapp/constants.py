@@ -71,6 +71,24 @@ PO_PDF_LOGO_URL = "https://placehold.co/220x72/png?text=PO"
 
 MS_GRAPH_USER_CALENDAR_EVENTS_URL = "https://graph.microsoft.com/v1.0/me/calendar/events"
 MS_GRAPH_USER_CONTACTS_URL = "https://graph.microsoft.com/v1.0/me/contacts"
+
+# MAIL-1.1C2: Mail scopes requested on TOP of the existing Calendar/Contacts scopes (never
+# instead of them) -- a token issued for the Mail-connect flow must still work for Calendar/
+# Contacts (point 2 of the ticket's own pre-check: "comment demander un consentement
+# supplémentaire sans casser Calendar/Contacts"), since UserOutlookCredentials holds exactly
+# one access/refresh token pair per user, shared by every Microsoft Graph feature. Mail.Send/
+# Mail.ReadWrite cover an individual mailbox; the .Shared variants are what a delegate's own
+# token needs to act on a shared mailbox (still subject to real Exchange-side Send As/Send on
+# Behalf/Full Access configuration this code can never grant or fully verify -- see
+# verify_shared_mailbox_access in userapis/mailbox_oauth.py).
+MS_MAIL_SCOPES = (
+    MS_OUTLOOK_CALENDAR_SCOPES
+    + " Mail.Send Mail.ReadWrite Mail.Send.Shared Mail.ReadWrite.Shared"
+)
+# A deliberately minimal, read-only probe of actual mailbox access (never sends/moves/deletes
+# anything) -- used only to decide whether a SHARED mailbox connection may transition to
+# "active" (section 5: OAuth success alone is never treated as proof of real Exchange rights).
+MS_GRAPH_USER_MAILFOLDER_URL = "https://graph.microsoft.com/v1.0/users/{email}/mailFolders/inbox"
 VALID_REMINDER_PATTERN = re.compile(r"^\d+\s?(day|days|week|weeks|month|months)$",re.IGNORECASE)
 
 CUSTOM_LABELS_TIMECARD = {

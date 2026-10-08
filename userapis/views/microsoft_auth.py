@@ -14,6 +14,7 @@ from rest_framework.permissions import AllowAny
 from models.models import User, UserOutlookCredentials
 from project_management.models import Project
 from userapis.microsoft_outlook import get_access_token, sync_outlook_events, is_outlook_token_valid
+from userapis import mailbox_oauth
 from ecpmpapp.utils import get_frontend_url_for_solution, get_user_active_solution
 from ecpmpapp.constants import MS_OAUTH_AUTHORIZE_URL, MS_OUTLOOK_CALENDAR_SCOPES
 from project_management.utils import get_product_name_from_request
@@ -83,6 +84,39 @@ class MicrosoftAuthViewSet(viewsets.ViewSet):
         """Handle Microsoft OAuth callback, retrieve user_id from state, and store token."""
         code = request.GET.get("code")
         state = request.GET.get("state")
+
+        # MAIL-1.1C2: a Mail-connect state (built by mailbox_oauth.build_mail_oauth_url) is
+        # routed entirely to its own handler here, at the SAME single redirect URI Azure has
+        # registered for this app (never a second callback route) -- everything below this
+        # block is the pre-existing Calendar/Contacts flow, completely unchanged for a
+        # non-"mail:" state.
+        if state and state.startswith(f"{mailbox_oauth.STATE_PREFIX}:"):
+            error = request.GET.get("error")
+            if error:
+                # Section 4: consent refused/cancelled -- no code was ever issued, nothing to
+                # exchange, no MailboxConnection status change.
+                return Response(
+                    {"error": request.GET.get("error_description") or error}, status=400
+                )
+            if not code:
+                return Response({"error": "Authorization code missing"}, status=400)
+            parts = state.split(":")
+            if len(parts) != 2:
+                return Response({"error": "Invalid state parameter"}, status=400)
+            _, state_token = parts
+            try:
+                mailbox = mailbox_oauth.handle_mail_oauth_callback(state_token, code)
+            except mailbox_oauth.MailOAuthError as error:
+                return Response({"error": str(error)}, status=400)
+            return Response(
+                {
+                    "mailbox_id": mailbox.id,
+                    "status": mailbox.status,
+                    "connection_type": mailbox.connection_type,
+                },
+                status=200,
+            )
+
         if not code:
             return Response({"error": "Authorization code missing"}, status=400)
         if not state or ":" not in state:

@@ -20,10 +20,12 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from userapis import mailbox_oauth
 from userapis.models import MailboxConnection, MailboxProjectAssignment, MailboxUserGrant
 from userapis.permissions import MailboxAdminPermission
 from userapis.serializers.mailbox import (
@@ -46,6 +48,18 @@ class MailboxConnectionViewSet(
 ):
     permission_classes = [IsAuthenticated, MailboxAdminPermission]
     queryset = MailboxConnection.objects.all()
+
+    def get_permissions(self):
+        # MAIL-1.1C2: connect_oauth is the one action NOT admin-only -- an individual
+        # mailbox's own (typically non-admin) owner must be able to connect it themselves.
+        # get_queryset() still scopes the lookup to this user's own company (so a foreign
+        # company's mailbox id is a 404, independent of this), and
+        # mailbox_oauth.can_start_mail_oauth() re-derives the real admin-or-owner check
+        # inside the action body -- MailboxAdminPermission is simply not the right gate for
+        # this one specific action, never bypassed, just not applicable to it.
+        if self.action == "connect_oauth":
+            return [IsAuthenticated()]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -106,6 +120,21 @@ class MailboxConnectionViewSet(
             update_fields.append("status")
         mailbox.save(update_fields=update_fields)
         return Response(MailboxConnectionSerializer(mailbox).data)
+
+    @action(detail=True, methods=["post"], url_path="connect-oauth")
+    def connect_oauth(self, request, pk=None):
+        """MAIL-1.1C2: starts Microsoft OAuth for this mailbox. Individual: owner only;
+        shared: a mail.admin_shared_mailbox admin OR the mailbox's own current delegate
+        (self-reconnect after needs_reconsent/expired) -- re-checked independently at the
+        callback (userapis/mailbox_oauth.py), this is only the up-front gate."""
+        mailbox = self.get_object()
+        if not mailbox_oauth.can_start_mail_oauth(request.user, mailbox):
+            raise PermissionDenied(
+                "You are not authorized to connect this mailbox."
+            )
+        return Response(
+            {"oauth_url": mailbox_oauth.build_mail_oauth_url(request.user, mailbox)}
+        )
 
     @action(detail=True, methods=["get", "post"])
     def projects(self, request, pk=None):

@@ -15,7 +15,9 @@ from ecpmpapp.constants import (
     MS_OAUTH_TOKEN_URL,
     MS_OUTLOOK_CALENDAR_SCOPES,
 )
+from models.models import UserOutlookCredentials
 from project_management.utils import get_sharemundo_user
+from userapis.token_encryption import ENCRYPTION_PREFIX, TokenCryptoError, encrypt_token
 
 
 PRIVATE_OUTLOOK_EVENT_TITLE = "Private"
@@ -394,9 +396,52 @@ def refresh_outlook_access_token(user):
         )
         return None
 
-    credentials.outlook_access_token = access_token
-    if payload.get("refresh_token"):
-        credentials.outlook_refresh_token = payload["refresh_token"]
+    new_refresh_token = payload.get("refresh_token") or credentials.outlook_refresh_token
+
+    # MAIL-1.1C2-S section 3 fix: this refresh path is shared by Calendar, Contacts, and now
+    # Mail (all three sit on the same UserOutlookCredentials row). It used to assign the raw
+    # Microsoft response straight onto the instance and rely entirely on the global,
+    # OFF-by-default MS_TOKEN_ENCRYPTION_WRITE_ENABLED flag (signals.py pre_save) to encrypt it
+    # on save. store_mail_tokens() (mailbox_oauth.py) always encrypts a brand-new Mail token
+    # regardless of that flag -- so without this fix, the very first refresh after a Mail
+    # connection silently overwrote that already-encrypted value with plaintext, with no error
+    # and no trace, defeating the "équivalente" protection this checkpoint asks to verify.
+    #
+    # Fix is scoped to preserve whatever protection level this specific credential already
+    # has, rather than unconditionally forcing encryption here: read the RAW (pre-decryption)
+    # column value -- bypassing the instance's own post_init-decrypted in-memory attribute --
+    # and only take over explicit encryption when that raw value already carries
+    # ENCRYPTION_PREFIX. A credential that was never encrypted (the legacy
+    # OutlookEventSyncTests case, still exercised with no key configured at all) keeps writing
+    # exactly as before, so an environment with write-encryption never enabled and no Mail
+    # connection ever made is completely unaffected.
+    raw_access_before = (
+        UserOutlookCredentials.objects.filter(pk=credentials.pk)
+        .values_list("outlook_access_token", flat=True)
+        .first()
+        or ""
+    )
+    if raw_access_before.startswith(ENCRYPTION_PREFIX):
+        try:
+            encrypted_access = encrypt_token(access_token)
+            encrypted_refresh = (
+                encrypt_token(new_refresh_token) if new_refresh_token else new_refresh_token
+            )
+        except TokenCryptoError:
+            # Fail closed, same as every other encryption failure in this lot: never
+            # downgrade an already-protected credential to plaintext. The stale, still-
+            # encrypted row is left untouched rather than overwritten.
+            logger.warning(
+                "Outlook token refresh succeeded for user_id=%s but could not be stored: "
+                "token encryption is not configured.",
+                getattr(user, "id", None),
+            )
+            return None
+        credentials.outlook_access_token = encrypted_access
+        credentials.outlook_refresh_token = encrypted_refresh
+    else:
+        credentials.outlook_access_token = access_token
+        credentials.outlook_refresh_token = new_refresh_token
     credentials.outlook_token_expires = timezone.now() + timedelta(
         seconds=int(payload.get("expires_in") or 3600)
     )
@@ -407,6 +452,14 @@ def refresh_outlook_access_token(user):
             "outlook_token_expires",
         ]
     )
+    if raw_access_before.startswith(ENCRYPTION_PREFIX):
+        # Mirrors signals.py's own stash-then-restore pattern for the identical problem:
+        # the instance just wrote ciphertext to the DB, but any caller that keeps using
+        # this same, already-loaded `credentials` object afterward (it is not re-fetched,
+        # so post_init never re-fires) must still see a usable plaintext token, not the
+        # ciphertext that was only ever meant for the SQL write.
+        credentials.outlook_access_token = access_token
+        credentials.outlook_refresh_token = new_refresh_token
     return access_token
 
 
