@@ -158,6 +158,26 @@ class CalendarEventPermission(BaseModulePermission):
         return False
 
 
+class MailboxAdminPermission(BaseModulePermission):
+    """MAIL-1.1B section 4: mail.admin_shared_mailbox, company scope -- the exact same
+    BaseModulePermission mechanism every other module key already uses (CorrespondencePermission,
+    CalendarEventPermission above, etc.), never a parallel is_company_admin boolean or a second
+    role system. "An authorized company administrator" is simply whichever role a company grants
+    this key to, at company scope, same as every other *.full_access/admin key in this codebase.
+    No endpoints are wired to this in this lot (section 2's own "sans créer l'interface
+    utilisateur") -- provided now so MAIL-1.1C's endpoints have one place to check it."""
+
+    def __init__(self):
+        super().__init__("mail", "admin_shared_mailbox", "company")
+
+    def is_company_mailbox_admin(self, user, company_profile):
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        if company_profile is None or getattr(user, "company_id", None) != company_profile.id:
+            return False
+        return self._check_permission(user, self.module, self.action, self.scope, {})
+
+
 class ResourcesPermission(BaseModulePermission):
     """
     Permission class for resources module.
