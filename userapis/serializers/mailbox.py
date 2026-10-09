@@ -159,6 +159,7 @@ class AccessibleMailboxSerializer(serializers.ModelSerializer):
     can_send = serializers.SerializerMethodField()
     can_read = serializers.SerializerMethodField()
     accessible_projects = serializers.SerializerMethodField()
+    sendable_projects = serializers.SerializerMethodField()
 
     class Meta:
         model = MailboxConnection
@@ -172,6 +173,7 @@ class AccessibleMailboxSerializer(serializers.ModelSerializer):
             "can_send",
             "can_read",
             "accessible_projects",
+            "sendable_projects",
         ]
 
     def get_can_send(self, obj):
@@ -191,3 +193,21 @@ class AccessibleMailboxSerializer(serializers.ModelSerializer):
                     {"id": assignment.project_id, "name": assignment.project.project_name}
                 )
         return projects
+
+    def get_sendable_projects(self, obj):
+        """MAIL-1.2B-CONTRACT: the projects this mailbox may be used to SEND for, by the
+        requesting user -- the send-side twin of accessible_projects (which stays READ-based and
+        untouched). A project qualifies exactly when can_use_mailbox(user, obj, for_sending=True,
+        project=project) would be True: the mailbox is active, the user holds the send right
+        (owner of an individual mailbox / grant.can_send on a shared one -- evaluated once here,
+        it does not depend on the project), and the project is assigned to the mailbox. The
+        assignments come from the view's prefetch, so no per-project query is issued. A project
+        of another company is never returned (assignments are same-company by model validation;
+        re-checked here anyway). Never a proof of real Exchange rights."""
+        if not can_use_mailbox(self.context["request"].user, obj, for_sending=True):
+            return []
+        return [
+            {"id": assignment.project_id, "name": assignment.project.project_name}
+            for assignment in obj.project_assignments.all()
+            if assignment.project.company_profile_id == obj.company_profile_id
+        ]

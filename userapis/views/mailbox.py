@@ -218,6 +218,7 @@ class AccessibleMailboxesView(APIView):
                 )
             )
             .distinct()
+            .prefetch_related("project_assignments__project")
         )
         serializer = AccessibleMailboxSerializer(
             mailboxes, many=True, context={"request": request}
