@@ -35,7 +35,10 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from project_management.models import Correspondence, CorrespondenceAttachment, CorrespondenceSendEvent
-from project_management.services.correspondence_response import apply_response_link
+from project_management.services.correspondence_response import (
+    apply_response_link,
+    mark_awaiting_reply_once_issued,
+)
 from project_management.services.correspondence_workflow import can_resend, ready_to_send
 from userapis.mailbox_access import can_use_mailbox
 from userapis.mailbox_correlation import build_send_marker
@@ -306,10 +309,13 @@ def _finalize_success(event, *, provider_message_id):
     if correspondence.status != Correspondence.Status.ISSUED:
         correspondence.status = Correspondence.Status.ISSUED
         correspondence.save(update_fields=["status", "updated_at"])
+    # CORR-STATUS-01: only now, after the provider confirmed the send, does an OUT that requires
+    # a reply start waiting for one (response_status was empty until this point). Never reached
+    # on a failed or uncertain send (_finalize_failure leaves the Correspondence untouched), and
+    # a no-op on a resend or on a row that already carries a response status.
+    mark_awaiting_reply_once_issued(correspondence)
     # The exact existing rule (LOT 3B/3D-3C0C), never re-derived here: an ISSUED OUT child
-    # answers its IN parent. A standalone OUT's own response_status (e.g. AWAITING_REPLY) was
-    # already set at creation (initial_response_status) and needs no send-time change --
-    # apply_response_link is a no-op whenever there is no parent to update.
+    # answers its IN parent -- apply_response_link is a no-op whenever there is no parent.
     apply_response_link(correspondence)
     return event
 

@@ -194,14 +194,15 @@ class ReplySendTests(SendTestBase):
         self.assertEqual(reply.status, Correspondence.Status.ISSUED)
         self.assertEqual(parent.response_status, Correspondence.ResponseStatus.ANSWERED)
 
-    def test_standalone_out_requiring_reply_keeps_awaiting_reply_semantics(self):
-        # LOT 3B's own existing rule: AWAITING_REPLY is set at creation, not send-time -- send
-        # must not touch a standalone OUT's own response_status at all (section 11).
+    def test_standalone_out_requiring_reply_starts_awaiting_a_reply_only_once_sent(self):
+        # CORR-STATUS-01 (supersedes LOT 3B's "set at creation"): a reply is awaited only after
+        # the send is confirmed -- empty while DRAFT/validating/ready to send.
         corr = self.create_out(recipient_contact=self.recipient_contact.id, response_required=True)
-        self.assertEqual(corr.response_status, Correspondence.ResponseStatus.AWAITING_REPLY)
+        self.assertEqual(corr.response_status, "")
         wf = start_validation(corr, WorkflowType.ONE_STEP, self.author, None, self.approver, started_by=self.author)
         perform_action(wf, self.approver, "APPROVE", "")
         corr.refresh_from_db()
+        self.assertEqual(corr.response_status, "")
         send_correspondence(corr, sender=self.owner)
         corr.refresh_from_db()
         self.assertEqual(corr.response_status, Correspondence.ResponseStatus.AWAITING_REPLY)

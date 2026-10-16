@@ -41,14 +41,44 @@ def validate_status_for_direction(direction, status):
         )
 
 
-def initial_response_status(*, direction, response_required):
-    """The response_status a Correspondence gets at creation, before any response is linked."""
+# CORR-STATUS-01: an OUT Correspondence that requires a reply has NO response status until it has
+# actually been sent/issued. The column is a non-nullable CharField with no "empty" choice, so
+# "no status yet" is the empty string (shown as a dash by every consumer) -- never NOT_REQUIRED
+# (that would claim no reply is needed) and never AWAITING_REPLY (nobody is waiting yet).
+NO_RESPONSE_STATUS = ""
+
+
+def initial_response_status(*, direction, response_required, status=None):
+    """The response_status a Correspondence gets at creation, before any response is linked.
+
+    `status` is the Correspondence's own lifecycle value. For an OUT it decides whether a reply
+    is already being awaited: only an ISSUED OUT (really sent, or recorded as already issued) is.
+    A DRAFT OUT -- including a validated, "ready to send" one -- is not waiting for anything yet.
+    """
     Status = _status_choices()
     if not response_required:
         return Status.NOT_REQUIRED
     if direction == "IN":
         return Status.TO_ANSWER
-    return Status.AWAITING_REPLY
+    if status == _lifecycle_choices().ISSUED:
+        return Status.AWAITING_REPLY
+    return NO_RESPONSE_STATUS
+
+
+def mark_awaiting_reply_once_issued(correspondence):
+    """CORR-STATUS-01: the one transition into "waiting for a reply". Called only after an OUT
+    has REALLY become ISSUED (a confirmed send, or an explicit manual issue) -- never on
+    validation, signature, a failed or an uncertain send. A no-op unless the OUT requires a reply
+    and still has no response status, so a resend (or an older row that already carries one)
+    is never rewritten. Reuses the one recompute rule, so a reply already linked beforehand
+    makes it ANSWERED rather than AWAITING_REPLY."""
+    if (
+        correspondence.direction == "OUT"
+        and correspondence.response_required
+        and correspondence.status == _lifecycle_choices().ISSUED
+        and correspondence.response_status == NO_RESPONSE_STATUS
+    ):
+        recompute_parent_response_status_from_responses(correspondence)
 
 
 def validate_parent_correspondence(parent, child_direction, child_scope, *, exclude_child_id=None):
@@ -188,6 +218,7 @@ def recompute_parent_response_status_from_responses(parent):
         # with this direction/response_required would get.
         new_status = initial_response_status(
             direction=parent.direction, response_required=parent.response_required,
+            status=parent.status,
         )
 
     if new_status != parent.response_status:

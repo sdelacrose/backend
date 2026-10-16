@@ -13,6 +13,7 @@ from project_management.services.correspondence_reference import (
 from project_management.services.correspondence_response import (
     apply_response_link,
     initial_response_status,
+    mark_awaiting_reply_once_issued,
     validate_parent_correspondence,
     validate_status_for_direction,
 )
@@ -315,7 +316,11 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
         user = request.user if request else self.context.get("user")
         response_required = validated_data.get("response_required", False)
         validated_data["response_status"] = initial_response_status(
-            direction=validated_data["direction"], response_required=response_required
+            direction=validated_data["direction"],
+            response_required=response_required,
+            # An OUT is only "awaiting a reply" once it is actually issued (CORR-STATUS-01);
+            # the model's own default lifecycle value applies when none is sent.
+            status=validated_data.get("status", Correspondence.Status.ISSUED),
         )
         validated_data["created_by"] = user
         with transaction.atomic():
@@ -350,8 +355,13 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
             validated_data["response_status"] = initial_response_status(
                 direction=validated_data.get("direction", instance.direction),
                 response_required=validated_data["response_required"],
+                status=validated_data.get("status", instance.status),
             )
         instance = super().update(instance, validated_data)
+        # Manually issuing a DRAFT OUT is the user's own confirmation that it went out: from then
+        # on it is awaiting a reply (never earlier -- CORR-STATUS-01).
+        if instance.status == Correspondence.Status.ISSUED and had_status == Correspondence.Status.DRAFT:
+            mark_awaiting_reply_once_issued(instance)
         # A newly-set parent, or a draft response finally being issued (DRAFT -> ISSUED), both
         # re-evaluate the parent's response_status (LOT 3B stabilization section 1).
         if instance.parent_correspondence_id and (
