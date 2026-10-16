@@ -400,3 +400,32 @@ def serialize_row(row):
         ),
         "created_at": row["created_at"],
     }
+
+
+def annotate_ready_to_send(rows):
+    """CORR-UX-02B: add the canonical `ready_to_send` flag to the serialized register rows of ONE
+    page, so the register never has to guess it. Only an OUT Correspondence that is still DRAFT
+    with an approved workflow can possibly be ready, so only those rows are looked at -- each
+    through the very same services.correspondence_workflow.ready_to_send() the drawer and the send
+    service use (subject, recipient, DRAFT, approved: never re-encoded here). Every other row gets
+    False. Mutates and returns `rows`."""
+    from project_management.services.correspondence_workflow import ready_to_send
+
+    candidate_ids = [
+        row["id"]
+        for row in rows
+        if row.get("entity_type") == "CORRESPONDENCE"
+        and row.get("direction") == "OUT"
+        and row.get("validation_status") == "APPROVED"
+        and row.get("lifecycle_status") == Correspondence.Status.DRAFT
+    ]
+    ready_ids = {
+        correspondence.pk
+        for correspondence in Correspondence.objects.filter(pk__in=candidate_ids)
+        if ready_to_send(correspondence)
+    }
+    for row in rows:
+        row["ready_to_send"] = (
+            row.get("entity_type") == "CORRESPONDENCE" and row["id"] in ready_ids
+        )
+    return rows

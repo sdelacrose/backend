@@ -13,7 +13,11 @@ from rest_framework.response import Response
 from project_management.models import Project
 from project_management.pagination import CustomPageNumberPagination
 from project_management.permissions import CorrespondencePermission, TransmittalPermission
-from project_management.services.correspondances_register import build_register_queryset, serialize_row
+from project_management.services.correspondances_register import (
+    annotate_ready_to_send,
+    build_register_queryset,
+    serialize_row,
+)
 
 ENTITY_TYPES = ("CORRESPONDENCE", "TRANSMITTAL")
 
@@ -91,7 +95,7 @@ class CorrespondancesRegisterView(GenericAPIView):
         )
 
         page = self.paginate_queryset(queryset)
-        rows = [serialize_row(row) for row in page]
+        rows = annotate_ready_to_send([serialize_row(row) for row in page])
         return self.get_paginated_response(rows)
 
     def _empty_response(self, request):
