@@ -179,7 +179,10 @@ class MailOAuthStateSecurityTests(TestCase):
         # the token must still never be reusable (section 2's "usage unique", independent of
         # whether the overall attempt succeeded).
         token = _start(self.owner, self.mailbox)
-        with patch("userapis.mailbox_oauth.requests.post") as post:
+        # Hermetic: a developer's local .env.local may now carry a real key (MAIL-1.2E).
+        with override_settings(MS_TOKEN_ENCRYPTION_KEYS=""), patch(
+            "userapis.mailbox_oauth.requests.post"
+        ) as post:
             post.return_value.json.return_value = _tokens()
             with self.assertRaises(MailOAuthError):
                 handle_mail_oauth_callback(token, "code")

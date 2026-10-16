@@ -1,8 +1,10 @@
 """MAIL-1.1C1: serializers for the mailbox management API.
 
-Security posture (section 4): company_profile, owner_user, status and connected_by are never
-accepted from a create/update payload -- they are either read-only or set exclusively by the
-view, server-side, from request.user/explicit dedicated actions. No field here ever exposes or
+Security posture (section 4): company_profile, status and connected_by are never accepted from
+a create/update payload -- they are either read-only or set exclusively by the view,
+server-side, from request.user/explicit dedicated actions. The one deliberate exception is
+owner_user on the admin create endpoint (MAIL-1.2C, individual mailbox): it is restricted to an
+active user of the admin's OWN company and refused for a shared mailbox. No field here ever exposes or
 accepts an OAuth token (none of these models store one, see MAIL-1.1B). Cross-company
 validation (project/user must belong to the mailbox's own company) is never re-implemented
 here -- it is enforced once, in the model's own clean()/save() (MAIL-1.1B), and this module
@@ -64,24 +66,68 @@ class MailboxConnectionSerializer(serializers.ModelSerializer):
 
 
 class MailboxConnectionCreateSerializer(serializers.ModelSerializer):
-    """Section 3: "Créer une configuration de boîte partagée" -- shared mailboxes only.
-    Individual connections are created by the (not-yet-built, out of this lot's scope) OAuth
-    flow itself, never through this admin endpoint."""
+    """Section 3: create a mailbox configuration. Shared by default (the historical payload,
+    unchanged). MAIL-1.2C: connection_type="individual" with an owner_user creates a personal
+    mailbox for that user of the admin's own company; the owner connects it through the existing
+    OAuth action (owner only) -- nothing is connected, granted or made active here."""
+
+    connection_type = serializers.ChoiceField(
+        choices=MailboxConnection.ConnectionType.choices,
+        required=False,
+        default=MailboxConnection.ConnectionType.SHARED,
+    )
+    owner_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.none(), required=False, allow_null=True
+    )
 
     class Meta:
         model = MailboxConnection
-        fields = ["provider", "email_address", "display_name"]
+        fields = ["provider", "email_address", "display_name", "connection_type", "owner_user"]
+
+    def get_fields(self):
+        fields = super().get_fields()
+        request = self.context.get("request")
+        company_id = getattr(getattr(request, "user", None), "company_id", None)
+        # Candidates are only active users of the admin's OWN company: another company's user
+        # (or an unknown id) is the same "does not exist" answer, never a membership oracle.
+        fields["owner_user"].queryset = (
+            User.objects.filter(company_id=company_id, is_active=True, is_deleted=False)
+            if company_id
+            else User.objects.none()
+        )
+        return fields
 
     def validate(self, attrs):
-        attrs["connection_type"] = MailboxConnection.ConnectionType.SHARED
+        request = self.context["request"]
+        connection_type = attrs.get("connection_type") or MailboxConnection.ConnectionType.SHARED
+        owner = attrs.get("owner_user")
+        if connection_type == MailboxConnection.ConnectionType.INDIVIDUAL:
+            if owner is None:
+                raise serializers.ValidationError(
+                    {"owner_user": "An owner is required for a personal mailbox."}
+                )
+        # A shared mailbox never has an owner: any owner_user sent with it is ignored, exactly
+        # as before this lot (shared behaviour unchanged).
+        attrs["connection_type"] = connection_type
+        attrs["owner_user"] = owner if connection_type == MailboxConnection.ConnectionType.INDIVIDUAL else None
+        # One logical connection per company/provider/address, whatever its type (model
+        # constraint) -- reported as a field error instead of a database error.
+        if MailboxConnection.objects.filter(
+            company_profile_id=request.user.company_id,
+            provider=attrs.get("provider"),
+            normalized_email_address=(attrs.get("email_address") or "").strip().lower(),
+        ).exists():
+            raise serializers.ValidationError(
+                {"email_address": "A mailbox with this address already exists."}
+            )
         return attrs
 
     def create(self, validated_data):
         request = self.context["request"]
         # Section 4/5: company_profile is always the admin's own (never a payload field,
         # never trusted from the client); status is always "pending" (section 5 -- never
-        # artificially "active" without real OAuth); owner_user stays null (shared);
-        # connected_by stays null until the dedicated replace-delegate action sets it.
+        # artificially "active" without real OAuth); connected_by stays null until the OAuth
+        # callback (individual: the owner) or the dedicated replace-delegate action sets it.
         validated_data["company_profile"] = request.user.company
         validated_data["status"] = MailboxConnection.Status.PENDING
         try:
