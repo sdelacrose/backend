@@ -277,3 +277,168 @@ class MailOAuthState(models.Model):
 
     def __str__(self):
         return f"mail oauth state for user {self.user_id} / mailbox {self.mailbox_id}"
+
+
+# MAIL-1.3B: minimal METADATA of messages read from a MailboxConnection through Microsoft Graph
+# -- a reading foundation only (nothing syncs, imports or exposes these yet). Deliberately NOT a
+# second mailbox: no body, no HTML, no attachment, no token is ever stored here, only what is
+# needed later to recognise a reply (Graph id, internetMessageId, conversationId, sender,
+# recipients, subject, date, attachment flag) and to link a message to a LINKS Correspondence.
+#
+# Rights: a row belongs to exactly ONE mailbox and its access follows THAT mailbox's rights
+# (userapis.mailbox_messages.messages_visible_to). The same message sitting in two mailboxes is
+# two independent rows -- never merged, never sharing visibility on the strength of the same
+# internetMessageId alone.
+class MailboxMessage(models.Model):
+    class ProcessingState(models.TextChoices):
+        # Seen and stored, nothing decided yet. The other values are for the later review lots
+        # (import / ignore / link) and are never set by this lot.
+        NEW = "new", "New"
+        IMPORTED = "imported", "Imported"
+        IGNORED = "ignored", "Ignored"
+
+    mailbox = models.ForeignKey(
+        MailboxConnection, on_delete=models.CASCADE, related_name="messages",
+    )
+    # Denormalized on purpose (company isolation is then a plain column filter); save() refuses
+    # a value that differs from the mailbox's own company.
+    company_profile = models.ForeignKey(
+        CompanyProfile, on_delete=models.CASCADE, related_name="mailbox_messages",
+    )
+    folder = models.CharField(max_length=32, blank=True, default="")
+    graph_message_id = models.CharField(max_length=512)
+    # Absent on some messages (drafts, some system mail): "" means unknown, never a placeholder.
+    internet_message_id = models.CharField(max_length=998, blank=True, default="")
+    conversation_id = models.CharField(max_length=512, blank=True, default="")
+    sender_address = models.CharField(max_length=254, blank=True, default="")
+    sender_name = models.CharField(max_length=255, blank=True, default="")
+    to_addresses = models.JSONField(default=list, blank=True)
+    cc_addresses = models.JSONField(default=list, blank=True)
+    subject = models.CharField(max_length=500, blank=True, default="")
+    received_at = models.DateTimeField(null=True, blank=True)
+    has_attachments = models.BooleanField(default=False)
+    state = models.CharField(
+        max_length=20, choices=ProcessingState.choices, default=ProcessingState.NEW,
+    )
+    correspondence = models.ForeignKey(
+        "project_management.Correspondence", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="mailbox_messages",
+    )
+    # MAIL-1.3D-C2-A: the LINKS correspondence this message was IMPORTED into (or attached to) by a
+    # person -- kept apart from `correspondence` above, which is the OUT a detected reply answers
+    # and is never overwritten. One correspondence has at most one such source message.
+    imported_correspondence = models.ForeignKey(
+        "project_management.Correspondence", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="imported_from_messages",
+    )
+    imported_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="imported_mailbox_messages",
+    )
+    imported_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-received_at", "-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["imported_correspondence"],
+                condition=Q(imported_correspondence__isnull=False),
+                name="mailbox_message_unique_imported_correspondence",
+            ),
+            # One row per Graph item in a mailbox...
+            models.UniqueConstraint(
+                fields=["mailbox", "graph_message_id"], name="mailbox_message_unique_graph_id",
+            ),
+            # ...and one row per Internet message in a mailbox (the same message can appear under
+            # several Graph ids, e.g. Inbox and Sent Items), whenever that id is known. Always
+            # scoped to ONE mailbox: another mailbox holding the same message is a separate row.
+            models.UniqueConstraint(
+                fields=["mailbox", "internet_message_id"],
+                condition=~Q(internet_message_id=""),
+                name="mailbox_message_unique_internet_id",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["mailbox", "conversation_id"], name="mailbox_msg_conv_idx"),
+            models.Index(fields=["company_profile", "received_at"], name="mailbox_msg_company_idx"),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.mailbox_id and self.company_profile_id != self.mailbox.company_profile_id:
+            raise ValidationError("A message must belong to its mailbox's own company.")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"message {self.pk} of mailbox {self.mailbox_id}"
+
+
+# MAIL-1.3B: purely technical, one row per mailbox. Holds where an incremental read stopped and
+# why the last attempt failed -- never a message, a token or any personal data. Reading a mailbox
+# never changes MailboxConnection.status (a transient failure must not deactivate a mailbox);
+# only this row records the outcome.
+class MailboxSyncState(models.Model):
+    mailbox = models.OneToOneField(
+        MailboxConnection, on_delete=models.CASCADE, related_name="sync_state",
+    )
+    # Graph delta link/token when an incremental read is used (opaque, never parsed here).
+    cursor = models.TextField(blank=True, default="")
+    last_synced_at = models.DateTimeField(null=True, blank=True)
+    # A short error CODE (e.g. "rate_limited"), never a Graph message, address or subject.
+    last_error_code = models.CharField(max_length=40, blank=True, default="")
+    last_error_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"sync state of mailbox {self.mailbox_id}"
+
+
+# MAIL-1.3D-C2-B3: where each file kept from an imported Outlook message comes from. The file itself
+# is an ordinary CorrespondenceAttachment (evidence of the correspondence, never a Document); this
+# row only records its provenance and protects against duplicates: one original .eml per message,
+# one row per Graph attachment of a message, one row per distinct content (SHA-256) in a
+# correspondence. Deleting the CorrespondenceAttachment removes its row, so it can be added again.
+class MailboxImportedFile(models.Model):
+    class Kind(models.TextChoices):
+        ORIGINAL_EML = "original_eml", "Original message (.eml)"
+        ATTACHMENT = "attachment", "Attachment"
+
+    mailbox_message = models.ForeignKey(
+        MailboxMessage, on_delete=models.CASCADE, related_name="imported_files",
+    )
+    correspondence = models.ForeignKey(
+        "project_management.Correspondence", on_delete=models.CASCADE,
+        related_name="mailbox_imported_files",
+    )
+    correspondence_attachment = models.OneToOneField(
+        "project_management.CorrespondenceAttachment", on_delete=models.CASCADE,
+        related_name="mailbox_source",
+    )
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    # Graph's own attachment id ("" for the original .eml); technical, never sent to a client.
+    graph_attachment_id = models.CharField(max_length=512, blank=True, default="")
+    file_name = models.CharField(max_length=500)
+    file_size = models.BigIntegerField()
+    sha256 = models.CharField(max_length=64)
+    content_type = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="mailbox_imported_files",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["mailbox_message"], condition=Q(kind="original_eml"),
+                name="mailbox_imported_file_one_eml_per_message",
+            ),
+            models.UniqueConstraint(
+                fields=["mailbox_message", "graph_attachment_id"], condition=Q(kind="attachment"),
+                name="mailbox_imported_file_one_row_per_graph_attachment",
+            ),
+            models.UniqueConstraint(
+                fields=["correspondence", "sha256"],
+                name="mailbox_imported_file_unique_content_per_correspondence",
+            ),
+        ]

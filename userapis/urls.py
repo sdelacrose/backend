@@ -8,6 +8,10 @@ from .views import (
     FeedbackNotificationView,
     FeedbackViewSet,
     MailboxConnectionViewSet,
+    MailboxMessageViewSet,
+    MailboxSearchView,
+    MailboxImportView,
+    MailboxPreviewView,
     MicrosoftAuthViewSet,
     UserDashboardConfigurationViewSet,
     UserInfoViewSet,
@@ -25,6 +29,7 @@ router.register('auth/outlook', MicrosoftAuthViewSet, basename="auth-outlook")
 router.register('feedback', FeedbackViewSet, basename="feedback")
 router.register('user-role', UserRoleViewSet, basename="user-role")
 router.register('mailbox-connections', MailboxConnectionViewSet, basename="mailbox-connection")
+router.register('mailbox-messages', MailboxMessageViewSet, basename="mailbox-message")
 
 urlpatterns = [
     path('', include(router.urls)),
@@ -36,6 +41,12 @@ urlpatterns = [
         name="display_configuration",
     ),
     path("notify_user_on_feedback_update", FeedbackNotificationView.as_view(), name="feedback_notification"),
+    path("mailbox-search", MailboxSearchView.as_view(), name="mailbox_search"),
+    path("mailbox-search/", MailboxSearchView.as_view()),
+    path("mailbox-import", MailboxImportView.as_view(), name="mailbox_import"),
+    path("mailbox-import/", MailboxImportView.as_view()),
+    path("mailbox-preview", MailboxPreviewView.as_view(), name="mailbox_preview"),
+    path("mailbox-preview/", MailboxPreviewView.as_view()),
     path(
         "mailboxes/accessible",
         AccessibleMailboxesView.as_view(),

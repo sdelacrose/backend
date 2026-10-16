@@ -99,6 +99,9 @@ MS_GRAPH_SEND_MAIL_URL = "https://graph.microsoft.com/v1.0/users/{email}/sendMai
 # MailboxConnection's own claimed email_address (nothing before this enforced that the two
 # ever matched; see _verify_individual_sender_identity in userapis/mailbox_send.py).
 MS_GRAPH_ME_URL = "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName"
+# MAIL-1.3B: base of the READ-ONLY message requests (userapis/mailbox_read.py): "/me" for an
+# individual mailbox, "/users/{email}" for a shared one. Only GET is ever issued against it.
+MS_GRAPH_MAIL_BASE_URL = "https://graph.microsoft.com/v1.0"
 VALID_REMINDER_PATTERN = re.compile(r"^\d+\s?(day|days|week|weeks|month|months)$",re.IGNORECASE)
 
 CUSTOM_LABELS_TIMECARD = {

@@ -137,8 +137,16 @@ def _verify_individual_sender_identity(access_token, mailbox_email):
     return mailbox_email.strip().lower() in identity_emails
 
 
-def send_via_graph(*, mailbox, sender_user, to, cc, bcc, subject, body, attachments):
-    """Section 5: `mailbox.email_address` is always the sendMail target -- never substituted,
+def send_via_graph(
+    *, mailbox, sender_user, to, cc, bcc, subject, body, attachments, correlation_marker=""
+):
+    """MAIL-1.3C: `correlation_marker` is new and optional. Omitted, the request is byte-for-byte
+    what it always was. Given, it is added as ONE custom Internet header (x-links-send) so the
+    copy saved in Sent Items can later be recognised with certainty
+    (userapis.mailbox_correlation); it changes nothing else about the send, its result handling or
+    its uncertain-delivery rules.
+
+    Section 5: `mailbox.email_address` is always the sendMail target -- never substituted,
     never guessed. For an individual mailbox, `sender_user` is its own owner (their own
     Microsoft identity, so this is equivalent to the identity behind /me/sendMail); for a
     shared mailbox, `sender_user` is the connected delegate. This function never decides
@@ -177,6 +185,11 @@ def send_via_graph(*, mailbox, sender_user, to, cc, bcc, subject, body, attachme
         message["bccRecipients"] = [_graph_recipient(email) for email in bcc]
     if attachments:
         message["attachments"] = _graph_attachments(attachments)
+    if correlation_marker:
+        # Graph only accepts custom headers whose name starts with "x-".
+        message["internetMessageHeaders"] = [
+            {"name": "x-links-send", "value": correlation_marker}
+        ]
 
     url = MS_GRAPH_SEND_MAIL_URL.format(email=quote(mailbox.email_address, safe=""))
     try:

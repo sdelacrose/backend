@@ -97,6 +97,9 @@ def serialize_correspondence_attachment(attachment, request, correspondence):
         "file_size": attachment.file_size,
         "uploaded_by": _user_reference(attachment.uploaded_by),
         "created_at": attachment.created_at,
+        # MAIL-1.3D-SENT-ITEMS-ATTACH: a file kept from an Outlook message is evidence of that mail, not
+        # something the correspondence sends.
+        "is_mail_source": hasattr(attachment, "mailbox_source"),
         "download_url": download_url,
         "file_url": request.build_absolute_uri(attachment.file.url),
     }
@@ -133,7 +136,7 @@ class CorrespondenceAttachmentViewSet(viewsets.GenericViewSet):
         correspondence = self._correspondence(request, correspondence_id, "view")
         attachments = CorrespondenceAttachment.objects.filter(
             correspondence=correspondence
-        ).select_related("uploaded_by")
+        ).select_related("uploaded_by", "mailbox_source")
         results = [
             serialize_correspondence_attachment(a, request, correspondence) for a in attachments
         ]

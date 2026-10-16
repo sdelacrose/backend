@@ -6,3 +6,7 @@ from .feedback import FeedbackViewSet, FeedbackNotificationView
 from .user_role import UserRoleViewSet
 from .display_configuration import DisplayConfigurationView
 from .mailbox import AccessibleMailboxesView, MailboxConnectionViewSet
+from .mailbox_message import MailboxMessageViewSet
+from .mailbox_search import MailboxSearchView
+from .mailbox_import import MailboxImportView
+from .mailbox_preview import MailboxPreviewView

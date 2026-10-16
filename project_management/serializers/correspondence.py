@@ -147,6 +147,21 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
 
     # --- shared validation -----------------------------------------------------------
 
+    def _missing_external_reference_allowed(self, instance):
+        """MAIL-1.3D-C2-B2: the ONE exception to "an IN needs the sender's own reference".
+        Creation: only when the Outlook import service -- never a client, a serializer context is
+        not request data -- says so after its own authorization checks. Update: only an IN that was
+        created that way (it has a source Outlook message, an internal LINKS reference and no
+        external one) may resend that blank value unchanged; a reference once entered can still be
+        replaced, never cleared."""
+        if instance is None:
+            return bool(self.context.get("allow_missing_external_reference"))
+        return (
+            bool(instance.reference)
+            and not (instance.external_reference or "").strip()
+            and instance.imported_from_messages.exists()
+        )
+
     def _validate_contact_belongs_to_company(self, company, contact, field):
         if contact is not None and contact.contact_company_id != (company.id if company else None):
             raise serializers.ValidationError(
@@ -199,7 +214,11 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
                 "external_reference", instance.external_reference if instance else None
             )
             reference_being_set = instance is None or "external_reference" in attrs
-            if reference_being_set and not (new_external_reference or "").strip():
+            if (
+                reference_being_set
+                and not (new_external_reference or "").strip()
+                and not self._missing_external_reference_allowed(instance)
+            ):
                 raise serializers.ValidationError(
                     {
                         "external_reference": (
@@ -307,7 +326,13 @@ class CorrespondenceSerializer(serializers.ModelSerializer):
             # default) and the sender's own external_reference (already a plain writable field
             # on this serializer) is what the user enters manually instead. Never touched here:
             # historical rows, already generated before this lot, are never rewritten.
-            if validated_data["direction"] == Correspondence.Direction.OUT:
+            if validated_data["direction"] == Correspondence.Direction.OUT or (
+                # MAIL-1.3D-C2-B2: an IN imported from Outlook WITHOUT a sender's reference gets
+                # a LINKS reference from the very same counter and format (never an invented
+                # external reference); its external_reference stays empty.
+                self.context.get("allow_missing_external_reference")
+                and not (validated_data.get("external_reference") or "").strip()
+            ):
                 validated_data["reference"] = generate_correspondence_reference(
                     project=validated_data.get("project"),
                     company_profile=validated_data.get("company_profile"),

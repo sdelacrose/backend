@@ -38,6 +38,7 @@ from project_management.models import Correspondence, CorrespondenceAttachment, 
 from project_management.services.correspondence_response import apply_response_link
 from project_management.services.correspondence_workflow import can_resend, ready_to_send
 from userapis.mailbox_access import can_use_mailbox
+from userapis.mailbox_correlation import build_send_marker
 from userapis.mailbox_send import UNCERTAIN_DELIVERY_MARKER, send_via_graph
 from userapis.models import MailboxConnection
 
@@ -119,7 +120,12 @@ def _resolve_attachments(correspondence, attachment_ids):
     """Section 6/16: send exactly what was asked for, and only this Correspondence's own
     attachments -- an id belonging to another Correspondence is silently excluded, never
     guessed-at or cross-matched (never a KeyError/500, never a leak of another record's file)."""
-    owned = CorrespondenceAttachment.objects.filter(correspondence=correspondence)
+    # MAIL-1.3D-SENT-ITEMS-ATTACH: a file kept from an Outlook message (the source .eml, its attachments) is
+    # provenance -- evidence of a mail, never something to send; it is not part of the sendable set, by
+    # default or when named.
+    owned = CorrespondenceAttachment.objects.filter(
+        correspondence=correspondence, mailbox_source__isnull=True,
+    )
     if attachment_ids is None:
         # No explicit selection: send all of this Correspondence's existing attachments --
         # the simplest coherent default (section 6), never a silent partial send.
@@ -228,7 +234,9 @@ def _deliver_via_provider(*, from_email, to, cc, bcc, subject, body, attachments
     return ""  # SMTP gives no message id; kept as its own return so a Graph adapter can supply one.
 
 
-def _deliver_via_graph(*, mailbox, sender_user, to, cc, bcc, subject, body, attachments):
+def _deliver_via_graph(
+    *, mailbox, sender_user, to, cc, bcc, subject, body, attachments, correlation_marker="",
+):
     """MAIL-1.2A: the Microsoft 365 counterpart to _deliver_via_provider, same signature shape
     (to/cc/bcc/subject/body/attachments), same contract (returns a provider_message_id string,
     raises on failure, never touches the database or the Correspondence itself). All actual
@@ -238,6 +246,7 @@ def _deliver_via_graph(*, mailbox, sender_user, to, cc, bcc, subject, body, atta
     return send_via_graph(
         mailbox=mailbox, sender_user=sender_user, to=to, cc=cc, bcc=bcc,
         subject=subject, body=body, attachments=attachments,
+        correlation_marker=correlation_marker,
     )
 
 
@@ -364,6 +373,14 @@ def send_correspondence(
                 mailbox=mailbox, sender_user=sender_identity_user, to=recipient["email"],
                 cc=cc_clean, bcc=bcc_clean, subject=final_subject, body=final_body,
                 attachments=attachments,
+                # MAIL-1.3C: lets the Sent Items copy be recognised later (never a new
+                # workflow: same single sendMail call, one extra custom header). Can be
+                # switched off with MS_SEND_CORRELATION_HEADER=False should Graph ever refuse it.
+                correlation_marker=(
+                    build_send_marker(event.pk, correspondence.pk)
+                    if getattr(settings, "MS_SEND_CORRELATION_HEADER", True)
+                    else ""
+                ),
             )
         else:
             provider_message_id = _deliver_via_provider(
