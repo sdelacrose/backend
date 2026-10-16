@@ -49,6 +49,10 @@ class CorrespondenceValidationWorkflow(models.Model):
     class WorkflowType(models.TextChoices):
         ONE_STEP = "ONE_STEP", "Author -> Approver"
         TWO_STEP = "TWO_STEP", "Author -> Verifier -> Approver"
+        # CORR-SIGN-1: the author alone signs. Same engine as ONE_STEP with author == approver
+        # fixed server-side to the user who starts it; no verifier. An internal validation
+        # signature, NOT a certified electronic signature.
+        SIGN_AUTHOR = "SIGN_AUTHOR", "Simple signature -> Author"
 
     class Status(models.TextChoices):
         PENDING_VERIFICATION = "PENDING_VERIFICATION", "Pending verification"
@@ -92,7 +96,7 @@ class CorrespondenceValidationWorkflow(models.Model):
             ),
             models.CheckConstraint(
                 condition=(
-                    Q(workflow_type="ONE_STEP", verifier__isnull=True)
+                    Q(workflow_type__in=["ONE_STEP", "SIGN_AUTHOR"], verifier__isnull=True)
                     | Q(workflow_type="TWO_STEP", verifier__isnull=False)
                 ),
                 name="correspondence_workflow_verifier_matches_type",

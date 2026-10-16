@@ -158,7 +158,7 @@ def allowed_actor_queryset(correspondence):
 def _validate_actors(workflow_type, author, verifier, approver, allowed_users):
     errors = {}
     if workflow_type not in WorkflowType.values:
-        errors["workflow_type"] = "Must be ONE_STEP or TWO_STEP."
+        errors["workflow_type"] = "Must be ONE_STEP, TWO_STEP or SIGN_AUTHOR."
     if author is None:
         errors["author"] = "An author is required."
     if approver is None:
@@ -168,7 +168,9 @@ def _validate_actors(workflow_type, author, verifier, approver, allowed_users):
             errors["verifier"] = "A verifier is required for a two-validation workflow."
         elif author is not None and verifier.pk == author.pk:
             errors["verifier"] = "The verifier must be different from the author."
-    elif verifier is not None and workflow_type == WorkflowType.ONE_STEP:
+    elif verifier is not None and workflow_type in (
+        WorkflowType.ONE_STEP, WorkflowType.SIGN_AUTHOR,
+    ):
         errors["verifier"] = "A one-validation workflow has no verifier."
     if allowed_users is not None:
         allowed = set(allowed_users.values_list("pk", flat=True))
@@ -192,9 +194,22 @@ def start_validation(correspondence, workflow_type, author, verifier, approver, 
         raise ValidationError("Only an outgoing Correspondence can start an internal validation.")
     if correspondence.status == Correspondence.Status.ISSUED:
         raise ValidationError("An issued Correspondence cannot start a validation workflow.")
+    if workflow_type == WorkflowType.SIGN_AUTHOR:
+        # CORR-SIGN-1: the signer is whoever starts the workflow, decided here and never taken
+        # from the client. A different author/approver in the payload is refused, not ignored,
+        # so a caller can never believe someone else was designated. Scope (allowed_users) and
+        # every other rule below apply to that single actor exactly as for ONE_STEP.
+        if started_by is None:
+            raise ValidationError({"author": "A signing user is required."})
+        for field, value in (("author", author), ("approver", approver)):
+            if value is not None and value.pk != started_by.pk:
+                raise ValidationError(
+                    {field: "With a simple signature, the signer is the user starting it."}
+                )
+        author = approver = started_by
     allowed_users = allowed_actor_queryset(correspondence)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
-    if workflow_type == WorkflowType.ONE_STEP:
+    if workflow_type in (WorkflowType.ONE_STEP, WorkflowType.SIGN_AUTHOR):
         verifier = None
     first_status = (
         Status.PENDING_VERIFICATION if workflow_type == WorkflowType.TWO_STEP
