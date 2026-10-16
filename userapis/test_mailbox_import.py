@@ -258,6 +258,61 @@ class CreateInTests(ImportBase):
         self.assertEqual(self.do(self.owner, self.reference(self.owner, another), parent_correspondence=self.make_in().pk).status_code, 400)
         self.assertEqual(self.do(self.owner, self.reference(self.owner, another), parent_correspondence=999999).status_code, 400)
 
+    def test_an_in_can_answer_a_sent_locked_out_whose_proof_is_still_pending_and_nothing_of_that_out_changes(self):
+        """MAIL-1.3D-REPLY-LINK: the OUT a person replies to has gone through an approved validation (so
+        it is locked) and was sent through Microsoft 365 (so its send proof exists, PENDING). Neither
+        blocks answering it: the new IN gets its own LINKS reference, its .eml and the link to the OUT,
+        and the OUT keeps everything but the response tracking the existing rules move."""
+        from project_management.models import (
+            CorrespondenceSendEvent, CorrespondenceSendProof, CorrespondenceValidationWorkflow,
+        )
+        from project_management.services.correspondence_send_proof import ensure_send_proof
+
+        out = self.make_out(response_required=True, response_status="AWAITING_REPLY")
+        CorrespondenceValidationWorkflow.objects.create(
+            correspondence=out, workflow_type="ONE_STEP", status="APPROVED",
+            author=self.owner, approver=self.owner, started_by=self.owner,
+        )
+        event = CorrespondenceSendEvent.objects.create(
+            correspondence=out, sender=self.owner, provider="graph", mailbox=self.individual_mailbox,
+            result="SUCCESS", sent_at=timezone.now(), subject="Existing OUT",
+        )
+        proof = ensure_send_proof(event)
+        self.assertEqual(proof.state, "PENDING")
+
+        def keep():
+            fields = {
+                k: v for k, v in Correspondence.objects.filter(pk=out.pk).values().get().items()
+                if k not in ("response_status", "updated_at")
+            }
+            return (
+                fields,
+                CorrespondenceSendEvent.objects.filter(pk=event.pk).values().get(),
+                CorrespondenceSendProof.objects.filter(pk=proof.pk).values().get(),
+            )
+
+        before = keep()
+        raw = self.graph.add(1)
+        response = self.do(self.owner, self.reference(self.owner, raw), external_reference="", parent_correspondence=out.pk)
+        self.assertEqual(response.status_code, 201, response.data)
+        child = Correspondence.objects.get(pk=response.data["correspondence"]["id"])
+        self.assertEqual((child.direction, child.parent_correspondence_id, child.status), ("IN", out.pk, "ISSUED"))
+        self.assertTrue(child.reference)                                   # its own LINKS reference (no external one was given)
+        self.assertNotEqual(child.reference, out.reference)
+        self.assertTrue(response.data["documents"]["eml_stored"])
+        out.refresh_from_db()
+        self.assertEqual(out.response_status, "ANSWERED")                  # the existing response rule, nothing else
+        self.assertEqual(keep(), before)
+        # the same message again: the existing result, no second IN and no second link
+        again = self.do(self.owner, self.reference(self.owner, raw), external_reference="", parent_correspondence=out.pk)
+        self.assertEqual((again.status_code, again.data["result"]), (200, "already_imported"))
+        self.assertEqual(Correspondence.objects.filter(parent_correspondence=out).count(), 1)
+        # a second, different message may answer the same OUT (a new IN each)
+        second = self.do(self.owner, self.reference(self.owner, self.graph.add(2)), external_reference="", parent_correspondence=out.pk)
+        self.assertEqual(second.status_code, 201, second.data)
+        self.assertEqual(Correspondence.objects.filter(parent_correspondence=out).count(), 2)
+        self.assertEqual(keep()[1:], before[1:])
+
     def test_answering_an_out_needs_the_right_to_create_and_creates_nothing_otherwise(self):
         out = self.make_out(response_required=True, response_status="AWAITING_REPLY")
         raw = self.graph.add(1)

@@ -26,6 +26,7 @@ idempotency guard, section 15), one to record the outcome and, only on success, 
 Correspondence-side consequences (ISSUED, apply_response_link).
 """
 
+import hashlib
 import re
 
 from django.conf import settings
@@ -39,6 +40,11 @@ from project_management.services.correspondence_response import (
     apply_response_link,
     mark_awaiting_reply_once_issued,
 )
+from project_management.services.correspondence_send_proof import (
+    ensure_send_proof_safely,
+    schedule_send_proof_archive_safely,
+)
+from project_management.services.correspondence_template import unresolved_marker_errors
 from project_management.services.correspondence_workflow import can_resend, ready_to_send
 from userapis.mailbox_access import can_use_mailbox
 from userapis.mailbox_correlation import build_send_marker
@@ -232,7 +238,9 @@ def _deliver_via_provider(*, from_email, to, cc, bcc, subject, body, attachments
     )
     for attachment in attachments:
         with attachment.file.open("rb") as handle:
-            message.attach(attachment.file_name, handle.read())
+            content = handle.read()
+        attachment.sent_sha256 = hashlib.sha256(content).hexdigest()    # MAIL-1.4-A: the bytes sent
+        message.attach(attachment.file_name, content)
     message.send(fail_silently=False)
     return ""  # SMTP gives no message id; kept as its own return so a Graph adapter can supply one.
 
@@ -289,8 +297,27 @@ def _claim_send_slot(
         raise SendBlocked({"status": "A send is already in progress or already completed."})
 
 
+def _record_sent_digests(event, attachments):
+    """MAIL-1.4-A: add `sha256` to each snapshot entry whose bytes were really read for the send
+    (the delivery left it on the attachment instance). Entries keep their existing fields; an
+    attachment that was never read (the send failed before it) simply has no `sha256`, exactly like
+    every event recorded before this lot. Returns whether anything was added."""
+    digests = {a.id: getattr(a, "sent_sha256", None) for a in attachments}
+    changed = False
+    snapshot = []
+    for entry in event.attachments_snapshot or []:
+        digest = digests.get(entry.get("id"))
+        if digest and "sha256" not in entry:
+            entry = {**entry, "sha256": digest}
+            changed = True
+        snapshot.append(entry)
+    if changed:
+        event.attachments_snapshot = snapshot
+    return changed
+
+
 @transaction.atomic
-def _finalize_success(event, *, provider_message_id):
+def _finalize_success(event, *, provider_message_id, attachments=()):
     """Section 9 steps 1-4 (evidence, ISSUED, sent_at, parent update) and step 6/7 (no longer
     sendable, content stays locked) -- one short transaction, only entered AFTER the provider
     already confirmed success. Never touches Correspondence.issue_date (section 10).
@@ -303,7 +330,10 @@ def _finalize_success(event, *, provider_message_id):
     event.result = Result.SUCCESS
     event.provider_message_id = provider_message_id or ""
     event.sent_at = timezone.now()
-    event.save(update_fields=["result", "provider_message_id", "sent_at", "updated_at"])
+    fields = ["result", "provider_message_id", "sent_at", "updated_at"]
+    if _record_sent_digests(event, attachments):
+        fields.append("attachments_snapshot")
+    event.save(update_fields=fields)
 
     correspondence = event.correspondence
     if correspondence.status != Correspondence.Status.ISSUED:
@@ -317,18 +347,24 @@ def _finalize_success(event, *, provider_message_id):
     # The exact existing rule (LOT 3B/3D-3C0C), never re-derived here: an ISSUED OUT child
     # answers its IN parent -- apply_response_link is a no-op whenever there is no parent.
     apply_response_link(correspondence)
+    # MAIL-1.4-A: the (empty, PENDING) proof of this send, so it can never be deleted away from its
+    # history. Isolated: nothing it does can undo a send Microsoft already accepted.
+    schedule_send_proof_archive_safely(ensure_send_proof_safely(event))
     return event
 
 
 @transaction.atomic
-def _finalize_failure(event, *, error_message):
+def _finalize_failure(event, *, error_message, attachments=()):
     """Section 8: the Correspondence itself is never touched on failure -- still DRAFT, parent
     still whatever it already was. The FAILED row is retained as its own permanent evidence
     (never deleted/overwritten), and is exempt from the "one in-flight" constraint so a retry
     can immediately create a fresh CorrespondenceSendEvent."""
     event.result = Result.FAILED
     event.error_message = error_message
-    event.save(update_fields=["result", "error_message", "updated_at"])
+    fields = ["result", "error_message", "updated_at"]
+    if _record_sent_digests(event, attachments):
+        fields.append("attachments_snapshot")
+    event.save(update_fields=fields)
     return event
 
 
@@ -352,6 +388,12 @@ def send_correspondence(
     )
     final_subject = subject if subject is not None else (correspondence.subject or "")
     final_body = body if body is not None else (correspondence.message or "")
+    # MAIL-1.5-B: a template placeholder that was never filled in must not leave the building. Checked
+    # on what would really be sent (first send and resend alike, API calls included), before the
+    # mailbox is validated, the send slot claimed, any event written or any provider called.
+    unresolved = unresolved_marker_errors(subject=final_subject, body=final_body)
+    if unresolved:
+        raise SendBlocked(unresolved)
 
     mailbox = None
     if mailbox_id is not None:
@@ -397,5 +439,7 @@ def send_correspondence(
         # GraphSendError, itself an Exception subclass) is recorded, never masked. Section 9's
         # own rule: no silent Microsoft -> SMTP fallback here -- a failed Graph attempt is
         # reported as FAILED, never quietly retried via SMTP.
-        return _finalize_failure(event, error_message=str(error))
-    return _finalize_success(event, provider_message_id=provider_message_id)
+        return _finalize_failure(event, error_message=str(error), attachments=attachments)
+    return _finalize_success(
+        event, provider_message_id=provider_message_id, attachments=attachments,
+    )

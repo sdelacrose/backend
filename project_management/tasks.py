@@ -237,3 +237,55 @@ def process_bom_generation_run(self, run_id):
             exc=RuntimeError("bom_plan_generation_failed"),
             countdown=min(15 * (2 ** self.request.retries), 120),
         )
+
+
+# MAIL-1.4-C: archiving the proof of an OUT send (the .eml and the attachments really sent, kept
+# from the Sent Items copy). These tasks only READ the mailbox that sent and write LINKS rows/files:
+# they can never send an e-mail. Both do nothing unless MAIL_SEND_PROOF_ARCHIVING_ENABLED and
+# MAIL_SEND_PROOF_AUTO_ARCHIVE_SINCE are set (see services/correspondence_send_proof_runner.py).
+# Retries are the sweep's job (its own 1 min -> 24 h schedule), not Celery's: max_retries=0.
+@shared_task(name="project_management.archive_send_proof", max_retries=0, ignore_result=True)
+def archive_send_proof_task(proof_id):
+    from project_management.models import CorrespondenceSendProof
+    from project_management.services.correspondence_send_proof_runner import (
+        auto_archiving_applies,
+        run_archive,
+    )
+
+    proof = CorrespondenceSendProof.objects.select_related("event").filter(pk=proof_id).first()
+    if proof is None or not auto_archiving_applies(proof):
+        return {"proof": proof_id, "outcome": "skipped"}
+    result = run_archive(proof_id)
+    return {"proof": proof_id, "outcome": result.outcome, "state": result.state}
+
+
+@shared_task(name="project_management.sweep_send_proofs", max_retries=0)
+def sweep_send_proofs_task():
+    from project_management.services.correspondence_send_proof_runner import sweep_send_proofs
+
+    result = sweep_send_proofs()
+    return {
+        "enabled": result.enabled, "skipped": result.skipped, "examined": result.examined,
+        "archived": result.archived, "partial": result.partial, "pending": result.pending,
+        "failed": result.failed, "unavailable": result.unavailable, "busy": result.busy,
+    }
+
+
+# MAIL-1.4-E: a manual retry asked for in the interface, run by the worker instead of inside the HTTP
+# request. The request has already checked everything (check_send_proof_retry); the task checks it
+# again -- a switch turned off or a right withdrawn meanwhile stops it -- then runs the same service.
+# It reads the sending mailbox and writes LINKS rows/files; it can never send an e-mail.
+@shared_task(name="project_management.retry_send_proof_archive", max_retries=0, ignore_result=True)
+def retry_send_proof_archive_task(proof_id, requested_by_id):
+    from models.models import User
+    from project_management.services.correspondence_send_proof_runner import (
+        SendProofRetryRefused,
+        retry_send_proof_archive,
+    )
+
+    user = User.objects.filter(pk=requested_by_id).first()
+    try:
+        result = retry_send_proof_archive(proof_id, requested_by=user)
+    except SendProofRetryRefused as refused:
+        return {"proof": proof_id, "outcome": "refused", "code": refused.code}
+    return {"proof": proof_id, "outcome": result.outcome, "state": result.state}

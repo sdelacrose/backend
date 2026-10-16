@@ -91,7 +91,21 @@ def record_sent_copy(event, meta, ident):
         row.save(update_fields=["correspondence", "updated_at"])
     elif row.correspondence_id != event.correspondence_id:
         return None
+    _link_proof(event, row)
     return row
+
+
+def _link_proof(event, row):
+    """MAIL-1.4-A: tie the Sent Items copy to the proof of THIS send event (the marker already
+    proved it is this event's copy, never merely a similar subject or recipient). Creates the
+    PENDING proof when needed; never overwrites a copy already linked, and never fails the
+    identification itself."""
+    from project_management.services.correspondence_send_proof import ensure_send_proof_safely
+
+    proof = ensure_send_proof_safely(event)
+    if proof is not None and proof.mailbox_message_id is None:
+        proof.mailbox_message = row
+        proof.save(update_fields=["mailbox_message", "updated_at"])
 
 
 def identify_sent_message(event, *, actor, reader=None, limit=25):
@@ -102,7 +116,17 @@ def identify_sent_message(event, *, actor, reader=None, limit=25):
     automatically in this lot."""
     if event.result != "SUCCESS" or event.provider != "graph" or event.mailbox_id is None:
         return None
+    # MAIL-1.4-A: this send's copy may already be known (the proof of THIS event points to it):
+    # nothing is asked of Graph again. Another send of the same correspondence has its own proof.
+    from project_management.models import CorrespondenceSendProof
+
     authorize_mailbox_read(actor, event.mailbox)
+    known = (
+        CorrespondenceSendProof.objects.filter(event=event, mailbox_message__isnull=False)
+        .select_related("mailbox_message").first()
+    )
+    if known is not None:
+        return known.mailbox_message
     reader = reader or MailboxGraphReader(event.mailbox, actor=actor)
     recipients = {
         str((r or {}).get("email") or "").strip().lower() for r in (event.to_recipients or [])

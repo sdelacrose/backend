@@ -5,7 +5,7 @@ from django.db import transaction
 from django.http import FileResponse, Http404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, status, viewsets
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
@@ -73,6 +73,9 @@ class CorrespondenceViewSet(viewsets.ModelViewSet):
         # children already survive via parent_correspondence's on_delete=SET_NULL (model field),
         # and there is no parent-of-a-parent to recompute here.
         parent = instance.parent_correspondence
+        # MAIL-1.4-A: a sent correspondence keeps its send history -- a clean refusal, never a 500.
+        if instance.send_events.filter(result="SUCCESS").exists():
+            raise ValidationError({"detail": "A correspondence that was sent cannot be deleted."})
         with transaction.atomic():
             instance.delete()
             if parent is not None:

@@ -205,6 +205,15 @@ class Correspondence(models.Model):
                 )
         super().save(*args, **kwargs)
 
+    def delete(self, *args, **kwargs):
+        # MAIL-1.4-A: a correspondence that was really sent keeps its send history (and the proofs
+        # that hang on it). A never-sent one, including one whose attempts only failed, is deleted
+        # exactly as before. (A delete cascading from another object is stopped, for Microsoft 365
+        # sends, by CorrespondenceSendProof.event being PROTECT.)
+        if self.pk and self.send_events.filter(result="SUCCESS").exists():
+            raise ValidationError("A correspondence that was sent cannot be deleted.")
+        return super().delete(*args, **kwargs)
+
 
 class CorrespondenceAttachment(models.Model):
     """A file attached to a Correspondence: evidence of the communication only -- never a

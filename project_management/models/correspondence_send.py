@@ -13,7 +13,9 @@ additive audit data, never a second copy of Correspondence's own business fields
 
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Q
+from django.db.models import ProtectedError, Q
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 
 from models.models import User
 
@@ -115,3 +117,15 @@ class CorrespondenceSendEvent(models.Model):
 
     def __str__(self):
         return f"send event {self.pk} correspondence {self.correspondence_id} {self.result}"
+
+
+@receiver(pre_delete, sender=CorrespondenceSendEvent)
+def refuse_cascade_delete_of_a_microsoft_365_send(sender, instance, **kwargs):
+    """MAIL-1.4-B: the send history of a correspondence really sent through Microsoft 365 survives
+    every delete that reaches it, a cascade included (a queryset delete, a project or a company being
+    removed) -- whether or not its proof exists yet (a send recorded before MAIL-1.4-A has none).
+    A send that failed, and an SMTP send, are not covered here: they keep their previous behavior."""
+    if instance.provider == "graph" and instance.result == CorrespondenceSendEvent.Result.SUCCESS:
+        raise ProtectedError(
+            "A correspondence sent through Microsoft 365 keeps its send history.", {instance},
+        )

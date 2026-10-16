@@ -7,6 +7,8 @@ from .document_attachment import DocumentAttachment
 from .correspondence import Correspondence, CorrespondenceAttachment, CorrespondenceReferenceCounter
 from .correspondence_workflow import CorrespondenceValidationWorkflow, CorrespondenceValidationEvent
 from .correspondence_send import CorrespondenceSendEvent
+from .correspondence_send_proof import CorrespondenceSendProof, CorrespondenceSendProofFile, EvidenceBlob
+from .correspondence_template import CorrespondenceTemplate
 from .transmittal import Transmittal, TransmittalEvent, TransmittalItem, TransmittalReferenceCounter
 from .document_workflow import DocumentWorkflow, DocumentWorkflowEvent
 from .supplier_surveillance import SupplierSurveillance, SupplierSurveillanceReferenceCounter

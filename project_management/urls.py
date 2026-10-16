@@ -22,6 +22,7 @@ from project_management.views.correspondence_workflow import (
     CorrespondenceValidationWorkflowViewSet,
 )
 from project_management.views.correspondence_send import CorrespondenceSendViewSet
+from project_management.views.correspondence_template import CorrespondenceTemplateViewSet
 from project_management.views.transmittal import (
     TransmittalEventViewSet,
     TransmittalIssueView,
@@ -594,6 +595,13 @@ urlpatterns = [
     # LOT 3D-3D2: the SEND step for an approved OUT Correspondence (see
     # services/correspondence_send.py).
     path('correspondence/<int:correspondence_id>/send', CorrespondenceSendViewSet.as_view({'get': 'retrieve', 'post': 'send'}), name='correspondence-send'),
+    # MAIL-1.4-D: the proof of one send -- download of a kept file, and a manual retry of its archiving.
+    path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/files/<int:file_id>/download', CorrespondenceSendViewSet.as_view({'get': 'proof_file_download'}), name='correspondence-send-proof-file-download'),
+    path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/retry', CorrespondenceSendViewSet.as_view({'post': 'proof_retry'}), name='correspondence-send-proof-retry'),
+    # MAIL-1.5-B: the company's library of e-mail templates (no delete: a template is deactivated).
+    path('correspondence-templates', CorrespondenceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-templates'),
+    path('correspondence-templates/<int:pk>', CorrespondenceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='correspondence-template-detail'),
+    path('correspondence-templates/<int:pk>/apply', CorrespondenceTemplateViewSet.as_view({'post': 'apply'}), name='correspondence-template-apply'),
 
     # LOT 3C: Transmittal -- a formal transmission record/bordereau, not a Correspondence.
     path('transmittal', TransmittalViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittals'),

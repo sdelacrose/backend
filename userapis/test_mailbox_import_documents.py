@@ -631,9 +631,37 @@ class SentItemsAttachToLockedOutTests(DocsBase):
         )
         return out
 
+    def untouched(self, out):
+        from project_management.models import (
+            CorrespondenceSendEvent, CorrespondenceSendProof, CorrespondenceValidationWorkflow,
+        )
+
+        return (
+            Correspondence.objects.filter(pk=out.pk).values().get(),
+            list(CorrespondenceValidationWorkflow.objects.filter(correspondence=out).values()),
+            CorrespondenceSendEvent.objects.count(), CorrespondenceSendProof.objects.count(),
+            Document.objects.count(), DocumentRevision.objects.count(),
+        )
+
     def sent_with_pdf(self, n=1):
         raw = self.msg(n, folder="sentitems")
         return raw, self.att(raw, 1, content=PDF)
+
+    def test_the_eml_and_a_pdf_are_kept_on_an_approved_locked_out_and_nothing_of_it_changes(self):
+        out = self.locked_out(message="Approved text")
+        before = self.untouched(out)
+        raw, attachment = self.sent_with_pdf()
+        response = self.imp(self.owner, raw, [attachment], folder="sentitems", mode="attach", target_correspondence=out.pk)
+        self.assertEqual((response.status_code, response.data["result"]), (201, "attached"))
+        self.assertEqual((response.data["documents"]["eml_stored"], response.data["documents"]["attachments_stored"]), (True, 1))
+        files = MailboxImportedFile.objects.filter(correspondence=out)
+        self.assertEqual(sorted(f.kind for f in files), ["attachment", "original_eml"])
+        self.assertIn(hashlib.sha256(PDF).hexdigest(), {f.sha256 for f in files})
+        self.assertEqual(out.attachments.count(), 2)
+        self.assertEqual(self.untouched(out), before)                                  # content, workflow, sends, proofs, documents
+        self.assertEqual(mail.outbox, [])
+        row = MailboxMessage.objects.get(graph_message_id=raw["id"])
+        self.assertEqual((row.imported_correspondence_id, row.folder, row.state), (out.pk, "sentitems", "imported"))
 
     def test_an_unlocked_out_takes_the_same_files(self):
         out = self.make_out()
@@ -641,6 +669,15 @@ class SentItemsAttachToLockedOutTests(DocsBase):
         response = self.imp(self.owner, raw, [attachment], folder="sentitems", mode="attach", target_correspondence=out.pk)
         self.assertEqual((response.status_code, response.data["documents"]["attachments_stored"]), (201, 1))
         self.assertEqual(out.attachments.count(), 2)
+
+    def test_importing_the_same_message_again_creates_nothing_more(self):
+        out = self.locked_out()
+        raw, attachment = self.sent_with_pdf()
+        self.assertEqual(self.imp(self.owner, raw, [attachment], folder="sentitems", mode="attach", target_correspondence=out.pk).status_code, 201)
+        before = (self.untouched(out), CorrespondenceAttachment.objects.count(), MailboxImportedFile.objects.count())
+        again = self.imp(self.owner, raw, [attachment], folder="sentitems", mode="attach", target_correspondence=out.pk)
+        self.assertEqual((again.status_code, again.data["result"]), (200, "already_imported"))
+        self.assertEqual((self.untouched(out), CorrespondenceAttachment.objects.count(), MailboxImportedFile.objects.count()), before)
 
     def test_another_project_another_user_or_no_permission_is_refused_and_stores_nothing(self):
         raw, attachment = self.sent_with_pdf()
@@ -682,6 +719,15 @@ class SentItemsAttachToLockedOutTests(DocsBase):
         self.assertEqual(answer.status_code, 201, answer.data)
         self.assertEqual(Correspondence.objects.get(pk=answer.data["correspondence"]["id"]).parent_correspondence_id, out.pk)
         self.assertEqual(fields(), before_out)
+
+    def test_no_send_event_and_no_send_proof_is_made_from_a_manual_import(self):
+        from project_management.models import CorrespondenceSendEvent, CorrespondenceSendProof
+
+        out = self.locked_out()
+        raw, attachment = self.sent_with_pdf()
+        with patch("requests.post", side_effect=AssertionError("nothing may be sent")):
+            self.imp(self.owner, raw, [attachment], folder="sentitems", mode="attach", target_correspondence=out.pk)
+        self.assertEqual((CorrespondenceSendEvent.objects.count(), CorrespondenceSendProof.objects.count()), (0, 0))
 
     def test_files_kept_from_a_mail_are_never_part_of_what_a_correspondence_sends(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -770,6 +816,23 @@ class SentItemsResendSafetyTests(DocsBase):
     def sent_names(self, post):
         message = self._graph_call(post).kwargs["json"]["message"]
         return sorted(a["name"] for a in message.get("attachments", []))
+
+    def test_only_the_business_files_are_sent_and_the_snapshot_says_so(self):
+        corr, business = self.approved_out_with_files()
+        provenance = self.keep_a_sent_copy_on(corr)
+        self.assertEqual((corr.attachments.count(), len(provenance)), (4, 2))
+        response, post = self.post_send(corr)
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(self.sent_names(post), ["annex.docx", "contract.pdf"])
+        snapshot = response.json()["attachments_snapshot"]
+        self.assertEqual(sorted(e["id"] for e in snapshot), sorted(a.pk for a in business))
+        self.assertEqual({e["file_name"] for e in snapshot}, {"contract.pdf", "annex.docx"})
+        self.assertEqual(
+            {e["sha256"] for e in snapshot},
+            {hashlib.sha256(content).hexdigest() for _, content in self.BUSINESS},
+        )
+        self.assertFalse({a.pk for a in provenance} & {e["id"] for e in snapshot})
+        self.assertEqual(mail.outbox, [])
 
     def test_a_resend_prepared_the_same_way_still_sends_only_the_business_files(self):
         corr, business = self.approved_out_with_files()

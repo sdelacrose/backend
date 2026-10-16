@@ -7,6 +7,7 @@ this module knows nothing about Correspondence itself.
 """
 
 import base64
+import hashlib
 from urllib.parse import quote
 
 import requests
@@ -83,6 +84,9 @@ def _graph_attachments(attachments):
     for attachment in attachments:
         with attachment.file.open("rb") as handle:
             content = handle.read()
+        # MAIL-1.4-A: the SHA-256 of exactly these bytes, which are the ones sent -- taken from the
+        # read the send already makes (no second read), left on the instance for the caller.
+        attachment.sent_sha256 = hashlib.sha256(content).hexdigest()
         payload.append(
             {
                 "@odata.type": "#microsoft.graph.fileAttachment",

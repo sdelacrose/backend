@@ -164,8 +164,13 @@ class SuccessfulSendTests(SendTestBase):
         perform_action(wf, self.approver, "APPROVE", "")
         corr.refresh_from_db()
         event = send_correspondence(corr, sender=self.owner)
+        # MAIL-1.4-A: the existing fields are unchanged; the SHA-256 of the bytes actually sent is added.
         self.assertEqual(
-            event.attachments_snapshot, [{"id": attachment.id, "file_name": "letter.pdf", "file_size": 1234}],
+            event.attachments_snapshot,
+            [{
+                "id": attachment.id, "file_name": "letter.pdf", "file_size": 1234,
+                "sha256": "ed7002b439e9ac845f22357d822bac1444730fbdb6016d3ec9432297b9ec9f73",
+            }],
         )
 
 

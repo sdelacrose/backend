@@ -270,6 +270,7 @@ def identify_pending_sent_copies(mailbox, *, actor, reader, now=None, window_day
             sent_at__gte=now - window, correspondence__direction=Correspondence.Direction.OUT,
         )
         .annotate(_has_recorded_copy=Exists(recorded_copy), _has_earlier_send=Exists(earlier_send))
+        .exclude(proof__mailbox_message__isnull=False)
         .exclude(_has_recorded_copy=True, _has_earlier_send=False)
         .select_related("correspondence")
         .order_by("-sent_at")[: (limit or MAX_SENT_COPY_LOOKUPS)]
