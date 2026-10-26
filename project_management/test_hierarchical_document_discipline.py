@@ -38,6 +38,7 @@ class DocumentDisciplineValidationTests(SimpleTestCase):
     def test_derives_document_discipline_snapshot_from_ids(self):
         validated = self.serializer.validate(
             {
+                "file_name": "Electrical drawing",
                 "discipline_group_id": "engineering",
                 "discipline_option_id": "electrical-engineering",
             }
@@ -48,23 +49,29 @@ class DocumentDisciplineValidationTests(SimpleTestCase):
         self.assertEqual(validated["discipline_code"], "ELE")
 
     def test_rejects_child_from_another_group(self):
-        with self.assertRaises(serializers.ValidationError):
+        with self.assertRaises(serializers.ValidationError) as caught:
             self.serializer.validate(
                 {
+                    "file_name": "Electrical drawing",
                     "discipline_group_id": "project-management",
                     "discipline_option_id": "electrical-engineering",
                 }
             )
+        self.assertIn("discipline_option_id", caught.exception.detail)
+        self.assertNotIn("file_name", caught.exception.detail)
 
     def test_rejects_group_without_discipline(self):
-        with self.assertRaises(serializers.ValidationError):
+        with self.assertRaises(serializers.ValidationError) as caught:
             self.serializer.validate(
                 {
+                    "file_name": "Electrical drawing",
                     "discipline_group_id": "engineering",
                     "discipline_option_id": "",
                     "discipline": "",
                 }
             )
+        self.assertIn("discipline_option_id", caught.exception.detail)
+        self.assertNotIn("file_name", caught.exception.detail)
 
 
 class LinkedDocumentDisciplineDeletionTests(SimpleTestCase):

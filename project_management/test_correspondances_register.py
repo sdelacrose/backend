@@ -139,6 +139,7 @@ class CorrespondancesRegisterTestBase(NoNotificationsMixin, TestCase):
     def make_approved_internal_revision(self, name="plan.txt"):
         document = Document(
             folder=self.folder, file_name=name, created_by=self.owner, document_origin=DocumentOrigin.INTERNAL,
+            transmittal_category="For review",
         )
         document.file.save(name, SimpleUploadedFile(name, b"content"), save=False)
         document.save()
