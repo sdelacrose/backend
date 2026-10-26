@@ -30,6 +30,7 @@ from .common import *  # noqa: E402,F401,F403
 from ecpmpapp.recette_checks import collect_problems  # noqa: E402
 
 RECETTE_MODE = True
+ENV = "recette"
 
 SECRET_KEY = env("RECETTE_SECRET_KEY", default="")
 DEBUG = False
@@ -37,6 +38,12 @@ ALLOWED_HOSTS = env.list("RECETTE_ALLOWED_HOSTS", default=[])
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = env.list("RECETTE_ALLOWED_ORIGINS", default=[])
 CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)
+# common.py only rewrites these for local/dev/staging/prod and otherwise keeps the production
+# hosts: recette always takes them from its own environment (checked against ALLOWED_HOSTS).
+FRONTEND_URL_CPM = env("FRONTEND_URL_CPM", default="")
+FRONTEND_URL_CORE = env("FRONTEND_URL_CORE", default="")
+FRONTEND_URL_ENTERPRISE = env("FRONTEND_URL_ENTERPRISE", default="")
+FRONTEND_URL_BACK_OFFICE = env("FRONTEND_URL_BACK_OFFICE", default=FRONTEND_URL)
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")  # behind the HTTPS reverse proxy
