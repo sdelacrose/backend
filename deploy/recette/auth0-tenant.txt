@@ -1,0 +1,2 @@
+# Exact host of the recette Auth0 tenant, one line, no wildcard (e.g. links-recette.eu.auth0.com).
+# Empty = Auth0 is refused by the egress proxy. Reload with: docker compose exec links-recette-egress squid -k reconfigure
