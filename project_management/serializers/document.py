@@ -4,17 +4,26 @@ from rest_framework import serializers
 from django.conf import settings
 from django.db import transaction
 
-from models.models import CompanyConfig, CompanyProfile
+from models.models import CompanyConfig, CompanyProfile, User
 from models.hierarchical_configurations import (
     DOCUMENT_DISCIPLINES_KEY,
     resolve_nested_configurations,
 )
-from project_management.models import Document, DocumentSearchIndex, Folder, Project
+from project_management.models import Document, DocumentOrigin, DocumentRevision, DocumentSearchIndex, Folder, Project
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
+from project_management.services.document_reference import generate_document_reference
+from project_management.services.document_workflow import (
+    document_has_workflow,
+    get_internal_status,
+)
+from project_management.services.document_register_status import (
+    compute_client_control_status,
+    compute_internal_control_status,
+    compute_supplier_control_status,
+)
 from project_management.serializers.file_name import validate_display_file_name
 from project_management.services.document_numbering import (
-    allocate_document_sequence,
     resolve_document_library_scope,
 )
 
@@ -30,10 +39,13 @@ class DocumentHistorySerializer(serializers.ModelSerializer):
             'file_name',
             'document_type',
             'identification_number',
+            'revision',
+            'document_origin',
             'status',
             'internal_review_status',
             'external_review_status',
             'transmittal_category',
+            'supplier_transmittal_category',
             'author'
         ]
         read_only_fields = fields
@@ -59,6 +71,32 @@ class DocumentSerializer(serializers.ModelSerializer):
     history = serializers.SerializerMethodField()
     linked_items = serializers.SerializerMethodField()
     index_status = serializers.SerializerMethodField()
+    project = serializers.SerializerMethodField()
+    creator = serializers.SerializerMethodField()
+    approver = serializers.SerializerMethodField()
+    verifier = serializers.SerializerMethodField()
+    file_size = serializers.SerializerMethodField()
+    # Blank entries are accepted here and dropped by validate_tags.
+    tags = serializers.ListField(
+        child=serializers.CharField(allow_blank=True, max_length=100),
+        required=False,
+        allow_empty=True,
+    )
+    workflow = serializers.SerializerMethodField()
+    internal_status = serializers.SerializerMethodField()
+    revision_label = serializers.SerializerMethodField()
+    # D13: the external issuer's own revision designation of the CURRENT version (Supplier,
+    # potentially Client) -- distinct from revision_label (INTERNAL-origin, approval-only).
+    current_external_revision = serializers.SerializerMethodField()
+    origin_locked = serializers.SerializerMethodField()
+    # L3F: Register control status, three independent axes (never one generic status trying to
+    # combine Internal/Supplier/Client business processes) -- see services.
+    # document_register_status for the full derivation. Distinct from the existing coarse
+    # `internal_status` (TO_CREATE/DRAFT/IN_VALIDATION/APPROVED) above, kept unchanged for
+    # whatever already reads it.
+    internal_control_status = serializers.SerializerMethodField()
+    supplier_control_status = serializers.SerializerMethodField()
+    client_control_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -69,13 +107,19 @@ class DocumentSerializer(serializers.ModelSerializer):
             'file',
             'file_name',
             'document_type',
+            'document_origin',
+            'external_issuer_company',
+            'received_date',
+            'origin_locked',
             'status',
             'internal_review_status',
             'external_review_status',
             'transmittal_category',
+            'supplier_transmittal_category',
             'uploaded_at',
             'updated_at',
             'identification_number',
+            'client_reference',
             'category',
             'discipline',
             'discipline_group',
@@ -88,8 +132,31 @@ class DocumentSerializer(serializers.ModelSerializer):
             'linked_items',
             'full_document_number',
             'index_status',
+            'project',
+            'creator',
+            'approver',
+            'verifier',
+            'workflow',
+            'internal_status',
+            'internal_control_status',
+            'supplier_control_status',
+            'client_control_status',
+            'revision_label',
+            'current_external_revision',
+            'file_size',
+            'description',
+            'tags',
         ]
         read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
+
+    def validate_tags(self, value):
+        # Trim, drop empty values and exact duplicates; capitalization is preserved.
+        seen = []
+        for tag in value or []:
+            tag = str(tag).strip()
+            if tag and tag not in seen:
+                seen.append(tag)
+        return seen
 
     def validate_revision(self, value):
         """
@@ -341,8 +408,142 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         return value
 
+    @staticmethod
+    def _issuer_in_scope(issuer, folder):
+        """The issuer must be a live Network company of the library owner (no cross-tenant use)."""
+        if issuer.is_deleted:
+            return False
+        if folder.company_profile_id:
+            return issuer.company_profile_id == folder.company_profile_id
+        if folder.freelancer_id:
+            return issuer.user_id == folder.freelancer_id
+        owner = folder.project.user if folder.project_id else None
+        if owner is None:
+            return False
+        if getattr(owner, "company_id", None):
+            return issuer.company_profile_id == owner.company_id
+        return issuer.user_id == owner.id
+
+    def _validate_origin(self, attrs):
+        """Document Origin rules (V1): explicit origin, issuer only for CLIENT / SUPPLIER."""
+        instance = self.instance
+        origin_sent = "document_origin" in attrs
+        issuer_sent = "external_issuer_company" in attrs
+        if not origin_sent and not issuer_sent:
+            return attrs
+
+        current_origin = instance.document_origin if instance else DocumentOrigin.INTERNAL
+        origin = attrs.get("document_origin", current_origin)
+
+        # LOT 3D-3D1 pre-flight A: a Company Document is never a Project deliverable and is
+        # never distributed via Transmittal (LOT 3D-3C0) -- its origin is always INTERNAL,
+        # immutably, and this was previously enforced by the frontend only (it always sends
+        # INTERNAL for a Company Document and never offers another choice), leaving a client
+        # that bypasses the UI free to submit CLIENT/SUPPLIER directly. Enforced here too now,
+        # regardless of workflow state, since it is a scope rule, not a workflow-lock rule.
+        origin_folder = attrs.get("folder") or (instance.folder if instance else None)
+        if origin != DocumentOrigin.INTERNAL and origin_folder is not None and origin_folder.company_profile_id:
+            raise serializers.ValidationError(
+                {"document_origin": "A Company Document's origin is always Internal."}
+            )
+
+        if (
+            instance
+            and origin_sent
+            and origin != current_origin
+            and document_has_workflow(instance)
+        ):
+            # Internal approval history must never be silently reclassified.
+            raise serializers.ValidationError(
+                {
+                    "document_origin": (
+                        "The origin cannot be changed once an internal validation "
+                        "workflow exists for this document."
+                    )
+                }
+            )
+
+        if origin == DocumentOrigin.INTERNAL:
+            # An issuer submitted for an internal document is cleaned up, never stored.
+            attrs["external_issuer_company"] = None
+            return attrs
+
+        issuer = (
+            attrs["external_issuer_company"]
+            if issuer_sent
+            else (instance.external_issuer_company if instance else None)
+        )
+        if issuer is None:
+            if issuer_sent or origin_sent:
+                raise serializers.ValidationError(
+                    {
+                        "external_issuer_company": (
+                            "The issuing company is required for client and supplier documents."
+                        )
+                    }
+                )
+            return attrs
+        folder = attrs.get("folder") or (instance.folder if instance else None)
+        unchanged = instance is not None and instance.external_issuer_company_id == issuer.id
+        if folder is not None and not unchanged and not self._issuer_in_scope(issuer, folder):
+            raise serializers.ValidationError(
+                {
+                    "external_issuer_company": (
+                        "This company does not belong to the network of the document library."
+                    )
+                }
+            )
+        return attrs
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        attrs = self._validate_origin(attrs)
+
+        if (
+            self.instance is None
+            and hasattr(self, "initial_data")
+            and not attrs.get("file")
+        ):
+            # Register entry without a main file (TO_CREATE): the title is the file_name.
+            if not str(attrs.get("file_name") or "").strip():
+                raise serializers.ValidationError(
+                    {"file_name": "A title is required when no file is provided."}
+                )
+
+        # L2D-1 section 13: Author is required when creating an INTERNAL register Document --
+        # narrowly scoped (create only, never update/edit; register entries only, via `folder`,
+        # never the unrelated record-type path which has no Origin concept at all) so this never
+        # retroactively invalidates existing Documents with author=NULL, and never affects
+        # SUPPLIER/CLIENT creation (Author belongs only to the internal workflow). Origin
+        # resolution mirrors _validate_origin's own default-to-INTERNAL-when-omitted logic.
+        # This must NOT fire when create() is about to default the author to the current user
+        # (the pre-existing "ensure author is set to the current user if not provided"
+        # convenience a few lines below, in create()) -- that fallback already guarantees a
+        # non-null author whenever a request user is available (DocumentViewSet.get_serializer
+        # always injects context['user'], so this is a true no-op for the real create endpoint);
+        # this check only ever catches a creation with no author AND no user to fall back to.
+        if self.instance is None and attrs.get("folder") is not None:
+            origin = attrs.get("document_origin", DocumentOrigin.INTERNAL)
+            if (
+                origin == DocumentOrigin.INTERNAL
+                and not attrs.get("author")
+                and not self.context.get("user")
+            ):
+                raise serializers.ValidationError(
+                    {"author": "An Author is required for an internal document."}
+                )
+            # FINISH-C section 11: a backend-enforced "received_date required for CLIENT" rule
+            # at THIS generic create() path was evaluated and deliberately NOT added -- this
+            # exact serializer/folder-based CLIENT-creation path is also the one many pre-
+            # existing tests (test_document_origin.py and others) legitimately use to create
+            # CLIENT-origin documents for unrelated purposes (issuer handling, workflow-lock
+            # behaviour, register filtering, etc.), with no received_date and no way for this
+            # serializer to distinguish "a real + New Input Data submission" from those. Making
+            # it mandatory here would reject every one of those pre-existing, legitimate calls.
+            # Date Received is therefore required by FRONTEND contextual validation only, on
+            # the dedicated + New Input Data form (UploadDocumentDrawer) -- reported as a known
+            # limitation rather than redesigning Document creation to carry an "is this really
+            # a new Input Data submission" signal the API does not otherwise need.
 
         status = attrs.get("status")
         internal_review_status = attrs.get("internal_review_status")
@@ -463,16 +664,43 @@ class DocumentSerializer(serializers.ModelSerializer):
             validated_data['author'] = request_user
 
         with transaction.atomic():
-            validated_data['sequence_number'] = allocate_document_sequence(
-                validated_data['folder']
-            )
-            validated_data['full_document_number'] = self._get_full_document_number(validated_data, config)
+            # D13 live review section 8: the Internal Ref. (full_document_number) is a
+            # LINKS/company-controlled reference -- it must never be forced onto a document the
+            # company did not itself originate. Only INTERNAL-origin documents (including legacy
+            # documents, whose default is INTERNAL) get one; SUPPLIER/CLIENT documents keep both
+            # fields blank unless a future workflow explicitly assigns one. Permanent once
+            # generated -- never recalculated afterwards.
+            origin = validated_data.get('document_origin') or DocumentOrigin.INTERNAL
+            if origin == DocumentOrigin.INTERNAL:
+                (
+                    validated_data['sequence_number'],
+                    validated_data['full_document_number'],
+                ) = generate_document_reference(
+                    validated_data['folder'],
+                    document_type=validated_data.get('document_type'),
+                    discipline=validated_data.get('discipline'),
+                    discipline_code=validated_data.get('discipline_code'),
+                    category=validated_data.get('category'),
+                    config=config,
+                )
             validated_data['created_by'] = request_user
             validated_data['assignee'] = validated_data.get('author')
             instance = super().create(validated_data)
+            self._save_review_preferences(instance)
             return instance
 
     def update(self, instance, validated_data):
+        if 'file' in validated_data:
+            # The controlled main file only changes through a new version (revision endpoint);
+            # an ordinary update can never silently replace it.
+            raise serializers.ValidationError(
+                {
+                    'file': (
+                        'The main file cannot be replaced by updating the document. '
+                        'Upload it as a new version (POST /document/<id>/revisions).'
+                    )
+                }
+            )
         next_folder = validated_data.get('folder')
         if (
             next_folder is not None
@@ -488,70 +716,53 @@ class DocumentSerializer(serializers.ModelSerializer):
                     )
                 }
             )
-        config = self.get_config()
+        # The document reference (full_document_number) is generated ONCE at creation and is
+        # permanent: no metadata, version, revision or legacy Document.revision change ever
+        # recalculates it (it is also read-only through the API). A legacy blank reference
+        # stays blank rather than being invented from partial data on an unrelated update.
         validated_data['sequence_number'] = instance.sequence_number
+        validated_data.pop('full_document_number', None)
         # Use user-provided revision or keep existing revision
         if 'revision' not in validated_data:
             validated_data['revision'] = instance.revision
-        numbering_data = {
-            'folder': instance.folder,
-            'document_type': instance.document_type,
-            'category': instance.category,
-            'discipline': instance.discipline,
-            'discipline_code': getattr(instance, 'discipline_code', ''),
-            'sequence_number': instance.sequence_number,
-            'revision': instance.revision,
-        }
-        numbering_data.update(validated_data)
-        validated_data['full_document_number'] = self._get_full_document_number(numbering_data, config)
         validated_data['assignee'] = instance.author if "author" not in validated_data else validated_data.get('author')
-        return super().update(instance, validated_data)
+        updated = super().update(instance, validated_data)
+        self._save_review_preferences(updated)
+        return updated
 
-    def _get_code(self, validated_data):
-        """Get the code for the given combination"""
-        folder_id = validated_data.get('folder').id if validated_data.get('folder') else None
-        if folder_id:
-            folder = Folder.objects.get(id=folder_id)
-            if folder.project:
-                name = ""
-                if folder.project.user.is_freelancer:
-                    name += folder.project.user.full_name.upper()[:3]
-                else:
-                    name += folder.project.user.company.company_name.upper()[:3]
-                
-                if folder.project.project_name :
-                    name += "-" + folder.project.project_name.upper()[:3]
-                return name
-            elif folder.company_profile:
-                return folder.company_profile.company_name.upper()[:3] if folder.company_profile.company_name else None
-            elif folder.freelancer:
-                return folder.freelancer.full_name.upper()[:3] if folder.freelancer.full_name else None
-        
-        return None
+    def _save_review_preferences(self, document):
+        """L2D-1: preferred Verifier/Approver (DocumentControl.verifier/approver) -- launch
+        dialog preselection defaults only, never the authoritative DocumentWorkflow actors of an
+        already-launched workflow (those remain exclusively on DocumentWorkflow, per revision).
+        approver/verifier are read-only SerializerMethodFields (their {id, name} shape differs
+        from the raw PK this accepts), so the write side reads the raw request keys directly --
+        same pattern validate_author already uses via self.initial_data -- and reuses the exact
+        same write service services.document_register.save_document_control already uses for
+        DocumentControl.approver, rather than duplicating that logic here. A key simply absent
+        from the request leaves the stored preference untouched (same "only touch what was
+        sent" convention as every other optional field on this serializer); an explicitly blank
+        value clears it.
+        """
+        raw = getattr(self, 'initial_data', None)
+        if not raw or not any(key in raw for key in ('approver', 'verifier')):
+            return
+        from project_management.services.document_register import save_document_control
 
-    def _get_full_document_number(self, validated_data, config):
-        """Get the full document number for the given combination"""
-        document_number = ""
-        folder_id = validated_data.get('folder').id if validated_data.get('folder') else None
-        code = self._get_code(validated_data)
-        document_type_code = get_abbreviation(validated_data.get('document_type'), config, "document_types")
-        document_category_code = get_abbreviation(validated_data.get('category'), config, "document_categories")
-        discipline_code = validated_data.get('discipline_code') or get_abbreviation(validated_data.get('discipline'), config, "document_disciplines")
-        sequence_number = validated_data.get('sequence_number')
-        revision = validated_data.get('revision')
+        control_data = {}
+        if 'approver' in raw:
+            control_data['approver'] = self._resolve_user(raw.get('approver'))
+        if 'verifier' in raw:
+            control_data['verifier'] = self._resolve_user(raw.get('verifier'))
+        save_document_control(document, control_data)
 
-        if code:
-            document_number += code
-        if document_type_code:
-            document_number += "-" + document_type_code
-        if document_category_code:
-            document_number += "-" + document_category_code
-        if discipline_code:
-            document_number += "-" + discipline_code
-        if sequence_number:
-            document_number += "-" + str(sequence_number).zfill(5)
-        document_number += "-" + str(revision).zfill(2)
-        return document_number
+    @staticmethod
+    def _resolve_user(value):
+        if value in (None, ''):
+            return None
+        try:
+            return User.objects.filter(pk=int(value)).first()
+        except (TypeError, ValueError):
+            return None
 
     def get_history(self, obj):
         include_history = self.context.get('include_history', False)
@@ -560,6 +771,127 @@ class DocumentSerializer(serializers.ModelSerializer):
             
         history = obj.history.all().order_by('-history_date')
         return DocumentHistorySerializer(history, many=True).data
+
+    def get_project(self, obj):
+        # Only computed where the caller opted in (Documents list/detail), to avoid
+        # extra queries when this serializer is nested elsewhere (e.g. folder trees).
+        if not self.context.get('include_control'):
+            return None
+        project = obj.folder.project if obj.folder_id else None
+        if project is None:
+            return None
+        return {'id': project.id, 'name': project.project_name}
+
+    @staticmethod
+    def _user_ref(user):
+        if user is None:
+            return None
+        return {'id': user.id, 'name': (user.full_name or '').strip() or user.email}
+
+    def get_creator(self, obj):
+        if not self.context.get('include_control'):
+            return None
+        return self._user_ref(obj.created_by)
+
+    def get_approver(self, obj):
+        # Optional Document Control data (DocumentControl is created on first save only).
+        if not self.context.get('include_control'):
+            return None
+        control = getattr(obj, 'control', None)
+        return self._user_ref(control.approver) if control else None
+
+    def get_verifier(self, obj):
+        # L2D-1: preferred Verifier, same optional Document Control data shape as approver
+        # above -- a launch-dialog preselection default only, never the authoritative
+        # DocumentWorkflow.verifier of an actual revision/workflow.
+        if not self.context.get('include_control'):
+            return None
+        control = getattr(obj, 'control', None)
+        return self._user_ref(control.verifier) if control else None
+
+    def get_workflow(self, obj):
+        # Register indicator only: status of the CURRENT revision's workflow and whether the
+        # connected user is the expected actor. Annotated by the list queryset; no events.
+        if not self.context.get('include_control'):
+            return None
+        status_value = getattr(obj, 'wf_status', None)
+        if not status_value:
+            return None
+        user = self.context.get('user')
+        expected = getattr(obj, 'wf_expected_actor_id', None)
+        return {
+            'status': status_value,
+            'awaiting_me': bool(expected and user and expected == user.id),
+        }
+
+    def get_revision_label(self, obj):
+        # Canonical official Revision of the CURRENT version (null until approved); never the
+        # legacy Document.revision. Annotated by the list queryset, one lookup otherwise.
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'current_revision_label'):
+            return obj.current_revision_label
+        current = DocumentRevision.objects.filter(document=obj).order_by(
+            '-created_at', '-id'
+        ).first()
+        return current.revision_label if current else None
+
+    def get_current_external_revision(self, obj):
+        # D13: the external issuer's own revision designation of the CURRENT version -- same
+        # include_control gating and annotation-first pattern as get_revision_label above.
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'current_external_revision'):
+            return obj.current_external_revision
+        current = DocumentRevision.objects.filter(document=obj).order_by(
+            '-created_at', '-id'
+        ).first()
+        return current.external_revision if current else None
+
+    def get_origin_locked(self, obj):
+        # True once an internal workflow (active or historical) exists: the origin is then
+        # immutable. Annotated by the list queryset; one lookup on the detail.
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'has_workflow_history'):
+            return bool(obj.has_workflow_history)
+        return document_has_workflow(obj)
+
+    def get_internal_status(self, obj):
+        # Derived (never stored) validation lifecycle of the CURRENT version:
+        # DRAFT / IN_VALIDATION / APPROVED. Independent from the business Document.status.
+        if not self.context.get('include_control'):
+            return None
+        return get_internal_status(obj)
+
+    def get_internal_control_status(self, obj):
+        # L3F: richer Register axis (DRAFT/IN_PROGRESS/TO_REVIEW/TO_VERIFY/TO_APPROVE/APPROVED/
+        # REJECTED) -- distinct from get_internal_status above. None for a non-INTERNAL document.
+        if not self.context.get('include_control'):
+            return None
+        return compute_internal_control_status(obj)
+
+    def get_supplier_control_status(self, obj):
+        # L3F: None for a non-SUPPLIER document or a FOR_INFORMATION one with no Surveillance.
+        if not self.context.get('include_control'):
+            return None
+        return compute_supplier_control_status(obj)
+
+    def get_client_control_status(self, obj):
+        # L3F: independent from Internal/Supplier -- gated by whichever of those applies, plus
+        # actual OUT Transmittal evidence for the exact CURRENT revision.
+        if not self.context.get('include_control'):
+            return None
+        return compute_client_control_status(obj)
+
+    def get_file_size(self, obj):
+        # Detail page only: may hit the storage backend.
+        if not self.context.get('include_detail') or not obj.file:
+            return None
+        try:
+            return obj.file.size
+        except Exception:
+            return None
 
     def get_index_status(self, obj):
         try:
@@ -784,6 +1116,10 @@ class DocumentSerializer(serializers.ModelSerializer):
                 "id" : instance.folder.id,
                 "name": instance.folder.name
             }
+        issuer = instance.external_issuer_company
+        representation["external_issuer_company"] = (
+            {"id": issuer.id, "name": issuer.company_name} if issuer else None
+        )
         return representation
 
 class FolderSerializer(serializers.ModelSerializer):

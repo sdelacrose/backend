@@ -110,18 +110,6 @@ class DocumentPartialUpdateTests(SimpleTestCase):
         )
         serializer = DocumentSerializer(instance=instance, partial=True)
         serializer.get_config = Mock(return_value=None)
-        expected_number = serializer._get_full_document_number(
-            {
-                "folder": folder,
-                "document_type": instance.document_type,
-                "category": instance.category,
-                "discipline": instance.discipline,
-                "sequence_number": instance.sequence_number,
-                "revision": instance.revision,
-            },
-            None,
-        )
-
         with patch(
             "rest_framework.serializers.ModelSerializer.update",
             return_value=instance,
@@ -130,7 +118,10 @@ class DocumentPartialUpdateTests(SimpleTestCase):
 
         validated_data = model_update.call_args.args[1]
         self.assertEqual(validated_data["file_name"], "Renamed.pdf")
-        self.assertEqual(validated_data["full_document_number"], expected_number)
+        # The reference is generated once at creation and is permanent: an update never recalculates it.
+        self.assertNotIn("full_document_number", validated_data)
+        self.assertEqual(validated_data["sequence_number"], instance.sequence_number)
+        self.assertEqual(validated_data["revision"], instance.revision)
 
 
 class DocumentAuthorPartialUpdateTests(SimpleTestCase):

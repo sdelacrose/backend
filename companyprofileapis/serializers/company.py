@@ -31,6 +31,9 @@ from companyprofileapis.services.offer_validity import (
     OfferValidityPeriodInUseError,
     validate_offer_validity_period_removal,
 )
+from companyprofileapis.services.document_type_defaults import (
+    merge_missing_document_type_defaults,
+)
 from companyprofileapis.models import Opportunity, NoticeBoard
 from ecpmpapp.constants import (
     VALID_REMINDER_PATTERN, UserType, StatusType,
@@ -197,6 +200,18 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
         model = CompanyConfig
         fields = '__all__'
         read_only_fields = ['company_profile']
+
+    def validate_document_control_configuration(self, value):
+        # Reference / revision / workflow settings: validated and stored in canonical form.
+        from models.document_control_configuration import (
+            DocumentControlConfigurationError,
+            validate_document_control_configuration,
+        )
+
+        try:
+            return validate_document_control_configuration(value)
+        except DocumentControlConfigurationError as error:
+            raise serializers.ValidationError(str(error))
 
     def validate_contract_type(self, value):
         return self._validate_with_defaults(value, constants.GC_CONTRACT_TYPES, "contract_type")
@@ -566,6 +581,7 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
                 "expense_types": constants.GC_EXPENSE_TYPES,
                 "project_types": constants.GC_PROJECT_TYPES,
                 "document_types": constants.GC_COMPANY_DOCUMENT_TYPES,
+                "correspondence_types": constants.GC_CORRESPONDENCE_TYPES,
                 "document_status": constants.GC_DOCUMENT_STATUSES,
                 "document_internal_review_status": constants.GC_DOCUMENT_INTERNAL_REVIEW_STATUSES,
                 "document_external_review_status": constants.GC_DOCUMENT_EXTERNAL_REVIEW_STATUSES,
@@ -584,6 +600,20 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
                 "rooms": constants.GC_ROOMS,
                 "skills": constants.GC_SKILLS,
             }
+
+            # document_types: an empty/partial stored list must still offer the canonical
+            # types (the Document Type selector and the permanent reference both depend on
+            # it) -- missing canonical entries are appended, custom entries are preserved.
+            if "document_types" in representation:
+                representation["document_types"] = merge_missing_document_type_defaults(
+                    representation["document_types"], constants.GC_COMPANY_DOCUMENT_TYPES
+                )
+
+            # LOT 3B stabilization: same backfill for Correspondence Type reference data.
+            if "correspondence_types" in representation:
+                representation["correspondence_types"] = merge_missing_document_type_defaults(
+                    representation["correspondence_types"], constants.GC_CORRESPONDENCE_TYPES
+                )
 
             for field, default_values in default_values_mapping.items():
                 if field in representation:

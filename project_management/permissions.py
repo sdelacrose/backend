@@ -858,7 +858,7 @@ class DocumentPermission(BaseModulePermission):
         elif request.method == 'GET':
             print(f'[DEBUG] DocumentPermission: has_object_permission: GET | is_company_document: {is_company_document} | context: {context}')
             if is_company_document:
-                return self._check_view_permission(request.user, obj)
+                return self._check_view_permission(request.user, obj, context)
             else:
                 return self._check_view_permission_project(request.user, obj, context)
         return False
@@ -1167,6 +1167,106 @@ class DocumentPermission(BaseModulePermission):
             return True
         
         return False
+
+
+class CorrespondencePermission(BaseModulePermission):
+    """documents.correspondence_<action>: same module ("documents") and scope mechanism as
+    DocumentPermission, but Correspondence already carries its own project/company_profile
+    fields directly, so scope is read straight from the object/payload -- no folder-style
+    indirection is needed (LOT 3B section 12).
+
+    LOT 3D-3: documents.full_access is honored as an override at whatever scope is being
+    checked, matching the established Documents-adjacent convention (DocumentPermission etc.)
+    -- granular correspondence_* keys keep working exactly as before; this only adds another
+    way to pass the same check, never a broader/different one.
+    """
+
+    def __init__(self, action='view', scope='company'):
+        super().__init__('documents', f'correspondence_{action}', scope)
+
+    def _scope_and_context(self, project):
+        if project is not None:
+            return 'project', {'project': project}
+        return 'company', {}
+
+    def _check_action_or_full_access(self, user, action, scope, context):
+        return self._check_permission(
+            user, self.module, action, scope, context
+        ) or self._check_permission(user, self.module, 'full_access', scope, context)
+
+    def has_permission(self, request, view):
+        if request.method == 'POST':
+            project = None
+            project_id = request.data.get('project')
+            if project_id:
+                project = Project.objects.filter(pk=project_id).first()
+            scope, context = self._scope_and_context(project)
+            return self._check_action_or_full_access(
+                request.user, 'correspondence_create', scope, context
+            )
+        if request.method == 'GET' and getattr(view, 'action', None) == 'list':
+            return self._check_action_or_full_access(
+                request.user, 'correspondence_view', self.scope, {}
+            )
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        # self.action was already set correctly for this call (by get_permissions() for the
+        # main viewset's own per-DRF-action instance, or explicitly by
+        # CorrespondenceAttachmentViewSet for its own sub-resource actions) -- re-deriving it
+        # from request.method here would be wrong for POST (attachment upload), which needs
+        # "update" rather than whatever a generic method->action mapping would guess.
+        scope, context = self._scope_and_context(obj.project)
+        return self._check_action_or_full_access(request.user, self.action, scope, context)
+
+
+class TransmittalPermission(BaseModulePermission):
+    """documents.transmittal_<action>: same module ("documents") and scope mechanism as
+    CorrespondencePermission -- Transmittal likewise carries its own project/company_profile
+    fields directly, so scope is read straight from the object/payload (LOT 3C section 16).
+
+    LOT 3D-3: documents.full_access override, same note as CorrespondencePermission above.
+    This never widens WHERE Transmittal data can appear -- Transmittal stays structurally
+    project-only (services.correspondances_register excludes it from company scope
+    regardless of permission); this only changes how the transmittal_* actions themselves are
+    authorized.
+    """
+
+    def __init__(self, action='view', scope='company'):
+        super().__init__('documents', f'transmittal_{action}', scope)
+
+    def _scope_and_context(self, project):
+        if project is not None:
+            return 'project', {'project': project}
+        return 'company', {}
+
+    def _check_action_or_full_access(self, user, action, scope, context):
+        return self._check_permission(
+            user, self.module, action, scope, context
+        ) or self._check_permission(user, self.module, 'full_access', scope, context)
+
+    def has_permission(self, request, view):
+        if request.method == 'POST' and getattr(view, 'action', None) == 'create':
+            project = None
+            project_id = request.data.get('project')
+            if project_id:
+                project = Project.objects.filter(pk=project_id).first()
+            scope, context = self._scope_and_context(project)
+            return self._check_action_or_full_access(
+                request.user, 'transmittal_create', scope, context
+            )
+        if request.method == 'GET' and getattr(view, 'action', None) == 'list':
+            return self._check_action_or_full_access(
+                request.user, 'transmittal_view', self.scope, {}
+            )
+        return True
+
+    def has_object_permission(self, request, view, obj):
+        # self.action is set correctly by the caller (get_permissions() per DRF action for the
+        # main viewset, or explicitly for the items/events sub-resources and the issue action)
+        # -- never re-derived from request.method (see CorrespondencePermission's own fix).
+        scope, context = self._scope_and_context(obj.project)
+        return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
 class ECPMPConfigPermission(BaseModulePermission):
@@ -2336,3 +2436,37 @@ def check_company_project_permission(self, user, permission_type, context=None):
             print(f'\n\n\n=============== [DEBUG] check_company_project_permission: user is a company owner and project belongs to their company\n\n\n', flush=True)
             return self._check_permission(user, 'projects', permission_type, "company", {})
         return False
+
+
+class DocumentIssuerLookupPermission(BaseModulePermission):
+    """Select the external issuing company of a Document (Client / Supplier origin).
+
+    The use case is "which external company issued this document", never browsing the Network:
+    it needs the right to create or edit Documents (company scope, or the project scope of the
+    optional ?project=<id>) and NEVER requires contact_management.view.
+    """
+
+    ACTIONS = ("full_access", "create", "update")
+
+    def __init__(self):
+        super().__init__("documents", "create", "company")
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        if any(
+            self._check_permission(user, "documents", action, "company", {})
+            for action in self.ACTIONS
+        ):
+            return True
+        project_id = request.query_params.get("project")
+        if not str(project_id or "").isdigit():
+            return False
+        project = Project.objects.filter(pk=project_id).first()
+        if project is None:
+            return False
+        return any(
+            self._check_permission(user, "documents", action, "project", {"project": project})
+            for action in self.ACTIONS
+        )

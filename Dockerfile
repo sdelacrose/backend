@@ -41,7 +41,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     python -m pip install -r requirements.txt
 
-RUN pip install git+https://<username>:<token>@github.com/EC-PMP/<repo>.git
+# The shared `models` package comes from the sdelacrose account only, pinned to an explicit commit
+# (release/doc-mail-models) so every build installs the exact same migrations. Re-pin when the
+# models branch is published under a different commit.
+ARG MODELS_REF=f8ea5539f8208a1b17589b17159269275003e776
+RUN pip install git+https://<username>:<token>@github.com/sdelacrose/admin-server-models.git@${MODELS_REF}
 
 # Make the entry point script executable
 RUN chmod +x /app/scripts/entry_point.sh

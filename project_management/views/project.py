@@ -58,6 +58,29 @@ def _is_truthy_param(value):
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
+    def destroy(self, request, *args, **kwargs):
+        # Preflight: a project whose documents carry validation evidence is never deleted
+        # (the cascade would erase versions, workflows and approvals). Refused before any write.
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from project_management.services.document_workflow import (
+            PROJECT_EVIDENCE_MESSAGE,
+            project_has_evidence,
+        )
+
+        project = self.get_object()
+        if project_has_evidence(project):
+            return Response(
+                {"detail": PROJECT_EVIDENCE_MESSAGE},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except DjangoValidationError as error:
+            return Response(
+                {"detail": " ".join(error.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, TableOrderingFilter]

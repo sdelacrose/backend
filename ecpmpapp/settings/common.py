@@ -511,6 +511,19 @@ MS_CLIENT_ID = env('AZURE_CLIENT_ID')
 MS_CLIENT_SECRET = env('AZURE_CLIENT_SECRET')
 MS_TENANT_ID = env('AZURE_TENANT_ID')
 MS_REDIRECT_URI=f"{BACKEND_URL}{env('MS_REDIRECT_URI')}"
+# SECURITY-MAIL-0C: comma-separated Fernet key(s) for userapis/token_encryption.py, newest/
+# primary key first (rotation support -- see that module's own docstring). Deliberately never
+# SECRET_KEY, never hardcoded, never generated here. Optional and empty by default: unset is a
+# valid "no encryption active yet" state -- historical plaintext Microsoft OAuth tokens in
+# UserOutlookCredentials keep working either way (see userapis/signals.py).
+MS_TOKEN_ENCRYPTION_KEYS = env("MS_TOKEN_ENCRYPTION_KEYS", default="")
+# SECURITY-MAIL-0D: the explicit activation switch for write-side encryption (userapis/
+# signals.py's pre_save receiver). False by default and NOT set in any environment file by
+# this lot -- current behaviour (plaintext writes) stays unchanged until a deployment
+# explicitly sets this to true alongside a valid MS_TOKEN_ENCRYPTION_KEYS.
+MS_TOKEN_ENCRYPTION_WRITE_ENABLED = env.bool(
+    "MS_TOKEN_ENCRYPTION_WRITE_ENABLED", default=False
+)
 
 # Health Check Configuration
 HEALTH_CHECK_API_KEY = env("HEALTH_CHECK_API_KEY", default="health_check_secret_key_2024")

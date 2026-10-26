@@ -61,6 +61,7 @@ services:
       DJANGO_SETTINGS_MODULE: ecpmpapp.settings.local
     volumes:
       - ../backend:/app
+      - ../admin-server-models:/admin-server-models
 
   document_worker:
     build:

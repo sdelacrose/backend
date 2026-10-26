@@ -6,6 +6,7 @@ from rest_framework import serializers
 from project_management.models import Document
 from project_management.permissions import DocumentPermission
 from project_management.serializers.document import DocumentSerializer
+from project_management.services.document_register import save_document_control
 
 
 MAX_BULK_DOCUMENTS = 200
@@ -21,12 +22,21 @@ BULK_DOCUMENT_UPDATE_FIELDS = {
     "internal_review_status",
     "status",
     "transmittal_category",
+    "verifier",
+    "approver",
 }
 DISCIPLINE_UPDATE_FIELDS = {
     "discipline",
     "discipline_group_id",
     "discipline_option_id",
 }
+# FINISH-B: verifier/approver live on DocumentControl (1:1 with Document), written through the
+# exact same services.document_register.save_document_control() the single-document edit path
+# already uses (DocumentSerializer._save_review_preferences) -- never through
+# DocumentSerializer.save() itself, since both are declared there as read-only
+# SerializerMethodFields. Kept as their own set so the per-document loop below can route each
+# to its own existing write path, never duplicating either.
+DOCUMENT_CONTROL_UPDATE_FIELDS = {"verifier", "approver"}
 
 
 class BulkDocumentChangesSerializer(serializers.Serializer):
@@ -46,6 +56,12 @@ class BulkDocumentChangesSerializer(serializers.Serializer):
     )
     status = serializers.CharField(max_length=255, required=False)
     transmittal_category = serializers.CharField(max_length=255, required=False)
+    # FINISH-B section 11: a field simply absent from `changes` leaves it untouched -- the same
+    # convention every other field here already follows. allow_null=True lets an EXPLICIT null
+    # clear the preference, mirroring _save_review_preferences' own "absent vs explicitly blank"
+    # distinction for these exact two fields (section 11's UNCHANGED vs CLEAR requirement).
+    verifier = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+    approver = serializers.IntegerField(min_value=1, required=False, allow_null=True)
 
     def to_internal_value(self, data):
         if not isinstance(data, dict):
@@ -86,6 +102,11 @@ class BulkDocumentUpdateRequestSerializer(serializers.Serializer):
         max_length=MAX_BULK_DOCUMENTS,
     )
     changes = BulkDocumentChangesSerializer()
+    # FINISH-B section 14/15: lets the UI show an eligibility preview (selected/updated/excluded
+    # + reasons) through this SAME endpoint/service before the user confirms -- every permission/
+    # scope/validation check below still runs; only the actual write (and the summary
+    # notification) is skipped. Never a second preview-only endpoint.
+    dry_run = serializers.BooleanField(required=False, default=False)
 
     def validate_ids(self, value):
         return list(dict.fromkeys(value))
@@ -122,7 +143,7 @@ class DocumentBulkUpdateService:
         }
         self.permission = DocumentPermission(action="update", scope="mixed")
 
-    def execute(self, *, document_ids, changes):
+    def execute(self, *, document_ids, changes, dry_run=False):
         documents = (
             Document.objects.select_related(
                 "folder__project",
@@ -137,6 +158,19 @@ class DocumentBulkUpdateService:
         updated_ids = []
         failures = []
         request_scope = None
+        # FINISH-B: verifier/approver are routed to DocumentControl via save_document_control
+        # (see DOCUMENT_CONTROL_UPDATE_FIELDS' own docstring) -- split out once, up front, never
+        # per-document re-derived.
+        plain_changes = {
+            field: value
+            for field, value in changes.items()
+            if field not in DOCUMENT_CONTROL_UPDATE_FIELDS
+        }
+        control_changes = {
+            field: value
+            for field, value in changes.items()
+            if field in DOCUMENT_CONTROL_UPDATE_FIELDS
+        }
 
         with transaction.atomic():
             for document_id in document_ids:
@@ -183,15 +217,28 @@ class DocumentBulkUpdateService:
 
                 try:
                     with transaction.atomic():
-                        serializer = DocumentSerializer(
-                            document,
-                            data=changes,
-                            partial=True,
-                            context=self.serializer_context,
-                        )
-                        serializer.is_valid(raise_exception=True)
-                        document._suppress_document_notifications = True
-                        serializer.save()
+                        if plain_changes:
+                            serializer = DocumentSerializer(
+                                document,
+                                data=plain_changes,
+                                partial=True,
+                                context=self.serializer_context,
+                            )
+                            serializer.is_valid(raise_exception=True)
+                            if not dry_run:
+                                document._suppress_document_notifications = True
+                                serializer.save()
+                        if control_changes and not dry_run:
+                            # Reuses DocumentSerializer._resolve_user verbatim -- the exact same
+                            # raw-PK-to-User resolution the single-document edit path already
+                            # applies, never a second implementation (section 12).
+                            save_document_control(
+                                document,
+                                {
+                                    field: DocumentSerializer._resolve_user(value)
+                                    for field, value in control_changes.items()
+                                },
+                            )
                         updated_ids.append(document_id)
                 except (serializers.ValidationError, ValueError) as error:
                     detail = getattr(error, "detail", error)
@@ -199,7 +246,7 @@ class DocumentBulkUpdateService:
                         {"id": document_id, "error": _error_text(detail)}
                     )
 
-            if updated_ids:
+            if updated_ids and not dry_run:
                 from project_management.tasks import (
                     send_bulk_document_update_notification,
                 )
@@ -212,7 +259,7 @@ class DocumentBulkUpdateService:
                     )
                 )
 
-        return {"updated_ids": updated_ids, "failures": failures}
+        return {"updated_ids": updated_ids, "failures": failures, "dry_run": dry_run}
 
     def _enqueue_summary_notification(self, task, updated_ids, changed_fields):
         try:

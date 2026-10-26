@@ -80,6 +80,9 @@ class Project(models.Model):
     )
 
     solution = models.CharField(max_length=255, choices=SHAREMUNDO_SOLUTION_TYPES, default=default_solution)
+    # Short code used in permanent document references: proposed from the name at creation,
+    # editable until the first referenced Document exists, then permanent.
+    project_code = models.CharField(max_length=10, blank=True, default="")
     project_name = models.CharField(max_length=255)
     project_description = models.TextField(blank=True, null=True)
     funding_strategy = models.CharField(max_length=255, blank=True, null=True)
@@ -134,8 +137,21 @@ class Project(models.Model):
             self._date_changed = (
                 self.project_start_date != original.project_start_date or self.project_end_date != original.project_end_date
             )
+            if self.project_code and self.project_code != original.project_code:
+                from project_management.services.project_codes import (
+                    assert_project_code_change_allowed,
+                )
+
+                assert_project_code_change_allowed(self)
         else:
-            self._date_changed = False 
+            self._date_changed = False
+        if not self.project_code:
+            # Proposed once; a later rename never changes it.
+            from project_management.services.project_codes import (
+                propose_unique_project_code,
+            )
+
+            self.project_code = propose_unique_project_code(self)
 
         super().save(*args, **kwargs)
 
@@ -226,6 +242,13 @@ class ECPMPConfig(models.Model):
         blank=True,
         default=list,
     )
+    # LOT 3B stabilization: Correspondence Type reference data (plain labels; distinct from
+    # document_types, never confused with it).
+    correspondence_types = ArrayField(
+        models.CharField(max_length=255),
+        blank=True,
+        default=list,
+    )
     document_status = ArrayField(
         models.CharField(max_length=255),
         blank=True,
@@ -277,6 +300,8 @@ class ECPMPConfig(models.Model):
         default=list,
     )
     nested_configurations = models.JSONField(default=dict, blank=True)
+    # Document Control settings (reference, revision, workflow); empty = canonical defaults.
+    document_control_configuration = models.JSONField(default=dict, blank=True)
     rooms = ArrayField(
         models.CharField(max_length=255),
         blank=True,

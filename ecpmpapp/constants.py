@@ -46,6 +46,13 @@ UPLOAD_PATH_FREELANCER   = "documents/freelancer_{freelancer_id}/folder_{folder_
 # New template for object assessment uploads:
 UPLOAD_PATH_ASSESSMENT   = "object_assessment/project_{project_id}/{record_type}/{filename}"
 
+# L3G-1: Supplier Surveillance final evidence (never a Document/Folder -- the evidence PDF
+# must never appear in Project -> Documents -> Livrables, see project_management.models.
+# supplier_surveillance_evidence).
+UPLOAD_PATH_SUPPLIER_SURVEILLANCE_EVIDENCE = (
+    "supplier_surveillance_evidence/project_{project_id}/{surveillance_reference}/{filename}"
+)
+
 S3_URL_TEMPLATE        = "https://{bucket}.s3.{region}.amazonaws.com/{file_name}"
 
 MS_OAUTH_AUTHORIZE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
@@ -64,6 +71,37 @@ PO_PDF_LOGO_URL = "https://placehold.co/220x72/png?text=PO"
 
 MS_GRAPH_USER_CALENDAR_EVENTS_URL = "https://graph.microsoft.com/v1.0/me/calendar/events"
 MS_GRAPH_USER_CONTACTS_URL = "https://graph.microsoft.com/v1.0/me/contacts"
+
+# MAIL-1.1C2: Mail scopes requested on TOP of the existing Calendar/Contacts scopes (never
+# instead of them) -- a token issued for the Mail-connect flow must still work for Calendar/
+# Contacts (point 2 of the ticket's own pre-check: "comment demander un consentement
+# supplémentaire sans casser Calendar/Contacts"), since UserOutlookCredentials holds exactly
+# one access/refresh token pair per user, shared by every Microsoft Graph feature. Mail.Send/
+# Mail.ReadWrite cover an individual mailbox; the .Shared variants are what a delegate's own
+# token needs to act on a shared mailbox (still subject to real Exchange-side Send As/Send on
+# Behalf/Full Access configuration this code can never grant or fully verify -- see
+# verify_shared_mailbox_access in userapis/mailbox_oauth.py).
+MS_MAIL_SCOPES = (
+    MS_OUTLOOK_CALENDAR_SCOPES
+    + " Mail.Send Mail.ReadWrite Mail.Send.Shared Mail.ReadWrite.Shared"
+)
+# A deliberately minimal, read-only probe of actual mailbox access (never sends/moves/deletes
+# anything) -- used only to decide whether a SHARED mailbox connection may transition to
+# "active" (section 5: OAuth success alone is never treated as proof of real Exchange rights).
+MS_GRAPH_USER_MAILFOLDER_URL = "https://graph.microsoft.com/v1.0/users/{email}/mailFolders/inbox"
+# MAIL-1.2A: {email} is always the MailboxConnection's own address, for both an individual
+# mailbox (the token's own identity -- Graph treats this exactly like /me/sendMail) and a
+# shared mailbox (the delegate's token, Graph itself decides whether Send As/Send on Behalf
+# actually applies -- see userapis/mailbox_send.py). Never a second, different sender.
+MS_GRAPH_SEND_MAIL_URL = "https://graph.microsoft.com/v1.0/users/{email}/sendMail"
+# MAIL-1.2A-REVIEW section 2: a minimal, read-only identity probe -- confirms the Microsoft
+# account actually behind an access token before it is trusted to send as an INDIVIDUAL
+# MailboxConnection's own claimed email_address (nothing before this enforced that the two
+# ever matched; see _verify_individual_sender_identity in userapis/mailbox_send.py).
+MS_GRAPH_ME_URL = "https://graph.microsoft.com/v1.0/me?$select=mail,userPrincipalName"
+# MAIL-1.3B: base of the READ-ONLY message requests (userapis/mailbox_read.py): "/me" for an
+# individual mailbox, "/users/{email}" for a shared one. Only GET is ever issued against it.
+MS_GRAPH_MAIL_BASE_URL = "https://graph.microsoft.com/v1.0"
 VALID_REMINDER_PATTERN = re.compile(r"^\d+\s?(day|days|week|weeks|month|months)$",re.IGNORECASE)
 
 CUSTOM_LABELS_TIMECARD = {

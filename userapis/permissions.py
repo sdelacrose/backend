@@ -158,6 +158,38 @@ class CalendarEventPermission(BaseModulePermission):
         return False
 
 
+class MailboxAdminPermission(BaseModulePermission):
+    """MAIL-1.1B section 4: mail.admin_shared_mailbox, company scope -- the exact same
+    BaseModulePermission mechanism every other module key already uses (CorrespondencePermission,
+    CalendarEventPermission above, etc.), never a parallel is_company_admin boolean or a second
+    role system. "An authorized company administrator" is simply whichever role a company grants
+    this key to, at company scope, same as every other *.full_access/admin key in this codebase.
+    MAIL-1.1C1: now wired to the mailbox management endpoints (userapis/views/mailbox.py).
+    has_permission alone (inherited from BaseModulePermission, unchanged) is already correct
+    for list/create -- it resolves the role from request.user.company itself, so it can never
+    be tricked into checking a different company. has_object_permission is added here because
+    list/create's company-scope check alone cannot protect retrieve/update/the custom actions,
+    where a company-scope-permitted admin for THEIR OWN company could otherwise reach an id
+    belonging to a DIFFERENT company; this re-derives the object's own company from the object
+    itself (never from any request parameter) and requires it to match the admin's own."""
+
+    def __init__(self):
+        super().__init__("mail", "admin_shared_mailbox", "company")
+
+    def is_company_mailbox_admin(self, user, company_profile):
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        if company_profile is None or getattr(user, "company_id", None) != company_profile.id:
+            return False
+        return self._check_permission(user, self.module, self.action, self.scope, {})
+
+    def has_object_permission(self, request, view, obj):
+        company_profile = getattr(obj, "company_profile", None)
+        if company_profile is None:
+            company_profile = getattr(getattr(obj, "mailbox", None), "company_profile", None)
+        return self.is_company_mailbox_admin(request.user, company_profile)
+
+
 class ResourcesPermission(BaseModulePermission):
     """
     Permission class for resources module.

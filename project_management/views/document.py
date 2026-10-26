@@ -10,7 +10,7 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
-from django.db.models import Case, CharField, F, Func, Prefetch, Q, Value, When
+from django.db.models import Case, CharField, Exists, F, Func, OuterRef, Prefetch, Q, Value, When
 from django.db.models.functions import Coalesce, Concat, NullIf
 from django.core.exceptions import ValidationError
 from django.shortcuts import get_object_or_404
@@ -19,15 +19,25 @@ from django.core.exceptions import PermissionDenied
 from django.utils.decorators import method_decorator
 
 from models.models import CompanyProfile, User
-from project_management.models import Folder, Document, Project, ObjectAssessment
+from project_management.models import ContactCompany, Folder, Document, DocumentWorkflow, Project, ObjectAssessment
 from project_management.serializers.document import FolderSerializer, DocumentSerializer
 from ecpmpapp.constants import UserType
 from ecpmpapp.ordering import TableOrderingFilter
 from project_management.utils import get_product_name_from_request, has_project_permission
 from project_management.serializers.document import DocumentHistorySerializer
-from project_management.permissions import DocumentPermission
+from project_management.permissions import DocumentIssuerLookupPermission, DocumentPermission
 from project_management.filters import DocumentFilter
 from project_management.services.document_access import get_accessible_document_queryset
+from project_management.services.document_workflow import (
+    DOCUMENT_EVIDENCE_MESSAGE,
+    FOLDER_EVIDENCE_MESSAGE,
+    annotate_current_workflow,
+    document_has_evidence,
+    folder_has_evidence,
+)
+from project_management.services.document_register_status import (
+    annotate_register_control_status,
+)
 from project_management.services.document_bulk_update import (
     BulkDocumentUpdateRequestSerializer,
     DocumentBulkUpdateService,
@@ -534,10 +544,20 @@ class FolderViewSet(viewsets.ModelViewSet):
             return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, *args, **kwargs):
+        # Preflight: refuse cleanly BEFORE touching anything when a document below this folder
+        # is documentary evidence (the model/signal guards stay as defence in depth).
+        folder = self.get_object()
+        if folder_has_evidence(folder):
+            return Response(
+                {"detail": FOLDER_EVIDENCE_MESSAGE},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         try:
             return super().destroy(request, *args, **kwargs)
         except ValidationError as e:
-            return Response({"detail": e.message}, status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST
+            )
  
  
 class DocumentViewSet(viewsets.ModelViewSet):
@@ -555,9 +575,18 @@ class DocumentViewSet(viewsets.ModelViewSet):
         "file_name",
         "full_document_number",
         "identification_number",
+        # L1A: Document.client_reference (D13's third canonical business reference) -- same
+        # plain CharField shape as full_document_number/identification_number above, same
+        # text-field ordering treatment, no annotation needed.
+        "client_reference",
         "revision",
         "folder__name",
         "author_name",
+        # L1A: Creator/Approver columns (DocumentTableView's "creator"/"approver" fields) --
+        # annotated below exactly like author_name, so the Register's Creator/Approver headers
+        # have a real, deterministic server-side ordering key instead of silently no-op'ing.
+        "creator_name",
+        "approver_name",
         "uploaded_at",
         "updated_at",
         "created_at",
@@ -565,14 +594,20 @@ class DocumentViewSet(viewsets.ModelViewSet):
         "status",
         "category",
         "discipline",
+        # FINISH-C: Input Data's Date Received column -- a plain nullable DateField, same
+        # ordering treatment as the other plain columns above, no annotation needed.
+        "received_date",
     ]
     ordering_text_fields = {
         "file_name",
         "folder__name",
         "author_name",
+        "creator_name",
+        "approver_name",
         "status",
         "identification_number",
         "full_document_number",
+        "client_reference",
         "document_type",
         "category",
         "discipline",
@@ -580,18 +615,25 @@ class DocumentViewSet(viewsets.ModelViewSet):
     ordering_natural_fields = ordering_text_fields
     ordering = ["-uploaded_at", "-id"]
 
-    search_fields = ["file_name", "author__first_name", "author__last_name", "id", "document_type", "full_document_number"]
+    # D13 live review section 14: all three business references (Internal/Supplier/Client) are
+    # searchable -- full_document_number/identification_number already were; client_reference
+    # added here, same trivial extension, no new search system.
+    search_fields = ["file_name", "author__first_name", "author__last_name", "id", "document_type", "full_document_number", "identification_number", "client_reference"]
 
     def get_serializer(self, *args, **kwargs):
         serializer = super(DocumentViewSet, self).get_serializer(*args, **kwargs)
         serializer.context['user'] = self.request.user
         serializer.context['include_history'] = self.request.query_params.get('include_history', False)
         serializer.context['include_linked_items'] = self.request.query_params.get('include_linked_items', 'true').lower() == 'true'
+        serializer.context['include_control'] = True
+        serializer.context['include_detail'] = self.action == 'retrieve'
         return serializer
 
     def get_permissions(self):
         if self.action == 'bulk_update':
             return [DocumentPermission('update', 'mixed')]
+        if self.action == 'issuer_companies':
+            return [DocumentIssuerLookupPermission()]
         if self.action == 'list':
             # Check if it's a company or project document based on query params
             company_profile_id = self.request.query_params.get('folder__company_profile')
@@ -673,6 +715,28 @@ class DocumentViewSet(viewsets.ModelViewSet):
             return [DocumentPermission('delete', 'company')]
         return super().get_permissions()
 
+    @action(detail=False, methods=["get"], url_path="issuer-companies")
+    def issuer_companies(self, request):
+        """Companies selectable as the external issuer of a Document (Client / Supplier origin).
+
+        Minimal by design: only {id, company_name}, live companies of the requester's own
+        tenant (same ownership rule as the Network companies). It is not a Network browser.
+        """
+        user = request.user
+        if user.is_freelancer:
+            queryset = ContactCompany.objects.filter(user=user)
+        elif user.company_id:
+            queryset = ContactCompany.objects.filter(company_profile_id=user.company_id)
+        else:
+            queryset = ContactCompany.objects.none()
+        queryset = queryset.filter(is_deleted=False)
+        search = (request.query_params.get("search") or "").strip()
+        if search:
+            queryset = queryset.filter(company_name__icontains=search)
+        return Response(
+            list(queryset.order_by("company_name", "id").values("id", "company_name"))
+        )
+
     @action(detail=False, methods=["patch"], url_path="bulk-update")
     def bulk_update(self, request):
         request_serializer = BulkDocumentUpdateRequestSerializer(
@@ -685,6 +749,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
         ).execute(
             document_ids=request_serializer.validated_data["ids"],
             changes=request_serializer.validated_data["changes"],
+            dry_run=request_serializer.validated_data.get("dry_run", False),
         )
         return Response(result, status=status.HTTP_200_OK)
 
@@ -692,11 +757,40 @@ class DocumentViewSet(viewsets.ModelViewSet):
         """
         Filter queryset based on user permissions using the new DocumentPermission system.
         """
-        return get_accessible_document_queryset(self.request).annotate(
+        queryset = get_accessible_document_queryset(self.request)
+        if self.action == "list":
+            # Workflow of the CURRENT revision (Register indicator + "my validations").
+            queryset = annotate_current_workflow(queryset).annotate(
+                # Origin becomes immutable once any internal workflow exists.
+                has_workflow_history=Exists(
+                    DocumentWorkflow.objects.filter(revision__document=OuterRef("pk"))
+                )
+            )
+            # L3F: Internal/Supplier/Client Register control status -- same correlated-subquery,
+            # no-N+1 pattern as annotate_current_workflow above (idempotent, safe to chain).
+            queryset = annotate_register_control_status(queryset)
+        return queryset.select_related(
+            "control", "control__approver", "created_by", "folder__project", "external_issuer_company"
+        ).annotate(
             author_name=Concat(
                 Coalesce(F("author__first_name"), Value("")),
                 Value(" "),
                 Coalesce(F("author__last_name"), Value("")),
+                output_field=CharField(),
+            ),
+            # L1A: same shape as author_name above, for the Register's Creator/Approver columns
+            # (DocumentSerializer.get_creator/get_approver -- created_by and control.approver
+            # respectively), which previously had no real backend ordering key at all.
+            creator_name=Concat(
+                Coalesce(F("created_by__first_name"), Value("")),
+                Value(" "),
+                Coalesce(F("created_by__last_name"), Value("")),
+                output_field=CharField(),
+            ),
+            approver_name=Concat(
+                Coalesce(F("control__approver__first_name"), Value("")),
+                Value(" "),
+                Coalesce(F("control__approver__last_name"), Value("")),
                 output_field=CharField(),
             ),
         )
@@ -772,6 +866,22 @@ class DocumentViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        # Documentary evidence (workflow history, approved revision) is never deleted.
+        instance = self.get_object()
+        if document_has_evidence(instance):
+            return Response(
+                {"detail": DOCUMENT_EVIDENCE_MESSAGE},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ValidationError as error:
+            return Response(
+                {"detail": " ".join(error.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def create(self, request, *args, **kwargs):
         # Custom create method to handle file uploads

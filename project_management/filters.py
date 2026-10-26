@@ -11,7 +11,7 @@ from project_management.models import (
     ProjectExternalUsers,
     Milestone, ActionItem, ObjectAssessment, Project, ProjectPhase,
     ContactUser, ContactCompany, Invoice, TimeCard, ExpenseCard, Document,
-    PurchaseOrder,
+    PurchaseOrder, Correspondence, Transmittal,
 )
 
 class CharInFilter(filters.BaseInFilter, filters.CharFilter):
@@ -36,12 +36,39 @@ class DocumentFilter(filters.FilterSet):
     transmittal_category = CharInFilter(
         field_name="transmittal_category", lookup_expr="in"
     )
+    document_origin = CharInFilter(field_name="document_origin", lookup_expr="in")
+    # FINISH-C.1 Correction C: "Client" filter for the Input Data register -- the issuing
+    # Network company (ContactCompany), by id. Same NumberInFilter shape as author/approver
+    # below (multi-select-ready), reusing the existing external_issuer_company FK rather than
+    # inventing a second company-reference mechanism.
+    external_issuer_company = NumberInFilter(
+        field_name="external_issuer_company", lookup_expr="in"
+    )
     author = NumberInFilter(field_name="author", lookup_expr="in")
     folder = NumberInFilter(field_name="folder", lookup_expr="in")
     folder_name = CharInFilter(field_name="folder__name", lookup_expr="in")
     created_by = NumberInFilter(field_name="created_by", lookup_expr="in")
+    # Supplementary Document Control data (no approver concept on Document).
+    approver = NumberInFilter(field_name="control__approver", lookup_expr="in")
+    project = NumberInFilter(field_name="folder__project", lookup_expr="in")
+    # Workflow: documents whose CURRENT revision waits for an action from the connected user.
+    my_validation = filters.BooleanFilter(method="filter_my_validation")
     date_from = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__gte")
     date_to = filters.DateFilter(field_name="uploaded_at", lookup_expr="date__lte")
+    # FINISH-C.1 Correction D/E: Input Data's own quick/custom date filtering, targeting
+    # Document.received_date -- a DIFFERENT business date from uploaded_at above (never
+    # repurposed: date_from/date_to keep their existing uploaded_at meaning unchanged).
+    # received_date is already a plain DateField (not DateTimeField), so a direct gte/lte
+    # lookup is used, no __date cast needed.
+    received_date_from = filters.DateFilter(field_name="received_date", lookup_expr="gte")
+    received_date_to = filters.DateFilter(field_name="received_date", lookup_expr="lte")
+    # L3F: the three independent Register control-status axes (L3F section 29) -- same
+    # method-filter precedent as my_validation above, each delegating to services.
+    # document_register_status so the filter logic is never duplicated from the serializer's own
+    # derivation.
+    internal_control_status = filters.CharFilter(method="filter_internal_control_status")
+    supplier_control_status = filters.CharFilter(method="filter_supplier_control_status")
+    client_control_status = filters.CharFilter(method="filter_client_control_status")
 
     class Meta:
         model = Document
@@ -51,6 +78,7 @@ class DocumentFilter(filters.FilterSet):
             "folder__freelancer",
             "author",
             "document_type",
+            "document_origin",
             "category",
             "discipline_group_id",
             "discipline",
@@ -63,7 +91,40 @@ class DocumentFilter(filters.FilterSet):
             "created_by",
             "date_from",
             "date_to",
+            "external_issuer_company",
+            "received_date_from",
+            "received_date_to",
         ]
+
+    def filter_my_validation(self, queryset, name, value):
+        if not value:
+            return queryset
+        from project_management.services.document_workflow import (
+            filter_awaiting_user,
+        )
+
+        return filter_awaiting_user(queryset, self.request.user)
+
+    def filter_internal_control_status(self, queryset, name, value):
+        from project_management.services.document_register_status import (
+            filter_by_internal_control_status,
+        )
+
+        return filter_by_internal_control_status(queryset, value)
+
+    def filter_supplier_control_status(self, queryset, name, value):
+        from project_management.services.document_register_status import (
+            filter_by_supplier_control_status,
+        )
+
+        return filter_by_supplier_control_status(queryset, value)
+
+    def filter_client_control_status(self, queryset, name, value):
+        from project_management.services.document_register_status import (
+            filter_by_client_control_status,
+        )
+
+        return filter_by_client_control_status(queryset, value)
 
 class MilestoneFilter(filters.FilterSet):
     due_date = filters.DateFromToRangeFilter(field_name='due_date', label='Due Date Range')
@@ -605,8 +666,35 @@ class TimeCardFilter(filters.FilterSet):
                         filtered_queryset = filtered_queryset.filter(freelancer_id=int(value))
                 except (ValueError, TypeError):
                     pass
-        
+
         return filtered_queryset
+
+class CorrespondenceFilter(filters.FilterSet):
+    direction = CharInFilter(field_name="direction", lookup_expr="in")
+    correspondence_type = CharInFilter(field_name="correspondence_type", lookup_expr="in")
+    response_status = CharInFilter(field_name="response_status", lookup_expr="in")
+    project = NumberInFilter(field_name="project", lookup_expr="in")
+    sender_company = NumberInFilter(field_name="sender_company", lookup_expr="in")
+    recipient_company = NumberInFilter(field_name="recipient_company", lookup_expr="in")
+
+    class Meta:
+        model = Correspondence
+        fields = [
+            "direction", "correspondence_type", "response_status", "project",
+            "sender_company", "recipient_company",
+        ]
+
+class TransmittalFilter(filters.FilterSet):
+    direction = CharInFilter(field_name="direction", lookup_expr="in")
+    status = CharInFilter(field_name="status", lookup_expr="in")
+    project = NumberInFilter(field_name="project", lookup_expr="in")
+    external_company = NumberInFilter(field_name="external_company", lookup_expr="in")
+    date_from = filters.DateFilter(field_name="created_at", lookup_expr="date__gte")
+    date_to = filters.DateFilter(field_name="created_at", lookup_expr="date__lte")
+
+    class Meta:
+        model = Transmittal
+        fields = ["direction", "status", "project", "external_company"]
 
 class ExpenseCardFilter(filters.FilterSet):
     status = CharInFilter(field_name="status", lookup_expr="in")

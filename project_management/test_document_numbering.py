@@ -153,8 +153,8 @@ class DocumentLibraryNumberingTests(TestCase):
 
         self.assertEqual(first_document.sequence_number, 1)
         self.assertEqual(second_document.sequence_number, 2)
-        self.assertTrue(first_document.full_document_number.endswith("-00001-00"))
-        self.assertTrue(second_document.full_document_number.endswith("-00002-00"))
+        self.assertTrue(first_document.full_document_number.endswith("-00001"))
+        self.assertTrue(second_document.full_document_number.endswith("-00002"))
 
     def test_company_project_and_freelancer_libraries_are_independent(self):
         self.assertEqual(allocate_document_sequence(self.company_folder), 1)

@@ -436,7 +436,32 @@ def get_valid_choices(key, project_id, request=None, is_company=False, is_freela
                                                                                                               flat=True)
     else:
         valid_config_types = ECPMPConfig.objects.filter(project_id=project_id).values_list(key, flat=True)
-    return list(set([valid_choice for valid_choices in valid_config_types for valid_choice in valid_choices]))
+    choices = list(set([valid_choice for valid_choices in valid_config_types for valid_choice in valid_choices]))
+    if key == "document_types":
+        # LOT 2D-12: an empty/partial stored list must still validate against the same
+        # canonical defaults the dropdown now offers (include_defaults=true) -- otherwise a
+        # value the user was shown is rejected as "invalid" on submit.
+        from companyprofileapis.services.document_type_defaults import (
+            merge_missing_document_type_defaults,
+        )
+        from models import constants
+
+        canonical = (
+            constants.GC_PROJECT_DOCUMENT_TYPES
+            if not (is_company or is_freelancer)
+            else constants.GC_COMPANY_DOCUMENT_TYPES
+        )
+        choices = merge_missing_document_type_defaults(choices, canonical)
+    elif key == "correspondence_types":
+        # LOT 3B stabilization: same principle as document_types above -- one canonical
+        # default list (no project/company split, no "Label:CODE" segment is needed here).
+        from companyprofileapis.services.document_type_defaults import (
+            merge_missing_document_type_defaults,
+        )
+        from models import constants
+
+        choices = merge_missing_document_type_defaults(choices, constants.GC_CORRESPONDENCE_TYPES)
+    return choices
 
 
 def get_project_owner_valid_choices(key, project, request=None):

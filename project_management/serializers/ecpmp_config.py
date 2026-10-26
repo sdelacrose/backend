@@ -23,11 +23,43 @@ from models.rooms_utils import bootstrap_rooms_if_legacy_empty, effective_rooms_
 from companyprofileapis.services.hierarchical_configurations import (
     validate_removed_document_disciplines,
 )
+from companyprofileapis.services.document_type_defaults import (
+    merge_missing_document_type_defaults,
+)
 
 class ECPMPCONFIGSerializer(serializers.ModelSerializer):
     class Meta:
         model = ECPMPConfig
         exclude = ("acceptance_status_options",)
+
+    def validate_document_control_configuration(self, value):
+        # Reference / revision / workflow settings: validated and stored in canonical form.
+        from models.document_control_configuration import (
+            DocumentControlConfigurationError,
+            validate_document_control_configuration,
+        )
+
+        try:
+            resolved = validate_document_control_configuration(value)
+        except DocumentControlConfigurationError as error:
+            raise serializers.ValidationError(str(error))
+
+        # A started project (first permanent reference issued) keeps its reference convention.
+        project = getattr(self.instance, "project", None)
+        if project is not None:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+
+            from project_management.services.project_codes import (
+                assert_conventions_unchanged,
+            )
+
+            try:
+                assert_conventions_unchanged(
+                    project, self.instance.document_control_configuration, resolved
+                )
+            except DjangoValidationError as error:
+                raise serializers.ValidationError(error.messages[0])
+        return resolved
 
     def validate_reminder_settings(self, value):
         if not isinstance(value, list):
@@ -203,6 +235,7 @@ class ECPMPCONFIGSerializer(serializers.ModelSerializer):
                 "bom_status_options": ECPMP_BOM_STATUS_OPTIONS,
                 "reminder_settings": constants.GC_REMINDER_SETTINGS,
                 "document_types": constants.GC_PROJECT_DOCUMENT_TYPES,
+                "correspondence_types": constants.GC_CORRESPONDENCE_TYPES,
                 "document_status": constants.GC_DOCUMENT_STATUSES,
                 "document_internal_review_status": constants.GC_DOCUMENT_INTERNAL_REVIEW_STATUSES,
                 "document_external_review_status": constants.GC_DOCUMENT_EXTERNAL_REVIEW_STATUSES,
@@ -216,6 +249,19 @@ class ECPMPCONFIGSerializer(serializers.ModelSerializer):
                 "rooms": constants.GC_ROOMS,
                 "skills": constants.GC_SKILLS,
             }
+
+            # document_types: an empty/partial stored list must still offer the canonical
+            # project types -- missing canonical entries are appended, custom entries kept.
+            if "document_types" in representation:
+                representation["document_types"] = merge_missing_document_type_defaults(
+                    representation["document_types"], constants.GC_PROJECT_DOCUMENT_TYPES
+                )
+
+            # LOT 3B stabilization: same backfill for Correspondence Type reference data.
+            if "correspondence_types" in representation:
+                representation["correspondence_types"] = merge_missing_document_type_defaults(
+                    representation["correspondence_types"], constants.GC_CORRESPONDENCE_TYPES
+                )
 
             for field, default_values in default_values_mapping.items():
                 if field in representation:

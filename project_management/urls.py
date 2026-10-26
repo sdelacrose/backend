@@ -12,6 +12,32 @@ from project_management.views import ContactViewset, DocumentViewSet, FolderView
     UpdateFreelancerProjectOnConnectionRevoke, TimesheetWeekViewSet, MonthlyTimesheetViewSet, \
     CompanyPublicHolidayViewSet, ProjectMatrixConfigViewSet, SolutionDemandViewSet, RequirementViewSet, \
     TransportViewSet, PartsListConfigViewSet, SolutionSpaceConfigViewSet, MachineConfigViewSet, EquipmentConfigViewSet, AvailableProductPartViewSet, MachineViewSet, EquipmentViewSet, BillOfMaterialPartViewSet, CompanySolutionSpaceItemViewSet, ProjectSolutionSpaceItemViewSet, ProjectWorkstationViewSet, BomGenerationRunViewSet, ProcessAssemblyRecommendationRunViewSet, MatrixCommentViewSet, PartPurchaseIntentViewSet, SupplierPaymentMethodViewSet, ProductAssemblyExtractionRunViewSet, ProductAttributeExtractionRunViewSet, ProcessAssemblyExtractionRunViewSet, ProcessAttributeExtractionRunViewSet
+from project_management.views.document_register import DocumentRegisterViewSet
+from project_management.views.document_attachment import DocumentAttachmentViewSet
+from project_management.views.correspondence import (
+    CorrespondenceViewSet,
+    CorrespondenceAttachmentViewSet,
+)
+from project_management.views.correspondence_workflow import (
+    CorrespondenceValidationWorkflowViewSet,
+)
+from project_management.views.correspondence_send import CorrespondenceSendViewSet
+from project_management.views.correspondence_template import CorrespondenceTemplateViewSet
+from project_management.views.transmittal import (
+    TransmittalEventViewSet,
+    TransmittalIssueView,
+    TransmittalItemViewSet,
+    TransmittalViewSet,
+)
+from project_management.views.correspondances_register import CorrespondancesRegisterView
+from project_management.views.document_revision import DocumentRevisionViewSet
+from project_management.views.client_distribution_history import ClientDistributionHistoryView
+from project_management.views.document_history_events import DocumentHistoryEventsView
+from project_management.views.document_workflow import DocumentWorkflowViewSet
+from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet
+from project_management.views.supplier_surveillance_template import SupplierSurveillanceTemplateViewSet
+from project_management.views.document_type_review_duration import DocumentReviewDurationViewSet
+from project_management.views.supplier_surveillance_review import SupplierSurveillanceReviewViewSet
 from project_management.views.document_search import (
     DocumentContentSearchAPIView,
     DocumentIndexBackfillAPIView,
@@ -533,6 +559,96 @@ urlpatterns = [
     path('document/bulk-update', DocumentViewSet.as_view({
         'patch': 'bulk_update',
     }), name='document-bulk-update'),
+    path('document/issuer-companies', DocumentViewSet.as_view({
+        'get': 'issuer_companies',
+    }), name='document-issuer-companies'),
+    path('document-register', DocumentRegisterViewSet.as_view({'get': 'list'}), name='document-register'),
+    path('document-register/filter-options', DocumentRegisterViewSet.as_view({'get': 'filter_options'}), name='document-register-filter-options'),
+    path('document-register/<int:document_id>', DocumentRegisterViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+    }), name='document-register-detail'),
+    path('document/<int:document_id>/revisions', DocumentRevisionViewSet.as_view({'get': 'list', 'post': 'create'}), name='document-revisions'),
+    path('document/<int:document_id>/revisions/<int:revision_id>/download', DocumentRevisionViewSet.as_view({'get': 'download'}), name='document-revision-download'),
+    # HISTORY-2: a tiny, read-only Client Distribution History -- section 12/13 (never a
+    # replacement for the Transmittal API itself).
+    path('document/<int:document_id>/client-distribution-history', ClientDistributionHistoryView.as_view(), name='document-client-distribution-history'),
+    # HISTORY-4: All Events -- a read model only, aggregated dynamically (section 3/24).
+    path('document/<int:document_id>/history-events', DocumentHistoryEventsView.as_view(), name='document-history-events'),
+    path('document/<int:document_id>/attachments', DocumentAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='document-attachments'),
+    path('document/<int:document_id>/attachments/<int:attachment_id>', DocumentAttachmentViewSet.as_view({'delete': 'destroy'}), name='document-attachment-detail'),
+    path('document/<int:document_id>/attachments/<int:attachment_id>/download', DocumentAttachmentViewSet.as_view({'get': 'download'}), name='document-attachment-download'),
+
+    # LOT 3B: Correspondence -- a formal external communication, not a Document/Livrable.
+    path('correspondence', CorrespondenceViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondences'),
+    path('correspondence/<int:pk>', CorrespondenceViewSet.as_view({
+        'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy',
+    }), name='correspondence-detail'),
+    path('correspondence/<int:correspondence_id>/attachments', CorrespondenceAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-attachments'),
+    path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>', CorrespondenceAttachmentViewSet.as_view({'delete': 'destroy'}), name='correspondence-attachment-detail'),
+    path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>/download', CorrespondenceAttachmentViewSet.as_view({'get': 'download'}), name='correspondence-attachment-download'),
+    # LOT 3D-3D1: internal validation workflow of an OUT Correspondence (NOT DocumentWorkflow --
+    # see models/correspondence_workflow.py for why).
+    path('correspondence/<int:correspondence_id>/workflow', CorrespondenceValidationWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='correspondence-workflow'),
+    path('correspondence/<int:correspondence_id>/workflow/actions', CorrespondenceValidationWorkflowViewSet.as_view({'post': 'act'}), name='correspondence-workflow-action'),
+    path('correspondence/<int:correspondence_id>/workflow/actors', CorrespondenceValidationWorkflowViewSet.as_view({'get': 'actor_options'}), name='correspondence-workflow-actors'),
+    # LOT 3D-3D2: the SEND step for an approved OUT Correspondence (see
+    # services/correspondence_send.py).
+    path('correspondence/<int:correspondence_id>/send', CorrespondenceSendViewSet.as_view({'get': 'retrieve', 'post': 'send'}), name='correspondence-send'),
+    # MAIL-1.4-D: the proof of one send -- download of a kept file, and a manual retry of its archiving.
+    path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/files/<int:file_id>/download', CorrespondenceSendViewSet.as_view({'get': 'proof_file_download'}), name='correspondence-send-proof-file-download'),
+    path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/retry', CorrespondenceSendViewSet.as_view({'post': 'proof_retry'}), name='correspondence-send-proof-retry'),
+    # MAIL-1.5-B: the company's library of e-mail templates (no delete: a template is deactivated).
+    path('correspondence-templates', CorrespondenceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-templates'),
+    path('correspondence-templates/<int:pk>', CorrespondenceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='correspondence-template-detail'),
+    path('correspondence-templates/<int:pk>/apply', CorrespondenceTemplateViewSet.as_view({'post': 'apply'}), name='correspondence-template-apply'),
+
+    # LOT 3C: Transmittal -- a formal transmission record/bordereau, not a Correspondence.
+    path('transmittal', TransmittalViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittals'),
+    path('transmittal/<int:pk>', TransmittalViewSet.as_view({
+        'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy',
+    }), name='transmittal-detail'),
+    path('transmittal/<int:transmittal_id>/items', TransmittalItemViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittal-items'),
+    path('transmittal/<int:transmittal_id>/items/<int:item_id>', TransmittalItemViewSet.as_view({'delete': 'destroy'}), name='transmittal-item-detail'),
+    path('transmittal/<int:transmittal_id>/issue', TransmittalIssueView.as_view({'post': 'create'}), name='transmittal-issue'),
+    path('transmittal/<int:transmittal_id>/events', TransmittalEventViewSet.as_view({'get': 'list'}), name='transmittal-events'),
+
+    # LOT 3D-2: unified read-only Correspondances register (Correspondence + Transmittal
+    # projection). No new model/table -- see services.correspondances_register.
+    path('correspondances', CorrespondancesRegisterView.as_view(), name='correspondances-register'),
+
+    path('document/<int:document_id>/workflow', DocumentWorkflowViewSet.as_view({'post': 'start_current'}), name='document-workflow-start'),
+    path('document/<int:document_id>/revisions/<int:revision_id>/workflow', DocumentWorkflowViewSet.as_view({'get': 'retrieve', 'post': 'start'}), name='document-revision-workflow'),
+    path('document/<int:document_id>/revisions/<int:revision_id>/workflow/actions', DocumentWorkflowViewSet.as_view({'post': 'act'}), name='document-revision-workflow-action'),
+    # L3B: Supplier Surveillance foundation -- on-demand creation only, no update/delete/close.
+    path('document/<int:document_id>/revisions/<int:revision_id>/supplier-surveillance', SupplierSurveillanceViewSet.as_view({'get': 'retrieve', 'post': 'create'}), name='document-revision-supplier-surveillance'),
+    # L3C: active Surveillance Templates available for this exact revision's Project/Company.
+    path('document/<int:document_id>/revisions/<int:revision_id>/supplier-surveillance-templates', SupplierSurveillanceViewSet.as_view({'get': 'templates'}), name='document-revision-supplier-surveillance-templates'),
+    # L3C: Surveillance Template library editor (Company-scoped, Project-configuration-permission-gated).
+    path('supplier-surveillance-templates', SupplierSurveillanceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='supplier-surveillance-templates'),
+    path('supplier-surveillance-templates/<int:pk>', SupplierSurveillanceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='supplier-surveillance-template-detail'),
+    # L3H-1: Review Durations configuration (Project + Document Type scoped) -- configuration
+    # only, no due date/overdue (those remain L3H-2/L3H-3/future lots).
+    path('document-review-durations', DocumentReviewDurationViewSet.as_view({'get': 'list', 'post': 'upsert'}), name='document-review-durations'),
+    # FINISH-B: one Save action persists every dirty row (bulk-table UX) -- same ViewSet,
+    # narrow additive action, no second configuration model.
+    path('document-review-durations/bulk-upsert', DocumentReviewDurationViewSet.as_view({'post': 'bulk_upsert'}), name='document-review-durations-bulk-upsert'),
+    # L3D: Reviewers + execution of one Supplier Surveillance (keyed by the Surveillance's own id).
+    path('supplier-surveillance/<int:surveillance_id>/reviewers', SupplierSurveillanceReviewViewSet.as_view({'get': 'list_reviewers', 'post': 'assign_reviewer_action'}), name='supplier-surveillance-reviewers'),
+    path('supplier-surveillance/<int:surveillance_id>/reviewers/<int:assignment_id>', SupplierSurveillanceReviewViewSet.as_view({'delete': 'remove_reviewer_action'}), name='supplier-surveillance-reviewer-detail'),
+    path('supplier-surveillance/<int:surveillance_id>/my-review', SupplierSurveillanceReviewViewSet.as_view({'get': 'my_review'}), name='supplier-surveillance-my-review'),
+    path('supplier-surveillance/<int:surveillance_id>/my-review/responses', SupplierSurveillanceReviewViewSet.as_view({'post': 'save_my_responses'}), name='supplier-surveillance-my-review-responses'),
+    path('supplier-surveillance/<int:surveillance_id>/my-review/complete', SupplierSurveillanceReviewViewSet.as_view({'post': 'complete_my_review'}), name='supplier-surveillance-my-review-complete'),
+    path('supplier-surveillance/<int:surveillance_id>/events', SupplierSurveillanceReviewViewSet.as_view({'get': 'events'}), name='supplier-surveillance-events'),
+    # L3E: the one-way READY_FOR_CLOSURE -> CLOSED transition.
+    path('supplier-surveillance/<int:surveillance_id>/close', SupplierSurveillanceReviewViewSet.as_view({'post': 'close_surveillance_action'}), name='supplier-surveillance-close'),
+    # L3G-2: manual retry when automatic post-closure evidence generation failed (section 23) --
+    # idempotent, same generation path as the automatic attempt.
+    path('supplier-surveillance/<int:surveillance_id>/evidence/generate', SupplierSurveillanceReviewViewSet.as_view({'post': 'generate_evidence_action'}), name='supplier-surveillance-evidence-generate'),
+    path('document-control/<int:control_id>', DocumentRegisterViewSet.as_view({
+        'get': 'retrieve',
+        'patch': 'partial_update',
+    }), name='document-control-detail'),
 
     path('document/<int:pk>', DocumentViewSet.as_view({
         'get': 'retrieve',         

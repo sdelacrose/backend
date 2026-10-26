@@ -124,6 +124,29 @@ class ProjectSerializer(serializers.ModelSerializer):
             for machine in obj.machines.all().order_by("sort_order", "id")
         ]
 
+    def validate_project_code(self, value):
+        # Proposed automatically when blank; editable only until the first document of the
+        # project has a permanent reference (then locked, derived from the documents).
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from project_management.services.project_codes import (
+            assert_project_code_change_allowed,
+            normalize_project_code,
+        )
+
+        value = normalize_project_code(value)
+        if self.instance is None:
+            return value  # creation: uniqueness is checked with the owner in validate()
+        if not value or value == self.instance.project_code:
+            return self.instance.project_code
+        self.instance.project_code = value
+        try:
+            assert_project_code_change_allowed(self.instance)
+        except DjangoValidationError as error:
+            raise serializers.ValidationError(error.messages)
+        finally:
+            self.instance.refresh_from_db(fields=["project_code"])
+        return value
+
     def validate_company_profile(self, value):
         if value and not value.users.filter(id=self.context.get('user').id).exists():
             raise serializers.ValidationError(f"Company profile {value} does not belong to this user")
@@ -452,6 +475,23 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         request_user = self.context['request'].user
+
+        if self.instance is None and attrs.get('project_code'):
+            from project_management.models import Project
+            from project_management.services.project_codes import (
+                is_project_code_taken,
+                validate_project_code_value,
+            )
+            from django.core.exceptions import ValidationError as DjangoValidationError
+
+            candidate = Project(
+                company_profile=attrs.get('company_profile'),
+                user=attrs.get('user') or request_user,
+            )
+            try:
+                validate_project_code_value(candidate, attrs['project_code'])
+            except DjangoValidationError as error:
+                raise serializers.ValidationError({'project_code': error.messages})
 
         # Check if the request user is a freelancer
         is_request_user_freelancer = request_user.is_freelancer

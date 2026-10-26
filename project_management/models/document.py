@@ -1,3 +1,4 @@
+from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.core.exceptions import ValidationError
@@ -160,17 +161,91 @@ class Folder(models.Model):
     def __str__(self):
         return self.name
 
+class DocumentOrigin(models.TextChoices):
+    """Who produced the document. A business classification, explicit and never inferred.
+
+    Independent from Document.status (business status), the internal lifecycle, the internal
+    workflow and any future distribution / review purpose. An INTERNAL document sent to a client
+    stays INTERNAL; CLIENT means the client produced and sent the document to us.
+    """
+
+    INTERNAL = "INTERNAL", "Internal"
+    CLIENT = "CLIENT", "Client"
+    SUPPLIER = "SUPPLIER", "Supplier"
+
+
 class Document(models.Model):
     folder = models.ForeignKey(Folder, related_name='documents', on_delete=models.CASCADE)
     author = models.ForeignKey(User, related_name='authored_documents', on_delete=models.SET_NULL, null=True, blank=True) # assignee
-    file = models.FileField(upload_to=get_upload_path)
+    # MAIN controlled file, kept as the compatibility pointer to the latest stored version.
+    # Empty ("") for a register entry whose main document is not created yet (TO_CREATE).
+    file = models.FileField(upload_to=get_upload_path, blank=True)
     file_name = models.CharField(max_length=500, null=True, blank=True)
     document_type = models.CharField(max_length=255, null=True, blank=True)
+    # D13 live review: the three independent, non-mutually-exclusive business references a
+    # Document may carry. identification_number is the pre-existing generic field, reused as the
+    # canonical SUPPLIER reference (already its only real-world use, LOT 3E-1C2 reception) --
+    # never also used for Client. full_document_number (below) remains the canonical INTERNAL
+    # reference, now only ever generated for INTERNAL-origin documents (see the serializer's own
+    # create()). client_reference is new: no prior field represented it at all.
     identification_number = models.CharField(max_length=255, null=True, blank=True)
+    client_reference = models.CharField(max_length=255, null=True, blank=True)
     status = models.CharField(max_length=255, null=True, blank=True)
+    # Legacy documents predate this distinction and keep the internal Document Control behaviour.
+    document_origin = models.CharField(
+        max_length=20,
+        choices=DocumentOrigin.choices,
+        default=DocumentOrigin.INTERNAL,
+        db_index=True,
+    )
+    # CLIENT / SUPPLIER only: the Network company (ContactCompany) that issued the document.
+    external_issuer_company = models.ForeignKey(
+        "ContactCompany",
+        related_name="issued_documents",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    # FINISH-C: the business date this CLIENT-origin ("Input Data") document was actually
+    # received -- never the upload/creation timestamp (uploaded_at/DocumentRevision.created_at
+    # are system events, not a business fact the Client stated). Same DateField convention as
+    # Correspondence.received_date. Nullable: existing historical CLIENT documents have no
+    # authoritative receipt date and are never backfilled; required only at CLIENT Input Data
+    # creation time, enforced in the serializer (see services/validators), not at this model
+    # layer -- INTERNAL/SUPPLIER documents and Company Documents never require it.
+    received_date = models.DateField(null=True, blank=True)
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
+    # L2A: "Client Transmittal Category" -- how this document is intended to be transmitted to
+    # the Client (Not sent / For review / For information, project/company-configurable via
+    # GC_TRANSMITTAL_CATEGORIES). Pre-existing field, reused as-is: already the exact field
+    # services.transmittal_eligibility checks for OUT Transmittal eligibility. Applies to
+    # INTERNAL and SUPPLIER origin (never CLIENT -- a Client-origin document is already received
+    # FROM the Client, not part of outbound-to-Client distribution classification); enforced by
+    # the frontend form only (origin-conditional visibility/submission), not at this model layer.
     transmittal_category = models.CharField(max_length=255, null=True, blank=True)
+
+    class SupplierTransmittalCategory(models.TextChoices):
+        FOR_INFORMATION = "FOR_INFORMATION", "For information"
+        FOR_REVIEW = "FOR_REVIEW", "For review"
+
+    # L2A: "Supplier Transmittal Category" -- why the Supplier sent us this document (SUPPLIER
+    # origin only). A distinct, inbound concept from transmittal_category above (never reused for
+    # it): fixed canonical values, not project/company-configurable. Nullable/blank: optional,
+    # and never meaningful for INTERNAL/CLIENT documents or historical records.
+    supplier_transmittal_category = models.CharField(
+        max_length=20,
+        choices=SupplierTransmittalCategory.choices,
+        null=True,
+        blank=True,
+    )
+    # Document identity metadata (not versioned): plain-text context and lightweight tags.
+    description = models.TextField(blank=True, default="")
+    tags = ArrayField(
+        models.CharField(max_length=100),
+        default=list,
+        blank=True,
+    )
     
     # Document numbering system fields
     category = models.CharField(max_length=255, null=True, blank=True)
@@ -205,6 +280,14 @@ class Document(models.Model):
         return self.file.name
 
     def delete(self, *args, **kwargs):
+        # Documentary evidence (workflow history, approved revision) is never hard-deleted.
+        from project_management.services.document_workflow import (
+            DOCUMENT_EVIDENCE_MESSAGE,
+            document_has_evidence,
+        )
+
+        if document_has_evidence(self):
+            raise ValidationError(DOCUMENT_EVIDENCE_MESSAGE)
         # Delete associated historical records
         self.history.all().delete()
         # Call the parent class's delete method
@@ -233,6 +316,9 @@ class DocumentReferenceCounter(models.Model):
         null=True,
         blank=True,
     )
+    # "" = the library counter (legacy behaviour and the default PROJECT scope); the other
+    # sequence scopes use their own keys ("company", "discipline:STR", "type:DWG").
+    scope_key = models.CharField(max_length=100, default="", blank=True)
     last_sequence = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -260,7 +346,7 @@ class DocumentReferenceCounter(models.Model):
                 name="document_reference_counter_single_owner",
             ),
             models.UniqueConstraint(
-                fields=["project"],
+                fields=["project", "scope_key"],
                 condition=models.Q(
                     project__isnull=False,
                     company_profile__isnull=True,
@@ -269,7 +355,7 @@ class DocumentReferenceCounter(models.Model):
                 name="unique_document_reference_counter_project",
             ),
             models.UniqueConstraint(
-                fields=["company_profile"],
+                fields=["company_profile", "scope_key"],
                 condition=models.Q(
                     project__isnull=True,
                     company_profile__isnull=False,
@@ -278,7 +364,7 @@ class DocumentReferenceCounter(models.Model):
                 name="unique_document_reference_counter_company",
             ),
             models.UniqueConstraint(
-                fields=["freelancer"],
+                fields=["freelancer", "scope_key"],
                 condition=models.Q(
                     project__isnull=True,
                     company_profile__isnull=True,
