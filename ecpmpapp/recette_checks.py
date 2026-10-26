@@ -8,9 +8,19 @@ a value, so nothing secret can reach a log.
 import ipaddress
 import re
 import socket
+from urllib.parse import urlsplit
 
 # Strings that identify the production/staging hosts and accounts known to this codebase.
-DEFAULT_FORBIDDEN_MARKERS = ("sharemundolinks", "foliumaitech", "amazonaws.com", "024848485297")
+# The production domain is sharemundolinks.com (staging/dev are sub-domains of it): the marker is the
+# full domain, so the recette domain (e.g. recette.sharemundolinks.fr) is not caught by it.
+DEFAULT_FORBIDDEN_MARKERS = ("sharemundolinks.com", "amplifyapp.com", "foliumaitech", "amazonaws.com",
+                             "024848485297")
+
+# Application URLs that must point at the recette host(s): checked on the SETTINGS (what the code
+# really uses), not only on the environment, because common.py can inherit production values.
+_HOST_URL_SETTINGS = ("BACKEND_URL", "FRONTEND_URL", "FRONTEND_URL_CPM", "FRONTEND_URL_CORE",
+                      "FRONTEND_URL_ENTERPRISE", "FRONTEND_URL_BACK_OFFICE", "MS_REDIRECT_URI",
+                      "AZURE_REDIRECT_URI")
 
 # If any of these is set, the environment is wired to something recette must never reach.
 FORBIDDEN_ENV = (
@@ -31,6 +41,11 @@ def _https_urls(values):
 
 
 _PROXY_RE = re.compile(r"^http://[a-z0-9_-]+:\d+/?$")
+
+
+def _host_of(url):
+    """Lower-cased host of a URL (the scheme may be missing)."""
+    return urlsplit(url if "://" in url else "//" + url).hostname or ""
 
 
 def _addresses(host, resolve):
@@ -97,6 +112,15 @@ def collect_problems(conf, environ, resolve=socket.getaddrinfo):
                  "AUTH0_ISSUER_BASE_URL", "MS_REDIRECT_URI"):
         value = str(environ.get(name, "")).lower()
         need(not any(marker in value for marker in markers), f"{name} points to a production/staging marker")
+    allowed = {h.lower() for h in hosts}
+    for name in _HOST_URL_SETTINGS:
+        value = str(conf.get(name) or "").strip()
+        if not value:
+            problems.append(f"{name} must be set to a recette URL")
+            continue
+        need(_host_of(value) in allowed, f"{name} must point to one of RECETTE_ALLOWED_HOSTS")
+        need(not any(marker in value.lower() for marker in markers),
+             f"{name} setting points to a production/staging marker")
     for name in FORBIDDEN_ENV:
         need(not str(environ.get(name, "")).strip(), f"{name} must not be set in recette")
     for name, default in _INSECURE_DEFAULTS.items():

@@ -25,6 +25,14 @@ def safe_conf(**overrides):
         "MAIL_SEND_PROOF_ARCHIVING_ENABLED": False,
         "MAIL_SEND_PROOF_AUTO_ARCHIVE_SINCE": None,
         "RECETTE_MAIL_SEND_ENABLED": False,
+        "BACKEND_URL": "https://recette.example.invalid/",
+        "FRONTEND_URL": "https://recette.example.invalid",
+        "FRONTEND_URL_CPM": "https://recette.example.invalid",
+        "FRONTEND_URL_CORE": "https://recette.example.invalid",
+        "FRONTEND_URL_ENTERPRISE": "https://recette.example.invalid",
+        "FRONTEND_URL_BACK_OFFICE": "https://recette.example.invalid",
+        "MS_REDIRECT_URI": "https://recette.example.invalid/api/user/auth/outlook/callback",
+        "AZURE_REDIRECT_URI": "https://recette.example.invalid/api/project_management/azure/callback",
     }
     conf.update(overrides)
     return conf
@@ -119,6 +127,36 @@ class RecetteChecksTests(SimpleTestCase):
         self.assertFlags("AUTH0_DOMAIN", environ={"AUTH0_DOMAIN": "tenant.sharemundolinks.com"})
         self.assertFlags("FRONTEND_URL_CPM", environ={"FRONTEND_URL_CPM": "https://cpm.sharemundolinks.com"})
         self.assertFlags("BACKEND_URL", environ={"RECETTE_FORBIDDEN_MARKERS": "example.invalid"})
+
+    def test_recette_domain_containing_the_brand_name_is_accepted(self):
+        host = "recette.sharemundolinks.fr"
+        url = f"https://{host}"
+        conf = {"ALLOWED_HOSTS": [host], "CORS_ALLOWED_ORIGINS": [url], "CSRF_TRUSTED_ORIGINS": [url],
+                "BACKEND_URL": url + "/", "MS_REDIRECT_URI": url + "/api/user/auth/outlook/callback",
+                "AZURE_REDIRECT_URI": url + "/api/project_management/azure/callback"}
+        for name in ("FRONTEND_URL", "FRONTEND_URL_CPM", "FRONTEND_URL_CORE", "FRONTEND_URL_ENTERPRISE",
+                     "FRONTEND_URL_BACK_OFFICE"):
+            conf[name] = url
+        environ = {"BACKEND_URL": url + "/", "FRONTEND_URL": url, "FRONTEND_URL_CPM": url,
+                   "AUTH0_DOMAIN": "sharemundo-links-recette.eu.auth0.com",
+                   "AUTH0_ISSUER_BASE_URL": "https://sharemundo-links-recette.eu.auth0.com"}
+        self.assertEqual(self.problems(conf, environ), [])
+
+    def test_production_and_staging_hosts_are_still_refused(self):
+        for host in ("cpm.sharemundolinks.com", "staging-core.sharemundolinks.com",
+                     "bo.sharemundolinks.com", "x.d1rq49at5kvgwq.amplifyapp.com"):
+            self.assertFlags("FRONTEND_URL_CPM setting", conf={
+                "FRONTEND_URL_CPM": f"https://{host}", "ALLOWED_HOSTS": [host, "recette.example.invalid"]})
+
+    def test_inherited_production_urls_are_refused(self):
+        # what common.py leaves when ENV is not one of its own values
+        self.assertFlags("FRONTEND_URL_CPM", conf={"FRONTEND_URL_CPM": "{}cpm.sharemundolinks.com"})
+        self.assertFlags("FRONTEND_URL_BACK_OFFICE", conf={"FRONTEND_URL_BACK_OFFICE": "bo.sharemundolinks.com"})
+        self.assertFlags("FRONTEND_URL_CORE", conf={"FRONTEND_URL_CORE": ""})
+
+    def test_urls_must_point_to_an_allowed_host(self):
+        for name in ("BACKEND_URL", "FRONTEND_URL_ENTERPRISE", "MS_REDIRECT_URI", "AZURE_REDIRECT_URI"):
+            self.assertFlags(f"{name} must point", conf={name: "https://other.example.invalid/x"})
 
     def test_settings_module_and_celery_env_are_coherent(self):
         self.assertFlags("DJANGO_SETTINGS_MODULE", environ={"DJANGO_SETTINGS_MODULE": "ecpmpapp.settings.staging"})
