@@ -38,9 +38,10 @@ jobs:
               env:
                   GH_USERNAME: ${{ secrets.GH_USERNAME }}
                   GH_TOKEN: ${{ secrets.GH_TOKEN }}
-                  REPO_NAME: ${{ secrets.REPO_NAME }}
+                  MODELS_REF: f8ea5539f8208a1b17589b17159269275003e776
               run: |
-                  git clone --depth 1 "https://${GH_USERNAME}:${GH_TOKEN}@github.com/EC-PMP/${REPO_NAME}.git" ../admin-server-models
+                  git clone "https://${GH_USERNAME}:${GH_TOKEN}@github.com/sdelacrose/admin-server-models.git" ../admin-server-models
+                  git -C ../admin-server-models checkout --detach "${MODELS_REF}"
 
             - name: Configure AWS credentials
               uses: aws-actions/configure-aws-credentials@v1
