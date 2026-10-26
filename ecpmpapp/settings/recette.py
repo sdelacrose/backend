@@ -23,6 +23,15 @@ for _name, _value in (
     ("AWS_ACCESS_KEY_ID", ""),
     ("AWS_SECRET_ACCESS_KEY", ""),
     ("AWS_STORAGE_BUCKET_NAME", "links-recette-unused"),
+    # LINKS-RECETTE-05H: no Microsoft app registration / Auth0 M2M client yet. Empty is NOT a
+    # credential: userapis.recette_guard refuses every Microsoft/SharePoint flow while the app
+    # registration is empty, and the health check never calls Auth0 without its own credentials.
+    ("AUTH0_M2M_CLIENT_ID", ""),
+    ("AUTH0_M2M_CLIENT_SECRET", ""),
+    ("AZURE_CLIENT_ID", ""),
+    ("AZURE_CLIENT_SECRET", ""),
+    ("AZURE_TENANT_ID", ""),
+    ("MS_REDIRECT_URI", "api/user/auth/outlook/callback"),
 ):
     os.environ.setdefault(_name, _value)
 

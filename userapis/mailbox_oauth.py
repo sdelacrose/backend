@@ -37,6 +37,7 @@ from userapis.recette_guard import (
     check_mailbox_address,
     confirm_tenant_with_microsoft,
     recette_mode,
+    require_microsoft_app,
 )
 from userapis.token_encryption import TokenCryptoError, encrypt_token
 
@@ -64,6 +65,7 @@ def build_mail_oauth_url(user, mailbox):
     allowed redirect URI, already in use by the Calendar flow; this is why the callback is an
     extension of the EXISTING MicrosoftAuthViewSet.callback rather than a second route."""
     try:
+        require_microsoft_app()                         # LINKS-RECETTE-05H: no-op outside recette
         check_mailbox_address(mailbox.email_address)    # LINKS-RECETTE-03: no-op outside recette
     except RecetteMailBlocked as error:
         raise MailOAuthError(str(error)) from error
@@ -240,6 +242,7 @@ def handle_mail_oauth_callback(state_token, code):
         raise MailOAuthError("You are not authorized to connect this mailbox.")
 
     try:
+        require_microsoft_app()                         # LINKS-RECETTE-05H: no-op outside recette
         check_mailbox_address(mailbox.email_address)    # LINKS-RECETTE-03: no-op outside recette
     except RecetteMailBlocked as error:
         raise MailOAuthError(str(error)) from error

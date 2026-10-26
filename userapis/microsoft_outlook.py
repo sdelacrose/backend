@@ -17,7 +17,7 @@ from ecpmpapp.constants import (
 )
 from models.models import UserOutlookCredentials
 from project_management.utils import get_sharemundo_user
-from userapis.recette_guard import RecetteMailBlocked, block_in_recette
+from userapis.recette_guard import RecetteMailBlocked, block_in_recette, microsoft_app_configured
 from userapis.token_encryption import ENCRYPTION_PREFIX, TokenCryptoError, encrypt_token
 
 
@@ -382,6 +382,8 @@ def refresh_outlook_access_token(user, scope=MS_OUTLOOK_CALENDAR_SCOPES):
         return None
     credentials = user.outlook_credentials
     if not credentials.outlook_refresh_token:
+        return None
+    if not microsoft_app_configured():     # LINKS-RECETTE-05H: no Microsoft call without an app registration
         return None
 
     try:
