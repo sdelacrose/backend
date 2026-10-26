@@ -25,6 +25,16 @@ from project_management.tasks import fetch_sharepoint_data
 from project_management.utils import has_project_permission
 from project_management.permissions import SharePointProjectPermission
 from ecpmpapp.utils import require_any_permission
+from userapis.recette_guard import microsoft_app_configured
+
+
+def _recette_microsoft_unavailable():
+    """LINKS-RECETTE-05H: the Azure/SharePoint flows make Microsoft calls with the app registration;
+    in recette without one they answer 403 and call nothing (always None elsewhere)."""
+    if microsoft_app_configured():
+        return None
+    return Response({"error": "The Microsoft app registration is not configured in recette."},
+                    status=status.HTTP_403_FORBIDDEN)
 # from companyprofileapis.decorators import api_login_required
 from ecpmpapp.constants import (
     MS_OAUTH_AUTHORIZE_URL, 
@@ -38,6 +48,9 @@ from ecpmpapp.constants import (
 #@method_decorator(api_login_required, name="dispatch")
 class AzureLoginAPIView(APIView):
     def get(self, request):
+        blocked = _recette_microsoft_unavailable()
+        if blocked:
+            return blocked
         user = request.user
         redirect_uri = request.GET.get('redirect_uri')
         if not user.is_authenticated:
@@ -70,6 +83,9 @@ class AzureCallbackAPIView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request):
+        blocked = _recette_microsoft_unavailable()
+        if blocked:
+            return blocked
 
         state = request.GET.get('state')
         code = request.GET.get('code')
@@ -318,6 +334,9 @@ class FetchSharePointFilesAPIView(GenericAPIView):
 
 class AzureTokenRefreshAPIView(APIView):
     def post(self, request):
+        blocked = _recette_microsoft_unavailable()
+        if blocked:
+            return blocked
         user = request.user  # Get the current user
         azure_token = AzureToken.objects.get(user=user)
 

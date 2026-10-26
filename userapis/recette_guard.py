@@ -128,6 +128,21 @@ def confirm_tenant_with_microsoft(access_token):
         raise RecetteMailBlocked("This Microsoft account is not in the recette Microsoft 365 tenant.")
 
 
+def microsoft_app_configured():
+    """False in recette while the Microsoft app registration (client id, secret, tenant) is
+    incomplete; always True elsewhere. Callers must then make NO Microsoft/SharePoint call."""
+    if not recette_mode():
+        return True
+    return all(str(getattr(settings, name, "") or "").strip()
+               for name in ("MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_TENANT_ID",
+                            "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"))
+
+
+def require_microsoft_app():
+    if not microsoft_app_configured():
+        raise RecetteMailBlocked("The Microsoft app registration is not configured in recette.")
+
+
 def block_in_recette(what):
     """Disable an outbound feature outright in recette (no-op elsewhere)."""
     if recette_mode():

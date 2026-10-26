@@ -168,3 +168,54 @@ class RecetteMailboxAndTenantTests(SimpleTestCase):
         self.assertEqual(normalize_address(" A.B@C.D.invalid "), "a.b@c.d.invalid")
         for bad in (None, 1, "", "no-at", "a@b", "a b@c.invalid", "<a@c.invalid>", "a@c.invalid,b@c.invalid"):
             self.assertIsNone(normalize_address(bad), msg=repr(bad))
+
+
+# LINKS-RECETTE-05H: first start without Microsoft app registration / Auth0 M2M credentials.
+NO_APP = dict(RECETTE_MODE=True, MS_CLIENT_ID="", MS_CLIENT_SECRET="", MS_TENANT_ID="",
+              AZURE_CLIENT_ID="", AZURE_CLIENT_SECRET="", AZURE_TENANT_ID="")
+WITH_APP = {**NO_APP, **{k: "app-value" for k in NO_APP if k != "RECETTE_MODE"}}
+
+
+class MicrosoftAppRegistrationTests(SimpleTestCase):
+    @override_settings(**{**NO_APP, "RECETTE_MODE": False})
+    def test_inert_outside_recette(self):
+        from userapis.recette_guard import microsoft_app_configured, require_microsoft_app
+        self.assertTrue(microsoft_app_configured())
+        require_microsoft_app()
+
+    @override_settings(**NO_APP)
+    def test_recette_without_registration_refuses_every_microsoft_flow(self):
+        from userapis.mailbox_oauth import MailOAuthError, build_mail_oauth_url
+        from userapis.microsoft_outlook import refresh_outlook_access_token
+        from userapis.recette_guard import microsoft_app_configured, require_microsoft_app
+        from project_management.views.sharepoint import (
+            AzureCallbackAPIView, AzureLoginAPIView, AzureTokenRefreshAPIView)
+        self.assertFalse(microsoft_app_configured())
+        with self.assertRaises(RecetteMailBlocked):
+            require_microsoft_app()
+        with self.assertRaises(MailOAuthError):
+            build_mail_oauth_url(Mock(), Mock())
+        user = Mock()
+        user.outlook_credentials.outlook_refresh_token = "stored-refresh"
+        with patch("userapis.microsoft_outlook.requests.post") as post, \
+                patch("project_management.views.sharepoint.requests.post") as sp_post, \
+                patch("project_management.views.sharepoint.requests.get") as sp_get:
+            self.assertIsNone(refresh_outlook_access_token(user))
+            for response in (AzureLoginAPIView().get(Mock()), AzureCallbackAPIView().get(Mock()),
+                             AzureTokenRefreshAPIView().post(Mock())):
+                self.assertEqual(response.status_code, 403)
+                self.assertIn("not configured in recette", response.data["error"])
+        for mocked in (post, sp_post, sp_get):
+            mocked.assert_not_called()
+
+    @override_settings(**WITH_APP)
+    def test_a_complete_registration_is_accepted(self):
+        from userapis.recette_guard import microsoft_app_configured
+        self.assertTrue(microsoft_app_configured())
+
+    def test_any_missing_value_counts_as_unconfigured(self):
+        from userapis.recette_guard import microsoft_app_configured
+        for name in ("MS_CLIENT_ID", "MS_CLIENT_SECRET", "MS_TENANT_ID",
+                     "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"):
+            with override_settings(**{**WITH_APP, name: "  "}):
+                self.assertFalse(microsoft_app_configured(), msg=name)
