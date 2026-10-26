@@ -1,0 +1,126 @@
+# LINKS-RECETTE-03B: the recette environment on ONE VM (OVHcloud VPS-2).
+#
+# Network isolation (this is what the application-level checks rely on, not only host names):
+#   * `internal` is a Docker `internal: true` network: containers on it have NO route to the
+#     Internet or to the host's other networks. Database, Redis, API, worker and frontend live there.
+#   * The ONLY container on both `internal` and `public` is the egress proxy, which allows HTTPS to
+#     login.microsoftonline.com, graph.microsoft.com and Auth0 (see squid.conf) and nothing else:
+#     no SMTP, no SQS/EventBridge/S3, no Firebase, no Matrix.
+#   * The reverse proxy is the only published port (443; 80 for the certificate challenge).
+# Secrets live in ./recette.env on the VM (never in Git); ecpmpapp.settings.recette refuses to
+# start if the environment is unsafe. Start order matters: the settings check resolves the database
+# and Redis names, so `depends_on: service_healthy` below is required.
+
+name: links-recette
+
+x-api: &api
+  image: links-recette-api:local            # built from ../../Dockerfile (models pinned by MODELS_REF)
+  env_file:
+    - path: ./recette.env
+      required: true
+  environment: &api_env
+    DJANGO_SETTINGS_MODULE: ecpmpapp.settings.recette
+    CELERY_ENV: recette
+    DB_HOST: links-recette-db
+    REDIS_HOST: links-recette-redis
+    HTTP_PROXY: http://links-recette-egress:3128
+    HTTPS_PROXY: http://links-recette-egress:3128
+    NO_PROXY: links-recette-db,links-recette-redis,links-recette-api,localhost,127.0.0.1
+  networks: [internal]
+  restart: unless-stopped
+  volumes:
+    - recette_data:/srv/links-recette
+
+services:
+  links-recette-db:
+    image: postgres:16
+    env_file: [{path: ./recette.env, required: true}]   # POSTGRES_DB=links_recette, POSTGRES_USER, POSTGRES_PASSWORD
+    networks: [internal]
+    restart: unless-stopped
+    volumes: [recette_db:/var/lib/postgresql/data]
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  links-recette-redis:
+    image: redis:7
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    networks: [internal]
+    restart: unless-stopped
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  links-recette-egress:
+    image: ubuntu/squid:6.6-24.04_edge
+    volumes: ["./squid.conf:/etc/squid/squid.conf:ro"]
+    networks: [internal, public]
+    restart: unless-stopped
+    mem_limit: 128m
+
+  links-recette-api:
+    <<: *api
+    depends_on:
+      links-recette-db: {condition: service_healthy}
+      links-recette-redis: {condition: service_healthy}
+      links-recette-egress: {condition: service_started}
+    mem_limit: 1536m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  # Optional (docker compose --profile worker up -d): proof archiving and document indexing only.
+  # Never a Celery Beat service: nothing is scheduled in recette.
+  links-recette-worker:
+    <<: *api
+    profiles: [worker]
+    entrypoint: []
+    command: ["celery", "-A", "ecpmpapp", "worker", "--loglevel=info", "--queues=celery,document_indexing", "--concurrency=1"]
+    depends_on:
+      links-recette-db: {condition: service_healthy}
+      links-recette-redis: {condition: service_healthy}
+    mem_limit: 1024m
+
+  # Placeholder image: the frontend has no Dockerfile yet. Outbound calls (Auth0) must go through
+  # the egress proxy (Node 24: NODE_USE_ENV_PROXY=1).
+  links-recette-frontend:
+    image: links-recette-frontend:local
+    env_file: [{path: ./recette.env, required: true}]
+    environment:
+      NODE_USE_ENV_PROXY: "1"
+      HTTP_PROXY: http://links-recette-egress:3128
+      HTTPS_PROXY: http://links-recette-egress:3128
+      NO_PROXY: links-recette-api,localhost,127.0.0.1
+    networks: [internal]
+    restart: unless-stopped
+    mem_limit: 1024m
+
+  links-recette-proxy:
+    image: caddy:2
+    env_file: [{path: ./recette.env, required: true}]   # RECETTE_HOSTNAME, RECETTE_ALLOWED_IPS
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - recette_caddy:/data
+    networks: [internal, public]
+    restart: unless-stopped
+    mem_limit: 128m
+    depends_on: [links-recette-api, links-recette-frontend]
+
+networks:
+  internal:
+    internal: true
+  public: {}
+
+volumes:
+  recette_db:
+  recette_data:
+  recette_caddy:

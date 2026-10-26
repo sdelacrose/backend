@@ -1,0 +1,12 @@
+# LINKS-RECETTE-03B: the single public entry point of the recette VM (automatic HTTPS).
+# RECETTE_HOSTNAME and RECETTE_ALLOWED_IPS (space-separated team addresses/CIDRs) come from recette.env.
+{$RECETTE_HOSTNAME} {
+	@outsiders not remote_ip {$RECETTE_ALLOWED_IPS}
+	respond @outsiders "Forbidden" 403
+
+	encode zstd gzip
+
+	@api path /api/* /static/*
+	reverse_proxy @api links-recette-api:8000
+	reverse_proxy links-recette-frontend:3000
+}

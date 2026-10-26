@@ -32,6 +32,12 @@ from ecpmpapp.constants import (
 )
 from userapis.mailbox_access import can_administer_mailbox
 from userapis.models import MailboxConnection, MailOAuthState
+from userapis.recette_guard import (
+    RecetteMailBlocked,
+    check_mailbox_address,
+    confirm_tenant_with_microsoft,
+    recette_mode,
+)
 from userapis.token_encryption import TokenCryptoError, encrypt_token
 
 STATE_PREFIX = "mail"
@@ -57,6 +63,10 @@ def build_mail_oauth_url(user, mailbox):
     Reuses settings.MS_REDIRECT_URI unchanged -- Azure's app registration has exactly one
     allowed redirect URI, already in use by the Calendar flow; this is why the callback is an
     extension of the EXISTING MicrosoftAuthViewSet.callback rather than a second route."""
+    try:
+        check_mailbox_address(mailbox.email_address)    # LINKS-RECETTE-03: no-op outside recette
+    except RecetteMailBlocked as error:
+        raise MailOAuthError(str(error)) from error
     state_row = MailOAuthState.objects.create(user=user, mailbox=mailbox)
     params = {
         "client_id": settings.MS_CLIENT_ID,
@@ -229,9 +239,25 @@ def handle_mail_oauth_callback(state_token, code):
     if not can_start_mail_oauth(user, mailbox):
         raise MailOAuthError("You are not authorized to connect this mailbox.")
 
+    try:
+        check_mailbox_address(mailbox.email_address)    # LINKS-RECETTE-03: no-op outside recette
+    except RecetteMailBlocked as error:
+        raise MailOAuthError(str(error)) from error
+
     tokens = get_mail_access_token(code)
     if "access_token" not in tokens:
         raise MailOAuthError("Failed to retrieve an access token from Microsoft.")
+    try:
+        confirm_tenant_with_microsoft(tokens["access_token"])    # nothing is stored for a foreign tenant
+    except RecetteMailBlocked as error:
+        raise MailOAuthError(str(error)) from error
+    if recette_mode() and mailbox.connection_type == MailboxConnection.ConnectionType.INDIVIDUAL:
+        # LINKS-RECETTE-03: the address (and its domain) is only a claim; in recette the identity
+        # behind the token is verified with Microsoft before anything is stored. Shared
+        # mailboxes keep verify_shared_mailbox_access below.
+        from userapis.mailbox_send import _verify_individual_sender_identity
+        if not _verify_individual_sender_identity(tokens["access_token"], mailbox.email_address):
+            raise MailOAuthError("The connected Microsoft account does not match this mailbox address.")
 
     try:
         store_mail_tokens(user, tokens)
