@@ -1,20 +1,25 @@
-# LINKS-RECETTE-03B: the recette environment on ONE VM (OVHcloud VPS-2).
+# LINKS-RECETTE-04B: the recette environment on ONE VM (OVHcloud VPS-2, Ubuntu 24.04).
 #
 # Network isolation (this is what the application-level checks rely on, not only host names):
 #   * `internal` is a Docker `internal: true` network: containers on it have NO route to the
 #     Internet or to the host's other networks. Database, Redis, API, worker and frontend live there.
-#   * The ONLY container on both `internal` and `public` is the egress proxy, which allows HTTPS to
-#     login.microsoftonline.com, graph.microsoft.com and Auth0 (see squid.conf) and nothing else:
-#     no SMTP, no SQS/EventBridge/S3, no Firebase, no Matrix.
-#   * The reverse proxy is the only published port (443; 80 for the certificate challenge).
-# Secrets live in ./recette.env on the VM (never in Git); ecpmpapp.settings.recette refuses to
-# start if the environment is unsafe. Start order matters: the settings check resolves the database
-# and Redis names, so `depends_on: service_healthy` below is required.
+#   * The ONLY containers on both `internal` and `public` are the egress proxy (HTTPS to the Microsoft
+#     hosts and to the one Auth0 tenant host of auth0-tenant.txt, nothing else: no SMTP, no
+#     SQS/EventBridge/S3, no Firebase, no Matrix) and the reverse proxy.
+#   * PostgreSQL and Redis publish no port. The reverse proxy is the only published port (443; 80 for
+#     the certificate challenge) and applies the team IP allow-list (see Caddyfile).
+#   * No Celery Beat service, no SMTP relay.
+# Secrets live in ./recette.env on the VM (chmod 600, never in Git). ecpmpapp.settings.recette
+# refuses to start if the environment is unsafe; it resolves the database and Redis names, hence
+# `depends_on: service_healthy`. Build the images first (see the comments of each service).
 
 name: links-recette
 
 x-api: &api
-  image: links-recette-api:local            # built from ../../Dockerfile (models pinned by MODELS_REF)
+  image: links-recette-api:local
+  build:
+    context: ../..                      # docker compose build links-recette-api
+    dockerfile: Dockerfile              # models package pinned by MODELS_REF, no credentials needed
   env_file:
     - path: ./recette.env
       required: true
@@ -59,7 +64,9 @@ services:
 
   links-recette-egress:
     image: ubuntu/squid:6.6-24.04_edge
-    volumes: ["./squid.conf:/etc/squid/squid.conf:ro"]
+    volumes:
+      - ./squid.conf:/etc/squid/squid.conf:ro
+      - ./auth0-tenant.txt:/etc/squid/auth0-tenant.txt:ro
     networks: [internal, public]
     restart: unless-stopped
     mem_limit: 128m
@@ -76,6 +83,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
+      start_period: 300s                # the first start applies ~480 migrations
 
   # Optional (docker compose --profile worker up -d): proof archiving and document indexing only.
   # Never a Celery Beat service: nothing is scheduled in recette.
@@ -89,11 +97,12 @@ services:
       links-recette-redis: {condition: service_healthy}
     mem_limit: 1024m
 
-  # Placeholder image: the frontend has no Dockerfile yet. Outbound calls (Auth0) must go through
-  # the egress proxy (Node 24: NODE_USE_ENV_PROXY=1).
+  # Built from the frontend repository's Dockerfile (NEXT_PUBLIC_* are build arguments):
+  #   docker build -t links-recette-frontend:local --build-arg NEXT_PUBLIC_BASE_API_URL=https://<host>/ ...
+  # Server-side Auth0 calls go through the egress proxy (NODE_USE_ENV_PROXY=1 is set in the image).
   links-recette-frontend:
     image: links-recette-frontend:local
-    env_file: [{path: ./recette.env, required: true}]
+    env_file: [{path: ./recette.env, required: true}]   # AUTH0_SECRET, AUTH0_BASE_URL, AUTH0_ISSUER_BASE_URL, ...
     environment:
       NODE_USE_ENV_PROXY: "1"
       HTTP_PROXY: http://links-recette-egress:3128
@@ -102,18 +111,29 @@ services:
     networks: [internal]
     restart: unless-stopped
     mem_limit: 1024m
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
 
   links-recette-proxy:
     image: caddy:2
-    env_file: [{path: ./recette.env, required: true}]   # RECETTE_HOSTNAME, RECETTE_ALLOWED_IPS
+    # RECETTE_HOSTNAME, RECETTE_ALLOWED_IPS, RECETTE_MEDIA_USER and RECETTE_MEDIA_HASH. Single-quote the
+    # bcrypt hash in recette.env: it contains `$`.
+    env_file: [{path: ./recette.env, required: true}]
     ports: ["80:80", "443:443"]
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - recette_data:/srv/links-recette:ro    # static and media, read-only
       - recette_caddy:/data
     networks: [internal, public]
     restart: unless-stopped
     mem_limit: 128m
-    depends_on: [links-recette-api, links-recette-frontend]
+    depends_on:
+      links-recette-api: {condition: service_healthy}
+      links-recette-frontend: {condition: service_healthy}
 
 networks:
   internal:

@@ -1,12 +1,53 @@
-# LINKS-RECETTE-03B: the single public entry point of the recette VM (automatic HTTPS).
-# RECETTE_HOSTNAME and RECETTE_ALLOWED_IPS (space-separated team addresses/CIDRs) come from recette.env.
+# LINKS-RECETTE-04B: the single public entry point of the recette VM (automatic HTTPS).
+# From recette.env: RECETTE_HOSTNAME, RECETTE_ALLOWED_IPS (space-separated team addresses/CIDRs),
+# RECETTE_MEDIA_USER and RECETTE_MEDIA_HASH (a `caddy hash-password` bcrypt hash, single-quoted in the file).
+# Every request goes through `handle` blocks in this order, the first match wins -- so the IP
+# allow-list below cannot be bypassed by any route.
+{
+	admin off
+}
+
 {$RECETTE_HOSTNAME} {
 	@outsiders not remote_ip {$RECETTE_ALLOWED_IPS}
-	respond @outsiders "Forbidden" 403
+	handle @outsiders {
+		respond "Forbidden" 403
+	}
 
 	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		-Server
+	}
 
-	@api path /api/* /static/*
-	reverse_proxy @api links-recette-api:8000
-	reverse_proxy links-recette-frontend:3000
+	# Django API and the Channels/Daphne WebSocket (/notifications/): reverse_proxy upgrades WebSocket itself.
+	@api path /api/* /notifications/*
+	handle @api {
+		reverse_proxy links-recette-api:8000
+	}
+
+	# Collected static files (Django admin / swagger assets), read-only volume.
+	handle_path /static/* {
+		root * /srv/links-recette/static
+		file_server
+	}
+
+	# Uploaded files. The application serves them by plain URL (known limitation, point S), so here
+	# they are never open: team IP + a media password, no directory listing, never cached, and the
+	# private area is not served at all. Per-document authorisation needs an application change.
+	handle /media/private/* {
+		respond "Not found" 404
+	}
+	handle_path /media/* {
+		basic_auth {
+			{$RECETTE_MEDIA_USER} {$RECETTE_MEDIA_HASH}
+		}
+		header Cache-Control "private, no-store"
+		root * /srv/links-recette/media
+		file_server
+	}
+
+	handle {
+		reverse_proxy links-recette-frontend:3000
+	}
 }

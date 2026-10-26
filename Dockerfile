@@ -45,7 +45,11 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # (release/doc-mail-models) so every build installs the exact same migrations. Re-pin when the
 # models branch is published under a different commit.
 ARG MODELS_REF=f8ea5539f8208a1b17589b17159269275003e776
-RUN pip install git+https://<username>:<token>@github.com/sdelacrose/admin-server-models.git@${MODELS_REF}
+# The repository is public, so no credentials are needed. Only for a private fork, pass
+# --build-arg MODELS_GIT_AUTH="<user>:<token>@" (the value stays in the image history: use a throw-away
+# token). The GitHub workflows that used to replace <username>/<token> here are disabled.
+ARG MODELS_GIT_AUTH=""
+RUN pip install "git+https://${MODELS_GIT_AUTH}github.com/sdelacrose/admin-server-models.git@${MODELS_REF}"
 
 # Make the entry point script executable
 RUN chmod +x /app/scripts/entry_point.sh
