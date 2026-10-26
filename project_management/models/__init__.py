@@ -1,4 +1,5 @@
 from .contact import Contact, ContactCompany, ContactUser
+from .crm_interaction import CrmInteraction
 from .document import Document, DocumentOrigin, DocumentReferenceCounter, Folder
 from .document_control import DocumentControl
 from .document_revision import DocumentRevision

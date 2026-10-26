@@ -270,8 +270,13 @@ class ActionItemFilterService:
         bucket = {"thisweek": "this_week", "nextweek": "next_week"}.get(
             bucket, bucket
         )
-        if bucket not in {"late", "today", "this_week", "next_week", "later"}:
+        # CRM-1B ("Mes actions"): "upcoming" = after this week, "done" = closed (closed_at set).
+        if bucket not in {"late", "today", "this_week", "next_week", "later", "upcoming", "done"}:
             raise ValidationError({"bucket": "Unknown time bucket."})
+        if bucket == "done":
+            return action_items.filter(closed_at__isnull=False)
+        if self._truthy_param("open_only"):
+            action_items = action_items.filter(closed_at__isnull=True)
 
         today = timezone.localdate()
         this_week_end = today + timedelta(days=6 - today.weekday())
@@ -291,7 +296,12 @@ class ActionItemFilterService:
                 target_date__gte=next_week_start,
                 target_date__lte=next_week_end,
             )
+        if bucket == "upcoming":
+            return action_items.filter(target_date__gt=this_week_end)
         return action_items.filter(target_date__gt=next_week_end)
+
+    def _truthy_param(self, name: str) -> bool:
+        return str(self.params.get(name) or "").strip().lower() in {"1", "true", "yes", "on"}
 
     def filter_calendar_range(self, action_items: QuerySet) -> QuerySet:
         range_start = self._date("range_start")
@@ -377,10 +387,27 @@ class ActionItemFilterService:
             ("reporter", "created_by_id"),
             ("assignee", "assignees__id"),
             ("opportunity", "opportunities__id"),
+            ("contact_user", "contact_users__id"),
+            ("contact_company", "contact_companies__id"),
         ):
             values = self._integer_values(param)
             if values:
                 predicate &= Q(**{f"{lookup}__in": values})
+
+        # CRM-1B: "type" of follow-up = which Network record it is linked to.
+        crm_link = str(self.params.get("crm_link") or "").strip().lower()
+        if crm_link == "contact":
+            predicate &= Q(contact_users__isnull=False)
+        elif crm_link == "company":
+            predicate &= Q(contact_companies__isnull=False)
+        elif crm_link == "opportunity":
+            predicate &= Q(opportunities__isnull=False)
+        elif crm_link == "any":
+            predicate &= (
+                Q(contact_users__isnull=False)
+                | Q(contact_companies__isnull=False)
+                | Q(opportunities__isnull=False)
+            )
 
         priorities = self._values("priority")
         if priorities:
@@ -712,7 +739,13 @@ class ActionItemQueryService:
                 "created_by",
                 "closed_by",
             )
-            .prefetch_related("assignees", "documents")
+            .prefetch_related(
+                "assignees",
+                "documents",
+                "contact_users",
+                "contact_companies",
+                "opportunities",
+            )
         )
 
     @staticmethod

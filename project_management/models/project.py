@@ -416,6 +416,9 @@ class ActionItem(models.Model):
     linked_folders = models.ManyToManyField('Folder', related_name='action_item_linked_folders', blank=True)
     requirements = models.ManyToManyField('Requirement', related_name='action_items', blank=True)
     opportunities = models.ManyToManyField('companyprofileapis.Opportunity', related_name='action_items', blank=True)
+    # CRM-1B: follow-ups linked to Network records (same tenant only, enforced in the serializer).
+    contact_users = models.ManyToManyField('ContactUser', related_name='action_items', blank=True)
+    contact_companies = models.ManyToManyField('ContactCompany', related_name='action_items', blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tracker = FieldTracker()
