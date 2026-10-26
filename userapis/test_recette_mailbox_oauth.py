@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 from userapis.mailbox_oauth import MailOAuthError, build_mail_oauth_url, handle_mail_oauth_callback
 from userapis.microsoft_outlook import create_outlook_calendar_event
 from userapis.models import MailboxConnection, MailOAuthState
+from userapis.views.microsoft_auth import MicrosoftAuthViewSet
 from userapis.test_mailbox import _grant_mail_admin, _make_company, _make_user
 from userapis.test_mailbox_oauth import _start
 
@@ -157,41 +158,47 @@ class RecetteOAuthTests(RecetteMailboxTestBase):
 
 
 class RecetteCalendarOAuthTests(RecetteMailboxTestBase):
-    """The Calendar/Contacts callback stores tokens in the same place and imports events: it
-    needs the same tenant confirmation, and creating Outlook events (which invite attendees by
-    e-mail) is disabled outright."""
+    """The legacy Calendar/Contacts connection trusts a user id carried in an unsigned, anonymous
+    `state` (anyone can complete it with their own Microsoft account for another user's id), so it
+    is disabled in recette, and so is creating Outlook events (which invite attendees by e-mail).
+    Outside recette nothing changes."""
 
-    def callback(self, **graph):  # noqa: D102 -- different flow, same helper name on purpose
-        state = f"{self.owner.id}:Energy Consultant Solution"
-        with patch("userapis.views.microsoft_auth.get_access_token", return_value=dict(TOKENS)), \
+    CALLBACK = "/api/user/auth/outlook/callback"
+
+    def callback(self, user_id=None):
+        state = f"{user_id or self.owner.id}:Energy Consultant Solution"
+        with patch("userapis.views.microsoft_auth.get_access_token", return_value=dict(TOKENS)) as exchange, \
                 patch("userapis.views.microsoft_auth.sync_outlook_events",
                       return_value={"success": True}) as sync, \
-                patch("requests.get", side_effect=_graph_get(**graph)) as get:
-            response = self.client.get(
-                "/api/user/auth/outlook/callback", {"code": "code", "state": state},
-            )
-        return response, sync, get
+                patch("requests.get") as get:
+            response = self.client.get(self.CALLBACK, {"code": "code", "state": state})
+        return response, exchange, sync, get
 
-    def test_a_calendar_token_of_another_tenant_is_refused_stored_nowhere_and_not_synced(self):
+    def test_the_calendar_callback_is_disabled_in_recette_even_for_a_forged_state(self):
+        victim = _make_user("victim@example.com", self.company)
         with override_settings(**self.settings):
-            response, sync, _ = self.callback(tenant="99999999-0000-0000-0000-000000000000")
+            response, exchange, sync, get = self.callback(user_id=victim.id)
         self.assertEqual(response.status_code, 403)
+        exchange.assert_not_called()      # the authorization code is never even exchanged
         sync.assert_not_called()
-        self.owner.refresh_from_db()
-        self.assertFalse(hasattr(self.owner, "outlook_credentials"))
+        get.assert_not_called()
+        victim.refresh_from_db()
+        self.assertFalse(hasattr(victim, "outlook_credentials"))
 
-    def test_a_calendar_token_of_the_recette_tenant_is_accepted(self):
-        with override_settings(**self.settings):
-            response, sync, _ = self.callback()
+    def test_starting_the_calendar_connection_is_disabled_in_recette(self):
+        # Called directly: the DRF default permission (license tables of another app) is not under test.
+        with override_settings(**self.settings), patch("userapis.views.microsoft_auth.build_outlook_oauth_url") as build:
+            response = MicrosoftAuthViewSet().auth(Mock())
+        self.assertEqual(response.status_code, 403)
+        build.assert_not_called()
+
+    def test_outside_recette_the_calendar_flow_is_unchanged(self):
+        response, exchange, sync, _ = self.callback()
         self.assertEqual(response.status_code, 302)
+        exchange.assert_called_once()
         sync.assert_called_once()
         self.owner.refresh_from_db()
         self.assertTrue(hasattr(self.owner, "outlook_credentials"))
-
-    def test_outside_recette_the_calendar_flow_makes_no_tenant_call(self):
-        response, sync, get = self.callback()
-        self.assertEqual(response.status_code, 302)
-        get.assert_not_called()
 
     def test_creating_outlook_events_is_disabled_in_recette(self):
         with override_settings(**self.settings), patch("requests.post") as post, patch("requests.get") as get:
