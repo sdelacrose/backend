@@ -15,6 +15,7 @@ from models.models import User, UserOutlookCredentials
 from project_management.models import Project
 from userapis.microsoft_outlook import get_access_token, sync_outlook_events, is_outlook_token_valid
 from userapis import mailbox_oauth
+from userapis.recette_guard import RecetteMailBlocked, block_in_recette
 from ecpmpapp.utils import get_frontend_url_for_solution, get_user_active_solution
 from ecpmpapp.constants import MS_OAUTH_AUTHORIZE_URL, MS_OUTLOOK_CALENDAR_SCOPES
 from project_management.utils import get_product_name_from_request
@@ -37,6 +38,9 @@ AI_ASSISTANT_OUTLOOK_CONNECTED_HTML = """
   </body>
 </html>
 """
+
+
+_CALENDAR_CONNECT_DISABLED = "Connecting the Outlook calendar and contacts"
 
 
 def build_outlook_oauth_url(user, solution=None, project_id=None, redirect_to=None):
@@ -63,6 +67,10 @@ class MicrosoftAuthViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def auth(self, request):
         """Redirect user to Microsoft login page with user_id in scope."""
+        try:
+            block_in_recette(_CALENDAR_CONNECT_DISABLED)
+        except RecetteMailBlocked as error:
+            return Response({"error": str(error)}, status=403)
         user = request.user
         solution = get_product_name_from_request(request)
         project_id = request.query_params.get("project")
@@ -117,6 +125,14 @@ class MicrosoftAuthViewSet(viewsets.ViewSet):
                 status=200,
             )
 
+        try:
+            # LINKS-RECETTE-03D: this legacy flow trusts a user id carried in an unsigned, anonymous
+            # `state` (anyone can complete it with their own Microsoft account for another user's
+            # id and have their tokens stored for that user). The Calendar/Contacts connection is
+            # not part of the recette scope, so it is disabled there. A no-op elsewhere.
+            block_in_recette(_CALENDAR_CONNECT_DISABLED)
+        except RecetteMailBlocked as error:
+            return Response({"error": str(error)}, status=403)
         if not code:
             return Response({"error": "Authorization code missing"}, status=400)
         if not state or ":" not in state:

@@ -17,6 +17,7 @@ from ecpmpapp.constants import (
 )
 from models.models import UserOutlookCredentials
 from project_management.utils import get_sharemundo_user
+from userapis.recette_guard import RecetteMailBlocked, block_in_recette
 from userapis.token_encryption import ENCRYPTION_PREFIX, TokenCryptoError, encrypt_token
 
 
@@ -139,6 +140,11 @@ def _graph_datetime(value):
 
 def create_outlook_calendar_event(user, calendar_event, attendee_emails=None, online_meeting=False):
     """Create a matching Outlook calendar event for an existing Sharemundo calendar event."""
+    try:
+        # LINKS-RECETTE-03: a Graph event with attendees makes Exchange e-mail real invitations.
+        block_in_recette("Creating Outlook calendar events (they invite the attendees by e-mail)")
+    except RecetteMailBlocked as error:
+        return {"success": False, "error": str(error)}
     if not is_outlook_token_valid(user):
         return {
             "success": False,

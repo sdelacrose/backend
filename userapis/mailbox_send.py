@@ -15,6 +15,7 @@ import requests
 from ecpmpapp.constants import MS_GRAPH_ME_URL, MS_GRAPH_SEND_MAIL_URL, MS_MAIL_SCOPES
 from userapis.microsoft_outlook import refresh_outlook_access_token
 from userapis.models import MailboxConnection
+from userapis.recette_guard import RecetteMailBlocked, check_send_allowed, confirm_tenant_with_microsoft
 
 # Microsoft Graph's sendMail request body hard limit is 4 MB total (JSON + base64 attachment
 # content, which itself inflates the raw bytes by ~1.37x). This conservative, raw-bytes-before-
@@ -161,12 +162,25 @@ def send_via_graph(
     Exchange Send As/Send on Behalf right -- Microsoft Graph is the sole, final authority, and
     a 403 here becomes a FAILED CorrespondenceSendEvent, never a silently-swapped sender and
     never a send reported as successful before Graph actually accepts it."""
+    # LINKS-RECETTE-03: second layer (the first is in send_correspondence, before any event is
+    # written). Runs before any token refresh or Graph call; a no-op outside recette.
+    try:
+        check_send_allowed(
+            sender_address=mailbox.email_address, to=to, cc=cc, bcc=bcc, provider="graph",
+        )
+    except RecetteMailBlocked as error:
+        raise GraphSendError(str(error)) from error
+
     access_token = get_mail_access_token_for_sending(sender_user)
     if not access_token:
         raise GraphSendError(
             "No valid Microsoft 365 access token is available for this mailbox's connected "
             "identity. Reconnect Microsoft 365 for this mailbox and try again."
         )
+    try:
+        confirm_tenant_with_microsoft(access_token)
+    except RecetteMailBlocked as error:
+        raise GraphSendError(str(error)) from error
 
     if mailbox.connection_type == MailboxConnection.ConnectionType.INDIVIDUAL:
         # Section 2: shared mailboxes keep their existing delegation model unchanged (the

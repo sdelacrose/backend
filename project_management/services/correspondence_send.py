@@ -50,6 +50,7 @@ from userapis.mailbox_access import can_use_mailbox
 from userapis.mailbox_correlation import build_send_marker
 from userapis.mailbox_send import UNCERTAIN_DELIVERY_MARKER, send_via_graph
 from userapis.models import MailboxConnection
+from userapis.recette_guard import RecetteMailBlocked, check_send_allowed, recette_mode
 
 Result = CorrespondenceSendEvent.Result
 
@@ -233,6 +234,10 @@ def _deliver_via_provider(*, from_email, to, cc, bcc, subject, body, attachments
     dev, section 20/22 -- never a real send during local validation or automated tests, since
     Django's test runner itself swaps in the locmem backend automatically). Returns the
     provider message id when the backend supplies one (SMTP does not, section 2)."""
+    if recette_mode():
+        # LINKS-RECETTE-03: second layer -- send_correspondence already refuses this before any
+        # event exists; this makes the provider itself unreachable too.
+        raise RecetteMailBlocked("SMTP sending is disabled in recette.")
     message = EmailMultiAlternatives(
         subject=subject, body=body, from_email=from_email, to=[to], cc=cc or None, bcc=bcc or None,
     )
@@ -409,6 +414,17 @@ def send_correspondence(
     else:
         from_email = settings.DEFAULT_FROM_EMAIL
         provider = "smtp"
+
+    # LINKS-RECETTE-03: in recette, refuse anything but an allow-listed sender and allow-listed
+    # To/Cc/Bcc addresses -- before the send slot is claimed, so no event is ever written. API
+    # calls, resends and any other caller all pass through this one function.
+    try:
+        check_send_allowed(
+            sender_address=from_email, to=recipient["email"], cc=cc_clean, bcc=bcc_clean,
+            provider=provider,
+        )
+    except RecetteMailBlocked as error:
+        raise SendBlocked({"recette": str(error)}) from error
 
     event = _claim_send_slot(
         correspondence, sender=sender, from_email=from_email, recipient=recipient,

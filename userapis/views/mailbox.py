@@ -20,7 +20,7 @@ from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -28,6 +28,7 @@ from rest_framework.views import APIView
 from userapis import mailbox_oauth
 from userapis.models import MailboxConnection, MailboxProjectAssignment, MailboxUserGrant
 from userapis.permissions import MailboxAdminPermission
+from userapis.recette_guard import RecetteMailBlocked, check_mailbox_address
 from userapis.serializers.mailbox import (
     AccessibleMailboxSerializer,
     MailboxConnectionCreateSerializer,
@@ -76,7 +77,18 @@ class MailboxConnectionViewSet(
         # never a company_id taken from a query param.
         return MailboxConnection.objects.filter(company_profile_id=user.company_id)
 
+    @staticmethod
+    def _enforce_recette_address(request):
+        """LINKS-RECETTE-03: in recette only allow-listed mailbox addresses can be registered
+        or changed; a no-op in every other environment."""
+        if "email_address" in request.data:
+            try:
+                check_mailbox_address(request.data.get("email_address"))
+            except RecetteMailBlocked as error:
+                raise ValidationError({"email_address": str(error)}) from error
+
     def create(self, request, *args, **kwargs):
+        self._enforce_recette_address(request)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         mailbox = serializer.save()
@@ -85,6 +97,7 @@ class MailboxConnectionViewSet(
         )
 
     def update(self, request, *args, **kwargs):
+        self._enforce_recette_address(request)
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=kwargs.get("partial", False))
         serializer.is_valid(raise_exception=True)
