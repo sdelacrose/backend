@@ -1,2 +1,3 @@
 from .leave import LeaveRequestSerializer
+from .leave_type import LeaveSubTypeSerializer, LeaveTypeSerializer
 from .staff import StaffSerializer, StaffObservationSerializer, StaffConfigurationSerializer
