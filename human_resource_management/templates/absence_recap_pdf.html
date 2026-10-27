@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {
+    size: A4 landscape;
+    margin: 1.5cm;
+    @bottom-center {
+      content: counter(page) " / " counter(pages);
+      font-size: 9px;
+      color: #667085;
+    }
+  }
+  body { font-family: Arial, sans-serif; font-size: 11px; color: #1D2939; }
+  h1 { font-size: 16px; margin: 0 0 4px 0; }
+  .meta { font-size: 11px; color: #475467; margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th, td { border: 1px solid #D0D5DD; padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: #F2F4F7; font-weight: bold; }
+  .empty { padding: 24px; text-align: center; color: #667085; }
+  .note { margin-top: 10px; font-size: 9.5px; color: #667085; }
+</style>
+</head>
+<body>
+  <h1>{{ company_name }} — Récapitulatif des absences approuvées</h1>
+  <div class="meta">
+    Période : {{ period_start|date:"d/m/Y" }} au {{ period_end|date:"d/m/Y" }}<br>
+    Généré le : {{ generated_at|date:"d/m/Y H:i" }}
+  </div>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th>Collaborateur</th>
+        <th>Types pris</th>
+        <th>Total jours (période filtrée)</th>
+        <th>Solde congés (année civile en cours)</th>
+        <th>Solde télétravail (année civile en cours)</th>
+        {% if has_entitlement_balances %}<th>Soldes par type (cycle en cours)</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.employee_name }}</td>
+        <td>{{ row.types|join:", " }}</td>
+        <td>{{ row.total_days }}</td>
+        <td>
+          {% if row.global_balance and row.global_balance.leave_balance is not None %}
+            {{ row.global_balance.leave_balance }}
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if row.global_balance and row.global_balance.wfh_balance is not None %}
+            {{ row.global_balance.wfh_balance }}
+          {% else %}—{% endif %}
+        </td>
+        {% if has_entitlement_balances %}<td>{{ row.entitlement_balances_text|default:"—" }}</td>{% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="note">
+    Solde global de référence : année civile en cours, calculé à la date de génération ci-dessus —
+    n'est pas le solde restant à la fin de la période filtrée.
+    {% if has_entitlement_balances %}
+    Les soldes par type (dernière colonne) sont ceux du cycle en cours de chaque type, calculés à la
+    même date de génération — distincts des jours pris sur la période filtrée ci-dessus.
+    {% else %}
+    Le solde par type de congé n'est pas disponible pour le moment (les droits par type/cycle ne sont
+    pas définis).
+    {% endif %}
+  </p>
+  {% else %}
+  <div class="empty">Aucune absence approuvée sur cette période.</div>
+  {% endif %}
+</body>
+</html>
