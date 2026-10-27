@@ -2360,3 +2360,23 @@ def reindex_invoice_parents(sender, instance, raw=False, **kwargs):
             for source_type, source_id in records
         ]
     )
+
+
+# NETWORK-CONTACT-FIX-02: ProjectExternalUsers.contact_user / contact_company are SET_NULL, so
+# physically deleting a contact used to leave a link with NEITHER contact -- a nameless external
+# member that project screens re-post and the project serializer then rejects. A soft delete
+# (is_deleted) never reaches here and keeps its links (the contact stays restorable); only a real
+# delete removes the links that would become orphans (a link that still points to the other kind
+# of contact is kept).
+@receiver(pre_delete, sender=ContactUser)
+def remove_orphan_project_links_of_deleted_contact_user(sender, instance, **kwargs):
+    ProjectExternalUsers.objects.filter(
+        contact_user=instance, contact_company__isnull=True
+    ).delete()
+
+
+@receiver(pre_delete, sender=ContactCompany)
+def remove_orphan_project_links_of_deleted_contact_company(sender, instance, **kwargs):
+    ProjectExternalUsers.objects.filter(
+        contact_company=instance, contact_user__isnull=True
+    ).delete()
