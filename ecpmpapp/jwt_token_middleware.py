@@ -1,7 +1,7 @@
 from django.http import JsonResponse
 from django.db import transaction
-from jwt import decode as jwt_decode
-from jwt.exceptions import InvalidTokenError
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import AccessToken
 import urllib.parse
 from models.models import BlockedToken, User
 from channels.db import database_sync_to_async
@@ -94,14 +94,15 @@ class WebSocketBlockedTokenMiddleware:
     @database_sync_to_async
     def authenticate_token(self, token):
         try:
-            # Decode the token to extract user ID (e.g., "sub" claim in Auth0)
-            decoded_token = jwt_decode(token, options={"verify_signature": False})
-            user_id = decoded_token.get("sub")
-            user = User.objects.get(auth0_sub=user_id)            
+            # Same validation as the HTTP API (SIMPLE_JWT settings): RS256 signature checked against
+            # the Auth0 JWKS, issuer, audience and expiry. The "sub" claim is only read afterwards.
+            validated_token = AccessToken(token)
+            user_id = validated_token["sub"]
+            user = User.objects.get(auth0_sub=user_id, is_active=True, is_deleted=False)
             return user
         except User.DoesNotExist:
             raise Exception("User not found")
-        except InvalidTokenError:
+        except TokenError:
             raise Exception("Invalid token")
         except KeyError:
             raise Exception("Invalid token structure")

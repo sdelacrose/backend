@@ -483,7 +483,8 @@ class ActionItemViewSet(viewsets.ModelViewSet):
                     "A closed action item cannot be updated."
                 )
 
-            if requested_status == "closed":
+            # Close only when the status that will really be stored is "closed" (never closed_at with status "open").
+            if serializer.validated_data.get("status") == "closed":
                 updated_instance = serializer.save(
                     closed_at=datetime.now().date(),
                     closed_by=user,

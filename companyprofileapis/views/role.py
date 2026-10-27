@@ -16,6 +16,9 @@ class RoleViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'updated_at']
     ordering = ['-created_at']
     filterset_class = RoleFilter
+    # Read-only on the solution: roles and their permissions are managed by admin-server-backend
+    # (RolesPermission-protected). Any write verb answers 405 and never reaches the serializer.
+    http_method_names = ['get', 'head', 'options']
 
     #TODO: Add permissions check here
     def get_queryset(self):

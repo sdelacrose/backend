@@ -82,6 +82,21 @@ def validate_existing_contact(request_user, existing_contact):
         raise ValidationError("You are not allowed to update this contact.")
 
 
+def tenant_contacts(model, user):
+    """SEC-02: the contacts of `model` owned by the requester's tenant (company XOR freelancer).
+
+    Independent of the module permissions: it is the base of every by-id lookup, so a record of
+    another tenant is simply not found, whatever the requester's contact_management rights.
+    """
+    if isinstance(user, AnonymousUser):
+        return model.objects.none()
+    if user.is_freelancer:
+        return model.objects.filter(user=user)
+    if user.company is None:
+        return model.objects.none()
+    return model.objects.filter(company_profile=user.company)
+
+
 class ContactUserViewSet(viewsets.ModelViewSet):
     queryset = ContactUser.objects.all()
     serializer_class = ContactUserSerializer
@@ -189,7 +204,7 @@ class ContactUserViewSet(viewsets.ModelViewSet):
         return queryset
 
     def get_object(self):
-        obj = get_object_or_404(ContactUser, pk=self.kwargs['pk'])
+        obj = get_object_or_404(tenant_contacts(ContactUser, self.request.user), pk=self.kwargs['pk'])
         user = self.request.user
         permission = ContactPermission('view', 'company')
         if not permission.has_object_permission(self.request, self, obj):
@@ -469,7 +484,7 @@ class ContactCompanyViewSet(viewsets.ModelViewSet):
         return queryset
     
     def get_object(self):
-        obj = get_object_or_404(ContactCompany, pk=self.kwargs['pk'])
+        obj = get_object_or_404(tenant_contacts(ContactCompany, self.request.user), pk=self.kwargs['pk'])
         user = self.request.user
         permission = ContactPermission('view', 'company')
         if not permission.has_object_permission(self.request, self, obj):

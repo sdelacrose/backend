@@ -42,17 +42,18 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install -r requirements.txt
 
 # The shared `models` package comes from the sdelacrose account only, pinned to an explicit commit
-# (release/doc-mail-models) so every build installs the exact same migrations. Re-pin when the
-# models branch is published under a different commit.
-ARG MODELS_REF=f8ea5539f8208a1b17589b17159269275003e776
+# (PR #2, RH leave/entitlement models -- descendant of the previously-pinned doc-mail models commit)
+# so every build installs the exact same migrations. Re-pin when the models branch is published
+# under a different commit.
+ARG MODELS_REF=b3df54380e47a3a26d7bac3212a6cd3b860f176d
 # The repository is public, so no credentials are needed. Only for a private fork, pass
 # --build-arg MODELS_GIT_AUTH="<user>:<token>@" (the value stays in the image history: use a throw-away
 # token). The GitHub workflows that used to replace <username>/<token> here are disabled.
 ARG MODELS_GIT_AUTH=""
 RUN pip install "git+https://${MODELS_GIT_AUTH}github.com/sdelacrose/admin-server-models.git@${MODELS_REF}"
 
-# Make the entry point script executable
-RUN chmod +x /app/scripts/entry_point.sh
+# Make the entry point script executable (and force LF: a CRLF shebang makes exec fail with "no such file")
+RUN sed -i 's/\r$//' /app/scripts/entry_point.sh && chmod +x /app/scripts/entry_point.sh
 
 # Expose the application port
 EXPOSE 8000

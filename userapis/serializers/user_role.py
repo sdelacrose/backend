@@ -16,10 +16,27 @@ class UserRoleSerializer(serializers.ModelSerializer):
         request_user = self.context['request'].user
         if value.company != request_user.company:
             raise serializers.ValidationError("Role does not belong to the same company")
-        
+
         if value.scope == "project":
             raise serializers.ValidationError("Project roles cannot be assigned to users from company level")
-        
+
+        return value
+
+    def validate_user(self, value):
+        """L01-R: symmetric to validate_role above -- the ROLE side was
+        already checked, but the BENEFICIARY (the assignee) never was, on
+        EITHER create or update (DRF runs validate_<field> whenever that
+        field is present in the payload, so this one method closes both
+        paths at once). Same scoping as create()'s own freelancer/company
+        branch: a company actor may only target a user of their OWN
+        company; a freelancer actor may only ever target themselves (there
+        is no notion of a freelancer having other members)."""
+        request_user = self.context['request'].user
+        if request_user.is_freelancer:
+            if value.id != request_user.id:
+                raise serializers.ValidationError("User does not belong to the same company")
+        elif value.company_id != request_user.company_id:
+            raise serializers.ValidationError("User does not belong to the same company")
         return value
 
     def validate(self, attrs):
