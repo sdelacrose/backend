@@ -42,9 +42,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     python -m pip install -r requirements.txt
 
 # The shared `models` package comes from the sdelacrose account only, pinned to an explicit commit
-# (release/doc-mail-models) so every build installs the exact same migrations. Re-pin when the
-# models branch is published under a different commit.
-ARG MODELS_REF=f8ea5539f8208a1b17589b17159269275003e776
+# (PR #2, RH leave/entitlement models -- descendant of the previously-pinned doc-mail models commit)
+# so every build installs the exact same migrations. Re-pin when the models branch is published
+# under a different commit.
+ARG MODELS_REF=0841991f496e0f4805dd080cfbbf25e55179fa2c
 # The repository is public, so no credentials are needed. Only for a private fork, pass
 # --build-arg MODELS_GIT_AUTH="<user>:<token>@" (the value stays in the image history: use a throw-away
 # token). The GitHub workflows that used to replace <username>/<token> here are disabled.
