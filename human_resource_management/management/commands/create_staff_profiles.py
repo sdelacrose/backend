@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from models.models import User, Staff
 from ecpmpapp.constants import UserType
+from human_resource_management.services.staff_provisioning import provision_staff_for_user
 
 class Command(BaseCommand):
     help = "Create Staff profiles for users who don't have one, making freelancers and admins their own supervisors."
@@ -17,15 +18,15 @@ class Command(BaseCommand):
         user_to_staff = {}  # Dictionary to map users to their newly created staff profiles
 
         # Step 1: Create Staff profiles for all users first (without assigning supervisors)
+        # L00-B2B (DEC-52): each user's OWN StaffConfiguration (company-wide,
+        # or their own if a freelancer) now seeds salary/hourly_rate/
+        # weekly_hours/annual_leaves_allowed/wfh_leaves_allowed when one
+        # exists; the pre-existing "no configuration" convention (salary=0.00,
+        # weekly_hours=40, annual_leaves_allowed=12, hourly_rate/
+        # wfh_leaves_allowed via Staff's own model defaults) is preserved
+        # unchanged otherwise -- see services/staff_provisioning.py.
         for user in users_without_staff:
-            staff_profile = Staff(
-                user=user,
-                supervisor=None,  # Temporarily set to None, will be updated later
-                salary=0.00,
-                productivity_percentage=0,
-                annual_leaves_allowed=12,
-                weekly_hours=40,
-            )
+            staff_profile = provision_staff_for_user(user)
             staff_profiles.append(staff_profile)
             user_to_staff[user] = staff_profile  # Store reference for later use
 
