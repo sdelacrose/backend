@@ -1,0 +1,1450 @@
+{
+ "permissions": {
+  "aas_models.full_access": {
+   "description": "Can validate, publish, manage, and hand over AAS models",
+   "module": "aas_models",
+   "name": "AAS Models Full Access"
+  },
+  "aas_models.view": {
+   "description": "Can view published AAS models and revisions",
+   "module": "aas_models",
+   "name": "View AAS Models"
+  },
+  "action_item.create": {
+   "description": "Can create action items",
+   "module": "action_item",
+   "name": "Create Action Items"
+  },
+  "action_item.delete": {
+   "description": "Can delete any action item",
+   "module": "action_item",
+   "name": "Delete Action Items"
+  },
+  "action_item.delete_assigned_created": {
+   "description": "Can delete action items assigned to or created by user",
+   "module": "action_item",
+   "name": "Delete Assigned/Created Action Items"
+  },
+  "action_item.full_access": {
+   "description": "Full access to action items",
+   "module": "action_item",
+   "name": "Action Items Full Access"
+  },
+  "action_item.update": {
+   "description": "Can update any action item",
+   "module": "action_item",
+   "name": "Update Action Items"
+  },
+  "action_item.update_assigned_created": {
+   "description": "Can update action items assigned to or created by user",
+   "module": "action_item",
+   "name": "Update Assigned/Created Action Items"
+  },
+  "action_item.view": {
+   "description": "Can view all action items",
+   "module": "action_item",
+   "name": "View Action Items"
+  },
+  "action_item.view_assigned_created": {
+   "description": "Can view action items assigned to or created by user",
+   "module": "action_item",
+   "name": "View Assigned/Created Action Items"
+  },
+  "ai_chat.create": {
+   "description": "Can create AI chat definitions and policies",
+   "module": "ai_chat",
+   "name": "Create AI Chat Configuration"
+  },
+  "ai_chat.delete": {
+   "description": "Can delete AI chat configuration",
+   "module": "ai_chat",
+   "name": "Delete AI Chat Configuration"
+  },
+  "ai_chat.full_access": {
+   "description": "Full access to AI chat control plane",
+   "module": "ai_chat",
+   "name": "AI Chat Full Access"
+  },
+  "ai_chat.update": {
+   "description": "Can update AI chat configuration and assignments",
+   "module": "ai_chat",
+   "name": "Update AI Chat Configuration"
+  },
+  "ai_chat.view": {
+   "description": "Can view AI chat configuration and usage",
+   "module": "ai_chat",
+   "name": "View AI Chat Configuration"
+  },
+  "available_product_parts.create": {
+   "description": "Can create available product parts",
+   "module": "available_product_parts",
+   "name": "Create Available Product Parts"
+  },
+  "available_product_parts.delete": {
+   "description": "Can delete available product parts",
+   "module": "available_product_parts",
+   "name": "Delete Available Product Parts"
+  },
+  "available_product_parts.full_access": {
+   "description": "Full access to available product parts",
+   "module": "available_product_parts",
+   "name": "Available Product Parts Full Access"
+  },
+  "available_product_parts.update": {
+   "description": "Can update available product parts",
+   "module": "available_product_parts",
+   "name": "Update Available Product Parts"
+  },
+  "available_product_parts.view": {
+   "description": "Can view available product parts",
+   "module": "available_product_parts",
+   "name": "View Available Product Parts"
+  },
+  "bill_of_material.create": {
+   "description": "Can create bill of material parts",
+   "module": "bill_of_material",
+   "name": "Create Bill of Material"
+  },
+  "bill_of_material.delete": {
+   "description": "Can delete bill of material parts",
+   "module": "bill_of_material",
+   "name": "Delete Bill of Material"
+  },
+  "bill_of_material.full_access": {
+   "description": "Full access to bill of material",
+   "module": "bill_of_material",
+   "name": "Bill of Material Full Access"
+  },
+  "bill_of_material.update": {
+   "description": "Can update bill of material parts",
+   "module": "bill_of_material",
+   "name": "Update Bill of Material"
+  },
+  "bill_of_material.view": {
+   "description": "Can view bill of material parts",
+   "module": "bill_of_material",
+   "name": "View Bill of Material"
+  },
+  "billing.full_access": {
+   "description": "Full access to billing",
+   "module": "billing",
+   "name": "Billing Full Access"
+  },
+  "billing.update": {
+   "description": "Can stop/resume auto-renewal",
+   "module": "billing",
+   "name": "Update Billing"
+  },
+  "billing.view": {
+   "description": "Can view billing",
+   "module": "billing",
+   "name": "View Billing"
+  },
+  "calendar_events.create": {
+   "description": "Can create calendar events",
+   "module": "calendar_events",
+   "name": "Create Calendar Events"
+  },
+  "calendar_events.delete": {
+   "description": "Can delete any calendar event",
+   "module": "calendar_events",
+   "name": "Delete Calendar Events"
+  },
+  "calendar_events.delete_assigned_created": {
+   "description": "Can delete calendar events assigned to or created by user",
+   "module": "calendar_events",
+   "name": "Delete Assigned/Created Calendar Events"
+  },
+  "calendar_events.full_access": {
+   "description": "Full access to calendar events",
+   "module": "calendar_events",
+   "name": "Calendar Events Full Access"
+  },
+  "calendar_events.update": {
+   "description": "Can update any calendar event",
+   "module": "calendar_events",
+   "name": "Update Calendar Events"
+  },
+  "calendar_events.update_assigned_created": {
+   "description": "Can update calendar events assigned to or created by user",
+   "module": "calendar_events",
+   "name": "Update Assigned/Created Calendar Events"
+  },
+  "calendar_events.view": {
+   "description": "Can view all calendar events",
+   "module": "calendar_events",
+   "name": "View Calendar Events"
+  },
+  "calendar_events.view_assigned_created": {
+   "description": "Can view calendar events assigned to or created by user",
+   "module": "calendar_events",
+   "name": "View Assigned/Created Calendar Events"
+  },
+  "company_assembly_catalog.create": {
+   "description": "Can create company Assembly Catalogs items",
+   "module": "company_assembly_catalog",
+   "name": "Create Company Assembly Catalogs"
+  },
+  "company_assembly_catalog.delete": {
+   "description": "Can delete company Assembly Catalogs items",
+   "module": "company_assembly_catalog",
+   "name": "Delete Company Assembly Catalogs"
+  },
+  "company_assembly_catalog.full_access": {
+   "description": "Full access to company Assembly Catalogs",
+   "module": "company_assembly_catalog",
+   "name": "Company Assembly Catalogs Full Access"
+  },
+  "company_assembly_catalog.update": {
+   "description": "Can update company Assembly Catalogs items",
+   "module": "company_assembly_catalog",
+   "name": "Update Company Assembly Catalogs"
+  },
+  "company_assembly_catalog.view": {
+   "description": "Can view company Assembly Catalogs items",
+   "module": "company_assembly_catalog",
+   "name": "View Company Assembly Catalogs"
+  },
+  "company_configurations.full_access": {
+   "description": "Full access to company configurations",
+   "module": "company_configurations",
+   "name": "Company Configurations Full Access"
+  },
+  "company_configurations.reset": {
+   "description": "Can reset company configurations",
+   "module": "company_configurations",
+   "name": "Reset Company Configuration"
+  },
+  "company_configurations.sync_admin": {
+   "description": "Can sync company configurations with admin",
+   "module": "company_configurations",
+   "name": "Sync Company with Admin"
+  },
+  "company_configurations.update": {
+   "description": "Can update company configurations",
+   "module": "company_configurations",
+   "name": "Update Company Configuration"
+  },
+  "company_configurations.view": {
+   "description": "Can view company configurations",
+   "module": "company_configurations",
+   "name": "View Company Configuration"
+  },
+  "company_profile.full_access": {
+   "description": "Full access to company profile",
+   "module": "company_profile",
+   "name": "Company Profile Full Access"
+  },
+  "company_profile.update": {
+   "description": "Can update company profile",
+   "module": "company_profile",
+   "name": "Update Company Profile"
+  },
+  "company_profile.view": {
+   "description": "Can view company profile",
+   "module": "company_profile",
+   "name": "View Company Profile"
+  },
+  "connections.create": {
+   "description": "Can create connections",
+   "module": "connections",
+   "name": "Create Connection"
+  },
+  "connections.full_access": {
+   "description": "Full access to connections",
+   "module": "connections",
+   "name": "Connections Full Access"
+  },
+  "connections.update": {
+   "description": "Can update connections",
+   "module": "connections",
+   "name": "Update Connection"
+  },
+  "connections.view": {
+   "description": "Can view connections",
+   "module": "connections",
+   "name": "View Connection"
+  },
+  "contact_management.create": {
+   "description": "Can create contacts",
+   "module": "contact_management",
+   "name": "Create Contact"
+  },
+  "contact_management.delete": {
+   "description": "Can delete contacts",
+   "module": "contact_management",
+   "name": "Delete Contact"
+  },
+  "contact_management.full_access": {
+   "description": "Full access to contact management",
+   "module": "contact_management",
+   "name": "Contact Management Full Access"
+  },
+  "contact_management.recycle": {
+   "description": "Can recycle contacts",
+   "module": "contact_management",
+   "name": "Recycle Contact"
+  },
+  "contact_management.update": {
+   "description": "Can update contacts",
+   "module": "contact_management",
+   "name": "Update Contact"
+  },
+  "contact_management.view": {
+   "description": "Can view contacts",
+   "module": "contact_management",
+   "name": "View Contact"
+  },
+  "documents.correspondence_send": {
+   "description": "Send an issued OUT correspondence through the company's e-mail provider",
+   "module": "documents",
+   "name": "Send correspondence"
+  },
+  "documents.correspondence_template_manage": {
+   "description": "Create, edit and (de)activate the company's e-mail templates",
+   "module": "documents",
+   "name": "Manage correspondence e-mail templates"
+  },
+  "documents.create": {
+   "description": "Can create/upload documents",
+   "module": "documents",
+   "name": "Create Documents"
+  },
+  "documents.delete": {
+   "description": "Can delete any document",
+   "module": "documents",
+   "name": "Delete Documents"
+  },
+  "documents.delete_assigned_created": {
+   "description": "Can delete documents assigned to or created by user",
+   "module": "documents",
+   "name": "Delete Assigned/Created Documents"
+  },
+  "documents.full_access": {
+   "description": "Full access to documents",
+   "module": "documents",
+   "name": "Documents Full Access"
+  },
+  "documents.sync_sharepoint": {
+   "description": "Can sync documents with SharePoint",
+   "module": "documents",
+   "name": "Sync with SharePoint"
+  },
+  "documents.update": {
+   "description": "Can update any document",
+   "module": "documents",
+   "name": "Update Documents"
+  },
+  "documents.update_assigned_created": {
+   "description": "Can update documents assigned to or created by user",
+   "module": "documents",
+   "name": "Update Assigned/Created Documents"
+  },
+  "documents.view": {
+   "description": "Can view all documents",
+   "module": "documents",
+   "name": "View Documents"
+  },
+  "documents.view_assigned_created": {
+   "description": "Can view documents assigned to or created by user",
+   "module": "documents",
+   "name": "View Assigned/Created Documents"
+  },
+  "ecpmp_configurations.full_access": {
+   "description": "Full access to ECPMP configurations",
+   "module": "ecpmp_configurations",
+   "name": "ECPMP Configurations Full Access"
+  },
+  "ecpmp_configurations.reset": {
+   "description": "Can reset ECPMP configurations",
+   "module": "ecpmp_configurations",
+   "name": "Reset ECPMP Configuration"
+  },
+  "ecpmp_configurations.sync_admin": {
+   "description": "Can sync ECPMP configurations with admin",
+   "module": "ecpmp_configurations",
+   "name": "Sync ECPMP Configuration with Admin"
+  },
+  "ecpmp_configurations.update": {
+   "description": "Can update ECPMP configurations",
+   "module": "ecpmp_configurations",
+   "name": "Update ECPMP Configuration"
+  },
+  "ecpmp_configurations.view": {
+   "description": "Can view ECPMP configurations",
+   "module": "ecpmp_configurations",
+   "name": "View ECPMP Configuration"
+  },
+  "equipments.create": {
+   "description": "Can create equipments",
+   "module": "equipments",
+   "name": "Create Equipments"
+  },
+  "equipments.delete": {
+   "description": "Can delete equipments",
+   "module": "equipments",
+   "name": "Delete Equipments"
+  },
+  "equipments.full_access": {
+   "description": "Full access to equipments",
+   "module": "equipments",
+   "name": "Equipments Full Access"
+  },
+  "equipments.update": {
+   "description": "Can update equipments",
+   "module": "equipments",
+   "name": "Update Equipments"
+  },
+  "equipments.view": {
+   "description": "Can view equipments",
+   "module": "equipments",
+   "name": "View Equipments"
+  },
+  "expense_booking.create": {
+   "description": "Can create expense bookings",
+   "module": "expense_booking",
+   "name": "Create Expense Booking"
+  },
+  "expense_booking.create_without_approval": {
+   "description": "Can create expense bookings without approval",
+   "module": "expense_booking",
+   "name": "Create Expense Booking Without Approval"
+  },
+  "expense_booking.delete": {
+   "description": "Can delete any expense booking",
+   "module": "expense_booking",
+   "name": "Delete Expense Booking"
+  },
+  "expense_booking.delete_created": {
+   "description": "Can delete expense bookings created by user",
+   "module": "expense_booking",
+   "name": "Delete Created Expense Booking"
+  },
+  "expense_booking.full_access": {
+   "description": "Full access to expense bookings",
+   "module": "expense_booking",
+   "name": "Expense Booking Full Access"
+  },
+  "expense_booking.review": {
+   "description": "Can review and approve expense bookings",
+   "module": "expense_booking",
+   "name": "Review Expense Booking"
+  },
+  "expense_booking.update": {
+   "description": "Can update any expense booking",
+   "module": "expense_booking",
+   "name": "Update Expense Booking"
+  },
+  "expense_booking.update_created": {
+   "description": "Can update expense bookings created by user",
+   "module": "expense_booking",
+   "name": "Update Created Expense Booking"
+  },
+  "expense_booking.view": {
+   "description": "Can view all expense bookings",
+   "module": "expense_booking",
+   "name": "View Expense Booking"
+  },
+  "expense_booking.view_created": {
+   "description": "Can view expense bookings created by user",
+   "module": "expense_booking",
+   "name": "View Created Expense Booking"
+  },
+  "funding.create": {
+   "description": "Can create funding",
+   "module": "funding",
+   "name": "Create Funding"
+  },
+  "funding.delete": {
+   "description": "Can delete any funding",
+   "module": "funding",
+   "name": "Delete Funding"
+  },
+  "funding.delete_created": {
+   "description": "Can delete funding created by user",
+   "module": "funding",
+   "name": "Delete Created Funding"
+  },
+  "funding.full_access": {
+   "description": "Full access to funding",
+   "module": "funding",
+   "name": "Funding Full Access"
+  },
+  "funding.update": {
+   "description": "Can update any funding",
+   "module": "funding",
+   "name": "Update Funding"
+  },
+  "funding.update_created": {
+   "description": "Can update funding created by user",
+   "module": "funding",
+   "name": "Update Created Funding"
+  },
+  "funding.view": {
+   "description": "Can view all funding",
+   "module": "funding",
+   "name": "View Funding"
+  },
+  "funding.view_created": {
+   "description": "Can view funding created by user",
+   "module": "funding",
+   "name": "View Created Funding"
+  },
+  "global_configurations.full_access": {
+   "description": "Full access to global configurations",
+   "module": "global_configurations",
+   "name": "Global Configurations Full Access"
+  },
+  "global_configurations.update": {
+   "description": "Can update global configurations",
+   "module": "global_configurations",
+   "name": "Update Global Configuration"
+  },
+  "global_configurations.view": {
+   "description": "Can view global configurations",
+   "module": "global_configurations",
+   "name": "View Global Configuration"
+  },
+  "invoice.create": {
+   "description": "Can create invoices",
+   "module": "invoice",
+   "name": "Create Invoice"
+  },
+  "invoice.delete": {
+   "description": "Can delete any invoice",
+   "module": "invoice",
+   "name": "Delete Invoice"
+  },
+  "invoice.delete_created": {
+   "description": "Can delete invoices created by user",
+   "module": "invoice",
+   "name": "Delete Created Invoice"
+  },
+  "invoice.full_access": {
+   "description": "Full access to invoices",
+   "module": "invoice",
+   "name": "Invoice Full Access"
+  },
+  "invoice.update": {
+   "description": "Can update any invoice",
+   "module": "invoice",
+   "name": "Update Invoice"
+  },
+  "invoice.update_created": {
+   "description": "Can update invoices created by user",
+   "module": "invoice",
+   "name": "Update Created Invoice"
+  },
+  "invoice.view": {
+   "description": "Can view all invoices",
+   "module": "invoice",
+   "name": "View Invoice"
+  },
+  "invoice.view_created": {
+   "description": "Can view invoices created by user",
+   "module": "invoice",
+   "name": "View Created Invoice"
+  },
+  "leave_request.create": {
+   "description": "Can create leave requests",
+   "module": "leave_request",
+   "name": "Create Leave Request"
+  },
+  "leave_request.create_without_approval": {
+   "description": "Can create leave requests without approval",
+   "module": "leave_request",
+   "name": "Create Leave Request Without Approval"
+  },
+  "leave_request.full_access": {
+   "description": "Full access to leave requests",
+   "module": "leave_request",
+   "name": "Leave Request Full Access"
+  },
+  "leave_request.review": {
+   "description": "Can review and approve leave requests",
+   "module": "leave_request",
+   "name": "Review Leave Request"
+  },
+  "leave_request.view": {
+   "description": "Can view all leave requests",
+   "module": "leave_request",
+   "name": "View Leave Request"
+  },
+  "leave_request.view_created": {
+   "description": "Can view leave requests created by user",
+   "module": "leave_request",
+   "name": "View Created Leave Request"
+  },
+  "machines.create": {
+   "description": "Can create machines",
+   "module": "machines",
+   "name": "Create Machines"
+  },
+  "machines.delete": {
+   "description": "Can delete machines",
+   "module": "machines",
+   "name": "Delete Machines"
+  },
+  "machines.full_access": {
+   "description": "Full access to machines",
+   "module": "machines",
+   "name": "Machines Full Access"
+  },
+  "machines.update": {
+   "description": "Can update machines",
+   "module": "machines",
+   "name": "Update Machines"
+  },
+  "machines.view": {
+   "description": "Can view machines",
+   "module": "machines",
+   "name": "View Machines"
+  },
+  "mail.admin_shared_mailbox": {
+   "description": "",
+   "module": "mail",
+   "name": "Administer shared mailboxes"
+  },
+  "milestone_management.create": {
+   "description": "Can create milestones",
+   "module": "milestone_management",
+   "name": "Create Milestone"
+  },
+  "milestone_management.delete": {
+   "description": "Can delete milestones",
+   "module": "milestone_management",
+   "name": "Delete Milestone"
+  },
+  "milestone_management.full_access": {
+   "description": "Full access to milestones",
+   "module": "milestone_management",
+   "name": "Milestone Management Full Access"
+  },
+  "milestone_management.update": {
+   "description": "Can update milestones",
+   "module": "milestone_management",
+   "name": "Update Milestone"
+  },
+  "milestone_management.view": {
+   "description": "Can view milestones",
+   "module": "milestone_management",
+   "name": "View Milestone"
+  },
+  "notice_board.create": {
+   "description": "Can create notice board entries",
+   "module": "notice_board",
+   "name": "Create Notice Board"
+  },
+  "notice_board.delete": {
+   "description": "Can delete notice board entries",
+   "module": "notice_board",
+   "name": "Delete Notice Board"
+  },
+  "notice_board.full_access": {
+   "description": "Full access to notice board",
+   "module": "notice_board",
+   "name": "Notice Board Full Access"
+  },
+  "notice_board.update": {
+   "description": "Can update notice board entries",
+   "module": "notice_board",
+   "name": "Update Notice Board"
+  },
+  "notice_board.view": {
+   "description": "Can view notice board entries",
+   "module": "notice_board",
+   "name": "View Notice Board"
+  },
+  "object_assessments.create": {
+   "description": "Can create object assessments",
+   "module": "object_assessments",
+   "name": "Create Object Assessment"
+  },
+  "object_assessments.delete": {
+   "description": "Can delete any object assessment",
+   "module": "object_assessments",
+   "name": "Delete Object Assessment"
+  },
+  "object_assessments.delete_assigned_created": {
+   "description": "Can delete object assessments assigned to or created by user",
+   "module": "object_assessments",
+   "name": "Delete Assigned/Created Object Assessment"
+  },
+  "object_assessments.full_access": {
+   "description": "Full access to object assessments",
+   "module": "object_assessments",
+   "name": "Object Assessments Full Access"
+  },
+  "object_assessments.update": {
+   "description": "Can update any object assessment",
+   "module": "object_assessments",
+   "name": "Update Object Assessment"
+  },
+  "object_assessments.update_assigned_created": {
+   "description": "Can update object assessments assigned to or created by user",
+   "module": "object_assessments",
+   "name": "Update Assigned/Created Object Assessment"
+  },
+  "object_assessments.view": {
+   "description": "Can view all object assessments",
+   "module": "object_assessments",
+   "name": "View Object Assessment"
+  },
+  "object_assessments.view_assigned_created": {
+   "description": "Can view object assessments assigned to or created by user",
+   "module": "object_assessments",
+   "name": "View Assigned/Created Object Assessment"
+  },
+  "opportunity_offers.create": {
+   "description": "Can create opportunities and offers",
+   "module": "opportunity_offers",
+   "name": "Create Opportunity/Offer"
+  },
+  "opportunity_offers.full_access": {
+   "description": "Full access to opportunities and offers",
+   "module": "opportunity_offers",
+   "name": "Opportunity/Offer Full Access"
+  },
+  "opportunity_offers.update": {
+   "description": "Can update any opportunity/offer",
+   "module": "opportunity_offers",
+   "name": "Update Opportunity/Offer"
+  },
+  "opportunity_offers.update_created": {
+   "description": "Can update opportunities/offers created by user",
+   "module": "opportunity_offers",
+   "name": "Update Created Opportunity/Offer"
+  },
+  "opportunity_offers.view": {
+   "description": "Can view all opportunities and offers",
+   "module": "opportunity_offers",
+   "name": "View Opportunity/Offer"
+  },
+  "opportunity_offers.view_created": {
+   "description": "Can view opportunities/offers created by user",
+   "module": "opportunity_offers",
+   "name": "View Created Opportunity/Offer"
+  },
+  "phases_management.create": {
+   "description": "Can create phases",
+   "module": "phases_management",
+   "name": "Create Phase"
+  },
+  "phases_management.delete": {
+   "description": "Can delete phases",
+   "module": "phases_management",
+   "name": "Delete Phase"
+  },
+  "phases_management.full_access": {
+   "description": "Full access to phases",
+   "module": "phases_management",
+   "name": "Phases Management Full Access"
+  },
+  "phases_management.update": {
+   "description": "Can update phases",
+   "module": "phases_management",
+   "name": "Update Phase"
+  },
+  "phases_management.view": {
+   "description": "Can view phases",
+   "module": "phases_management",
+   "name": "View Phase"
+  },
+  "project.delete": {
+   "description": "Can delete projects",
+   "module": "project",
+   "name": "Delete Project"
+  },
+  "project.full_access": {
+   "description": "Full access to project",
+   "module": "project",
+   "name": "Project Full Access"
+  },
+  "project.update": {
+   "description": "Can update project details",
+   "module": "project",
+   "name": "Update Project"
+  },
+  "project.view": {
+   "description": "Can view project details",
+   "module": "project",
+   "name": "View Project"
+  },
+  "project_assembly_catalog.create": {
+   "description": "Can create project Assembly Catalogs items",
+   "module": "project_assembly_catalog",
+   "name": "Create Project Assembly Catalogs"
+  },
+  "project_assembly_catalog.delete": {
+   "description": "Can delete project Assembly Catalogs items",
+   "module": "project_assembly_catalog",
+   "name": "Delete Project Assembly Catalogs"
+  },
+  "project_assembly_catalog.full_access": {
+   "description": "Full access to project Assembly Catalogs",
+   "module": "project_assembly_catalog",
+   "name": "Project Assembly Catalogs Full Access"
+  },
+  "project_assembly_catalog.update": {
+   "description": "Can update project Assembly Catalogs items",
+   "module": "project_assembly_catalog",
+   "name": "Update Project Assembly Catalogs"
+  },
+  "project_assembly_catalog.view": {
+   "description": "Can view project Assembly Catalogs items",
+   "module": "project_assembly_catalog",
+   "name": "View Project Assembly Catalogs"
+  },
+  "projects.create": {
+   "description": "Can create new projects",
+   "module": "projects",
+   "name": "Create Projects"
+  },
+  "projects.full_access": {
+   "description": "Full access to projects",
+   "module": "projects",
+   "name": "Projects Full Access"
+  },
+  "projects.view": {
+   "description": "Can view list of projects",
+   "module": "projects",
+   "name": "View Projects"
+  },
+  "projects.view_all_access": {
+   "description": "Can view all projects",
+   "module": "projects",
+   "name": "View All Projects"
+  },
+  "projects.view_assigned_created": {
+   "description": "Can view projects assigned to or created by user",
+   "module": "projects",
+   "name": "View Assigned/Created Projects"
+  },
+  "purchase_order.create": {
+   "description": "Can create purchase orders and change notices",
+   "module": "purchase_order",
+   "name": "Create Purchase Order"
+  },
+  "purchase_order.delete": {
+   "description": "Can delete any purchase order or change notice",
+   "module": "purchase_order",
+   "name": "Delete Purchase Order"
+  },
+  "purchase_order.delete_created": {
+   "description": "Can delete purchase orders and change notices created by user",
+   "module": "purchase_order",
+   "name": "Delete Created Purchase Order"
+  },
+  "purchase_order.full_access": {
+   "description": "Full access to purchase orders and change notices",
+   "module": "purchase_order",
+   "name": "Purchase Order Full Access"
+  },
+  "purchase_order.update": {
+   "description": "Can update any purchase order or change notice",
+   "module": "purchase_order",
+   "name": "Update Purchase Order"
+  },
+  "purchase_order.update_created": {
+   "description": "Can update purchase orders and change notices created by user",
+   "module": "purchase_order",
+   "name": "Update Created Purchase Order"
+  },
+  "purchase_order.view": {
+   "description": "Can view all purchase orders and change notices",
+   "module": "purchase_order",
+   "name": "View Purchase Order"
+  },
+  "purchase_order.view_created": {
+   "description": "Can view purchase orders and change notices created by user",
+   "module": "purchase_order",
+   "name": "View Created Purchase Order"
+  },
+  "purchase_order.view_project": {
+   "description": "Can view purchase orders linked to projects where the user is a team member",
+   "module": "purchase_order",
+   "name": "View Project Purchase Orders"
+  },
+  "requirements.create": {
+   "description": "Can create requirements",
+   "module": "requirements",
+   "name": "Create Requirements"
+  },
+  "requirements.delete": {
+   "description": "Can delete requirements",
+   "module": "requirements",
+   "name": "Delete Requirements"
+  },
+  "requirements.full_access": {
+   "description": "Full access to requirements",
+   "module": "requirements",
+   "name": "Requirements Full Access"
+  },
+  "requirements.update": {
+   "description": "Can update requirements",
+   "module": "requirements",
+   "name": "Update Requirements"
+  },
+  "requirements.view": {
+   "description": "Can view requirements",
+   "module": "requirements",
+   "name": "View Requirements"
+  },
+  "resources.full_access": {
+   "description": "Full access to resources",
+   "module": "resources",
+   "name": "Resources Full Access"
+  },
+  "resources.view": {
+   "description": "Can view resource allocation",
+   "module": "resources",
+   "name": "View Resource Allocation"
+  },
+  "roles.create": {
+   "description": "Can create roles",
+   "module": "roles",
+   "name": "Create Role"
+  },
+  "roles.delete": {
+   "description": "Can delete roles",
+   "module": "roles",
+   "name": "Delete Role"
+  },
+  "roles.full_access": {
+   "description": "Full access to roles",
+   "module": "roles",
+   "name": "Roles Full Access"
+  },
+  "roles.update": {
+   "description": "Can update roles",
+   "module": "roles",
+   "name": "Update Role"
+  },
+  "roles.view": {
+   "description": "Can view roles",
+   "module": "roles",
+   "name": "View Role"
+  },
+  "site_reporting.create": {
+   "description": "Can create site reports",
+   "module": "site_reporting",
+   "name": "Create Site Report"
+  },
+  "site_reporting.delete": {
+   "description": "Can delete any site report",
+   "module": "site_reporting",
+   "name": "Delete Site Report"
+  },
+  "site_reporting.delete_assigned_created": {
+   "description": "Can delete site reports assigned to or created by user",
+   "module": "site_reporting",
+   "name": "Delete Assigned/Created Site Report"
+  },
+  "site_reporting.full_access": {
+   "description": "Full access to site reports",
+   "module": "site_reporting",
+   "name": "Site Reporting Full Access"
+  },
+  "site_reporting.update": {
+   "description": "Can update any site report",
+   "module": "site_reporting",
+   "name": "Update Site Report"
+  },
+  "site_reporting.update_assigned_created": {
+   "description": "Can update site reports assigned to or created by user",
+   "module": "site_reporting",
+   "name": "Update Assigned/Created Site Report"
+  },
+  "site_reporting.view": {
+   "description": "Can view all site reports",
+   "module": "site_reporting",
+   "name": "View Site Report"
+  },
+  "site_reporting.view_assigned_created": {
+   "description": "Can view site reports assigned to or created by user",
+   "module": "site_reporting",
+   "name": "View Assigned/Created Site Report"
+  },
+  "solution_demands.create": {
+   "description": "Can create solution demands",
+   "module": "solution_demands",
+   "name": "Create Solution Demands"
+  },
+  "solution_demands.delete": {
+   "description": "Can delete solution demands",
+   "module": "solution_demands",
+   "name": "Delete Solution Demands"
+  },
+  "solution_demands.full_access": {
+   "description": "Full access to solution demands",
+   "module": "solution_demands",
+   "name": "Solution Demands Full Access"
+  },
+  "solution_demands.update": {
+   "description": "Can update solution demands",
+   "module": "solution_demands",
+   "name": "Update Solution Demands"
+  },
+  "solution_demands.view": {
+   "description": "Can view solution demands",
+   "module": "solution_demands",
+   "name": "View Solution Demands"
+  },
+  "solutions_licenses.create": {
+   "description": "Can create/buy solution licenses",
+   "module": "solutions_licenses",
+   "name": "Create Solution License"
+  },
+  "solutions_licenses.full_access": {
+   "description": "Full access to solution licenses",
+   "module": "solutions_licenses",
+   "name": "Solution Licenses Full Access"
+  },
+  "solutions_licenses.update": {
+   "description": "Can assign/revoke users from solution licenses",
+   "module": "solutions_licenses",
+   "name": "Update Solution License"
+  },
+  "solutions_licenses.view": {
+   "description": "Can view solution licenses",
+   "module": "solutions_licenses",
+   "name": "View Solution License"
+  },
+  "staff_management.default_management_update": {
+   "description": "Default management update permissions",
+   "module": "staff_management",
+   "name": "Default Management Update"
+  },
+  "staff_management.full_access": {
+   "description": "Full access to staff management",
+   "module": "staff_management",
+   "name": "Staff Management Full Access"
+  },
+  "staff_management.update": {
+   "description": "Can update staff management",
+   "module": "staff_management",
+   "name": "Update Staff Management"
+  },
+  "staff_management.view": {
+   "description": "Can view staff management",
+   "module": "staff_management",
+   "name": "View Staff Management"
+  },
+  "staff_observation.create": {
+   "description": "Can create staff observations",
+   "module": "staff_observation",
+   "name": "Create Staff Observation"
+  },
+  "staff_observation.delete": {
+   "description": "Can delete any staff observation",
+   "module": "staff_observation",
+   "name": "Delete Staff Observation"
+  },
+  "staff_observation.delete_created": {
+   "description": "Can delete staff observations created by user",
+   "module": "staff_observation",
+   "name": "Delete Created Staff Observation"
+  },
+  "staff_observation.full_access": {
+   "description": "Full access to staff observations",
+   "module": "staff_observation",
+   "name": "Staff Observation Full Access"
+  },
+  "staff_observation.update": {
+   "description": "Can update any staff observation",
+   "module": "staff_observation",
+   "name": "Update Staff Observation"
+  },
+  "staff_observation.update_created": {
+   "description": "Can update staff observations created by user",
+   "module": "staff_observation",
+   "name": "Update Created Staff Observation"
+  },
+  "staff_observation.view": {
+   "description": "Can view all staff observations",
+   "module": "staff_observation",
+   "name": "View Staff Observation"
+  },
+  "staff_observation.view_created": {
+   "description": "Can view staff observations created by user",
+   "module": "staff_observation",
+   "name": "View Created Staff Observation"
+  },
+  "time_booking.create": {
+   "description": "Can create time bookings",
+   "module": "time_booking",
+   "name": "Create Time Booking"
+  },
+  "time_booking.create_without_approval": {
+   "description": "Can create time bookings without approval",
+   "module": "time_booking",
+   "name": "Create Time Booking Without Approval"
+  },
+  "time_booking.delete": {
+   "description": "Can delete any time booking",
+   "module": "time_booking",
+   "name": "Delete Time Booking"
+  },
+  "time_booking.delete_created": {
+   "description": "Can delete time bookings created by user",
+   "module": "time_booking",
+   "name": "Delete Created Time Booking"
+  },
+  "time_booking.full_access": {
+   "description": "Full access to time bookings",
+   "module": "time_booking",
+   "name": "Time Booking Full Access"
+  },
+  "time_booking.review": {
+   "description": "Can review and approve time bookings",
+   "module": "time_booking",
+   "name": "Review Time Booking"
+  },
+  "time_booking.update": {
+   "description": "Can update any time booking",
+   "module": "time_booking",
+   "name": "Update Time Booking"
+  },
+  "time_booking.update_created": {
+   "description": "Can update time bookings created by user",
+   "module": "time_booking",
+   "name": "Update Created Time Booking"
+  },
+  "time_booking.view": {
+   "description": "Can view all time bookings",
+   "module": "time_booking",
+   "name": "View Time Booking"
+  },
+  "time_booking.view_created": {
+   "description": "Can view time bookings created by user",
+   "module": "time_booking",
+   "name": "View Created Time Booking"
+  },
+  "transports.create": {
+   "description": "Can create transports",
+   "module": "transports",
+   "name": "Create Transports"
+  },
+  "transports.delete": {
+   "description": "Can delete transports",
+   "module": "transports",
+   "name": "Delete Transports"
+  },
+  "transports.full_access": {
+   "description": "Full access to transports",
+   "module": "transports",
+   "name": "Transports Full Access"
+  },
+  "transports.update": {
+   "description": "Can update transports",
+   "module": "transports",
+   "name": "Update Transports"
+  },
+  "transports.view": {
+   "description": "Can view transports",
+   "module": "transports",
+   "name": "View Transports"
+  },
+  "users.create": {
+   "description": "Can create users",
+   "module": "users",
+   "name": "Create User"
+  },
+  "users.delete": {
+   "description": "Can delete users",
+   "module": "users",
+   "name": "Delete User"
+  },
+  "users.full_access": {
+   "description": "Full access to users",
+   "module": "users",
+   "name": "Users Full Access"
+  },
+  "users.update": {
+   "description": "Can update users",
+   "module": "users",
+   "name": "Update User"
+  },
+  "users.view": {
+   "description": "Can view users",
+   "module": "users",
+   "name": "View User"
+  }
+ },
+ "roles": {
+  "admin_server/company/Company Owner": {
+   "description": "This profile is the owner of the company account and has a super admin role. The company owner has full access to all components of the Admin Panel and of the different solutions.",
+   "name": "Company Owner",
+   "permissions": [
+    "ai_chat.create",
+    "ai_chat.delete",
+    "ai_chat.full_access",
+    "ai_chat.update",
+    "ai_chat.view",
+    "billing.full_access",
+    "billing.update",
+    "billing.view",
+    "company_profile.full_access",
+    "company_profile.update",
+    "company_profile.view",
+    "connections.create",
+    "connections.full_access",
+    "connections.update",
+    "connections.view",
+    "global_configurations.full_access",
+    "global_configurations.update",
+    "global_configurations.view",
+    "roles.create",
+    "roles.delete",
+    "roles.full_access",
+    "roles.update",
+    "roles.view",
+    "solutions_licenses.create",
+    "solutions_licenses.full_access",
+    "solutions_licenses.update",
+    "solutions_licenses.view",
+    "users.create",
+    "users.delete",
+    "users.full_access",
+    "users.update",
+    "users.view"
+   ],
+   "scope": "company",
+   "type": "admin_server"
+  },
+  "solution/company/Company Owner": {
+   "description": "This profile is the owner of the company account and has a super admin role. The company owner has full access to all components of the Admin Panel and of the different solutions.",
+   "name": "Company Owner",
+   "permissions": [
+    "aas_models.full_access",
+    "aas_models.view",
+    "action_item.create",
+    "action_item.delete",
+    "action_item.delete_assigned_created",
+    "action_item.full_access",
+    "action_item.update",
+    "action_item.update_assigned_created",
+    "action_item.view",
+    "action_item.view_assigned_created",
+    "available_product_parts.create",
+    "available_product_parts.delete",
+    "available_product_parts.full_access",
+    "available_product_parts.update",
+    "available_product_parts.view",
+    "calendar_events.create",
+    "calendar_events.delete",
+    "calendar_events.delete_assigned_created",
+    "calendar_events.full_access",
+    "calendar_events.update",
+    "calendar_events.update_assigned_created",
+    "calendar_events.view",
+    "calendar_events.view_assigned_created",
+    "company_assembly_catalog.create",
+    "company_assembly_catalog.delete",
+    "company_assembly_catalog.full_access",
+    "company_assembly_catalog.update",
+    "company_assembly_catalog.view",
+    "company_configurations.full_access",
+    "company_configurations.reset",
+    "company_configurations.sync_admin",
+    "company_configurations.update",
+    "company_configurations.view",
+    "contact_management.create",
+    "contact_management.delete",
+    "contact_management.full_access",
+    "contact_management.recycle",
+    "contact_management.update",
+    "contact_management.view",
+    "documents.correspondence_send",
+    "documents.correspondence_template_manage",
+    "documents.create",
+    "documents.delete",
+    "documents.delete_assigned_created",
+    "documents.full_access",
+    "documents.sync_sharepoint",
+    "documents.update",
+    "documents.update_assigned_created",
+    "documents.view",
+    "documents.view_assigned_created",
+    "expense_booking.create",
+    "expense_booking.create_without_approval",
+    "expense_booking.delete",
+    "expense_booking.delete_created",
+    "expense_booking.full_access",
+    "expense_booking.review",
+    "expense_booking.update",
+    "expense_booking.update_created",
+    "expense_booking.view",
+    "expense_booking.view_created",
+    "invoice.create",
+    "invoice.delete",
+    "invoice.delete_created",
+    "invoice.full_access",
+    "invoice.update",
+    "invoice.update_created",
+    "invoice.view",
+    "invoice.view_created",
+    "leave_request.create",
+    "leave_request.create_without_approval",
+    "leave_request.full_access",
+    "leave_request.review",
+    "leave_request.view",
+    "leave_request.view_created",
+    "machines.create",
+    "machines.delete",
+    "machines.full_access",
+    "machines.update",
+    "machines.view",
+    "mail.admin_shared_mailbox",
+    "notice_board.create",
+    "notice_board.delete",
+    "notice_board.full_access",
+    "notice_board.update",
+    "notice_board.view",
+    "opportunity_offers.create",
+    "opportunity_offers.full_access",
+    "opportunity_offers.update",
+    "opportunity_offers.update_created",
+    "opportunity_offers.view",
+    "opportunity_offers.view_created",
+    "projects.create",
+    "projects.full_access",
+    "projects.view",
+    "projects.view_all_access",
+    "projects.view_assigned_created",
+    "resources.full_access",
+    "resources.view",
+    "staff_management.default_management_update",
+    "staff_management.full_access",
+    "staff_management.update",
+    "staff_management.view",
+    "staff_observation.create",
+    "staff_observation.delete",
+    "staff_observation.delete_created",
+    "staff_observation.full_access",
+    "staff_observation.update",
+    "staff_observation.update_created",
+    "staff_observation.view",
+    "staff_observation.view_created",
+    "time_booking.create",
+    "time_booking.create_without_approval",
+    "time_booking.delete",
+    "time_booking.delete_created",
+    "time_booking.full_access",
+    "time_booking.review",
+    "time_booking.update",
+    "time_booking.update_created",
+    "time_booking.view",
+    "time_booking.view_created"
+   ],
+   "scope": "company",
+   "type": "solution"
+  },
+  "solution/project/Project Owner": {
+   "description": "This profile can be assigned to users with a 'Company Project Managers' role. This role has full permission on the project he/she created and can view the full projects' list of the company.",
+   "name": "Project Owner",
+   "permissions": [
+    "action_item.create",
+    "action_item.delete",
+    "action_item.delete_assigned_created",
+    "action_item.full_access",
+    "action_item.update",
+    "action_item.update_assigned_created",
+    "action_item.view",
+    "action_item.view_assigned_created",
+    "bill_of_material.create",
+    "bill_of_material.delete",
+    "bill_of_material.full_access",
+    "bill_of_material.update",
+    "bill_of_material.view",
+    "calendar_events.create",
+    "calendar_events.delete",
+    "calendar_events.delete_assigned_created",
+    "calendar_events.full_access",
+    "calendar_events.update",
+    "calendar_events.update_assigned_created",
+    "calendar_events.view",
+    "calendar_events.view_assigned_created",
+    "documents.create",
+    "documents.delete",
+    "documents.delete_assigned_created",
+    "documents.full_access",
+    "documents.sync_sharepoint",
+    "documents.update",
+    "documents.update_assigned_created",
+    "documents.view",
+    "documents.view_assigned_created",
+    "ecpmp_configurations.full_access",
+    "ecpmp_configurations.reset",
+    "ecpmp_configurations.sync_admin",
+    "ecpmp_configurations.update",
+    "ecpmp_configurations.view",
+    "funding.create",
+    "funding.delete",
+    "funding.delete_created",
+    "funding.full_access",
+    "funding.update",
+    "funding.update_created",
+    "funding.view",
+    "funding.view_created",
+    "milestone_management.create",
+    "milestone_management.delete",
+    "milestone_management.full_access",
+    "milestone_management.update",
+    "milestone_management.view",
+    "object_assessments.create",
+    "object_assessments.delete",
+    "object_assessments.delete_assigned_created",
+    "object_assessments.full_access",
+    "object_assessments.update",
+    "object_assessments.update_assigned_created",
+    "object_assessments.view",
+    "object_assessments.view_assigned_created",
+    "phases_management.create",
+    "phases_management.delete",
+    "phases_management.full_access",
+    "phases_management.update",
+    "phases_management.view",
+    "project.delete",
+    "project.full_access",
+    "project.update",
+    "project.view",
+    "project_assembly_catalog.create",
+    "project_assembly_catalog.delete",
+    "project_assembly_catalog.full_access",
+    "project_assembly_catalog.update",
+    "project_assembly_catalog.view",
+    "requirements.create",
+    "requirements.delete",
+    "requirements.full_access",
+    "requirements.update",
+    "requirements.view",
+    "site_reporting.create",
+    "site_reporting.delete",
+    "site_reporting.delete_assigned_created",
+    "site_reporting.full_access",
+    "site_reporting.update",
+    "site_reporting.update_assigned_created",
+    "site_reporting.view",
+    "site_reporting.view_assigned_created",
+    "solution_demands.create",
+    "solution_demands.delete",
+    "solution_demands.full_access",
+    "solution_demands.update",
+    "solution_demands.view",
+    "transports.create",
+    "transports.delete",
+    "transports.full_access",
+    "transports.update",
+    "transports.view"
+   ],
+   "scope": "project",
+   "type": "solution"
+  }
+ },
+ "sources": {
+  "admin-server-backend": "c27b6ab: accounts/management/commands/setup_roles_permissions.py (create_permissions), accounts/utils.py (create_default_admin_server_role / create_default_solution_role / create_default_project_role: the three 'owner' roles)",
+  "backend": "e2fe187f: userapis 0017 (mail.admin_shared_mailbox), project_management 0228 (documents.correspondence_send / _template_manage); admin-server-backend add_permissions.py (aas_models.*)"
+ },
+ "version": "05AM-1"
+}
