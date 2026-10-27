@@ -6,7 +6,7 @@ from models.models import UserRole, RolePermission, User
 from project_management.models import Project, ProjectTeamMembers
 import logging
 
-from ecpmpapp.custom_exceptions import InactiveLicenseException
+from ecpmpapp.custom_exceptions import InactiveAccountException, InactiveLicenseException
 from ecpmpapp.license_queries import get_active_license_sql_condition
 
 logger = logging.getLogger(__name__)
@@ -22,10 +22,7 @@ class LicensePermission(BasePermission):
 
         # Fetch the product name from query params or view args
         if request.user.is_deleted or not request.user.is_active:
-            return JsonResponse(
-                {"detail": "Your account is inactive or has been deleted. Access denied."},
-                status=410
-            )
+            raise InactiveAccountException()
         user_id = request.user.id
         product_name = request.query_params.get("solution", "Energy Consultant Solution")
         
