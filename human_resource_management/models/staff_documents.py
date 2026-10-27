@@ -21,7 +21,7 @@ from django.core.exceptions import ValidationError
 from django.db import models
 from models.models import CompanyProfile, Staff, User
 
-from human_resource_management.storage import staff_document_storage
+from human_resource_management.storage import get_staff_document_storage
 
 
 class StaffDocumentCategory(models.Model):
@@ -156,7 +156,7 @@ class StaffDocumentFile(models.Model):
 
     staff_document = models.ForeignKey(StaffDocument, on_delete=models.CASCADE, related_name="files")
     version_number = models.PositiveIntegerField()
-    file = models.FileField(upload_to=_staff_document_upload_path, storage=staff_document_storage, max_length=500)
+    file = models.FileField(upload_to=_staff_document_upload_path, storage=get_staff_document_storage, max_length=500)
     file_name = models.CharField(max_length=255)
     file_size = models.PositiveIntegerField(null=True, blank=True)
     file_sha256 = models.CharField(max_length=64, blank=True, default="")
