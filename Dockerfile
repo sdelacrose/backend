@@ -51,8 +51,8 @@ ARG MODELS_REF=f8ea5539f8208a1b17589b17159269275003e776
 ARG MODELS_GIT_AUTH=""
 RUN pip install "git+https://${MODELS_GIT_AUTH}github.com/sdelacrose/admin-server-models.git@${MODELS_REF}"
 
-# Make the entry point script executable
-RUN chmod +x /app/scripts/entry_point.sh
+# Make the entry point script executable (and force LF: a CRLF shebang makes exec fail with "no such file")
+RUN sed -i 's/\r$//' /app/scripts/entry_point.sh && chmod +x /app/scripts/entry_point.sh
 
 # Expose the application port
 EXPOSE 8000
