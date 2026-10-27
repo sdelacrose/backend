@@ -76,6 +76,18 @@ class RecetteDocumentRepairTests(TestCase):
         self.assertEqual(other_config.document_status, [])
         self.assertFalse(Folder.objects.filter(company_profile=other).exists())
 
+    def test_action_item_statuses_and_reminders_are_repaired_without_touching_custom_lists(self):
+        """Empty status_options / reminder_settings left action forms without options (and "closed" unusable)."""
+        self.config.reminder_settings = ["none", "3 days"]
+        self.config.save(update_fields=["reminder_settings"])
+        _, digest = self.run_repair()
+        self.run_repair(apply=True, expected_plan_sha256=digest)
+        self.config.refresh_from_db()
+        defaults = get_company_configuration_defaults()
+        self.assertEqual(self.config.status_options, defaults["status_options"])
+        self.assertIn("closed", [value.split(":")[0] for value in self.config.status_options])
+        self.assertEqual(self.config.reminder_settings, ["none", "3 days"])
+
     @override_settings(RECETTE_MODE=False)
     def test_refused_outside_recette(self):
         with self.assertRaises(CommandError):

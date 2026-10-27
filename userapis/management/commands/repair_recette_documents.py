@@ -14,7 +14,7 @@ FIELDS = (
     "document_internal_review_status", "document_external_review_status", "transmittal_category",
     "correspondence_types", "project_types", "contract_type", "priority_levels",
     "team_members_roles", "funding_strategy", "international_standard", "major_project_model",
-    "commercial_model", "supporting_agreement",
+    "commercial_model", "supporting_agreement", "status_options", "reminder_settings",
 )
 
 
