@@ -472,7 +472,9 @@ class ActionItemFilterService:
                 predicate |= Q(status__iexact="closed")
             return predicate
 
-        if self._truthy("show_closed"):
+        # The "done" time bucket (CRM "Mes actions" > Completed) is precisely the closed items.
+        done_bucket = str(self.params.get("bucket") or "").strip().lower() == "done"
+        if self._truthy("show_closed") or done_bucket:
             return Q()
         return ~Q(status__iexact="closed")
 

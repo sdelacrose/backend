@@ -733,6 +733,11 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
             if status_value:
                 valid_statuses[status_value.lower()] = status_value
 
+        # "open" and "closed" drive the action-item lifecycle in code (closed_at/closed_by, the
+        # lock on closed items, every "open only" filter): always valid, whatever the company configured.
+        for lifecycle_status in (StatusType.OPEN.value, "closed"):
+            valid_statuses.setdefault(lifecycle_status, lifecycle_status)
+
         normalized_value = str(value).strip()
         normalized_key = normalized_value.lower()
 

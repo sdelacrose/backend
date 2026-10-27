@@ -10,7 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from companyprofileapis.models import Opportunity
-from models.models import CompanyProfile, User
+from models.models import CompanyConfig, CompanyProfile, User
 from project_management.models import ActionItem, ContactCompany, ContactUser, CrmInteraction
 from project_management.serializers.contact import ContactUserSerializer
 from project_management.signals import notify_on_contact_company_save, notify_on_contact_save
@@ -112,7 +112,9 @@ class CrmFollowUpTests(ActionItemQueryFixtureMixin, TestCase):
     def my_actions(self, bucket, **params):
         return self.call(
             ActionItemViewSet, {"get": "time"}, "get", "/action_items/time/",
-            {"bucket": bucket, "related_to_me": "true", "open_only": "true", "page_size": 50, **params},
+            # Same query the Network screen sends: "open_only" for every bucket except "done".
+            {"bucket": bucket, "related_to_me": "true", "page_size": 50,
+             **({} if bucket == "done" else {"open_only": "true"}), **params},
         )
 
     def interaction(self, **payload):
@@ -176,11 +178,42 @@ class CrmFollowUpTests(ActionItemQueryFixtureMixin, TestCase):
         item = ActionItem.objects.get(pk=item_id)
         self.assertIsNotNone(item.closed_at)
         self.assertEqual(item.closed_by, self.user)
+        self.assertEqual(item.status, "closed")
 
         # 7. Gone from every open bucket, listed under "done".
         for bucket in ("late", "today", "this_week", "upcoming"):
             self.assertNotIn(item_id, self.ids(self.my_actions(bucket)), bucket)
         self.assertIn(item_id, self.ids(self.my_actions("done")))
+
+    def test_close_stores_the_closed_status_whatever_the_company_status_options(self):
+        """Regression: closing stored closed_at but kept status "open" when the company had no (or no "closed") status option."""
+        for options in ([], ["open", "in progress"], ["open", "closed"]):
+            CompanyConfig.objects.update_or_create(
+                company_profile=self.company, solution="Energy Consultant Solution",
+                defaults={"status_options": options},
+            )
+            item_id = self.create_follow_up(contact_users=[self.alice.id]).data["id"]
+            closed = self.call(
+                ActionItemViewSet, {"patch": "partial_update"}, "patch", f"/action_items/{item_id}/",
+                {"status": "closed"}, pk=item_id,
+            )
+            self.assertEqual(closed.status_code, 200, (options, closed.data))
+            item = ActionItem.objects.get(pk=item_id)
+            self.assertEqual((item.status, item.closed_by), ("closed", self.user), options)
+            self.assertIsNotNone(item.closed_at, options)
+            # A closed item stays locked, and an unknown status never closes anything.
+            again = self.call(
+                ActionItemViewSet, {"patch": "partial_update"}, "patch", f"/action_items/{item_id}/",
+                {"name": "edit after close"}, pk=item_id,
+            )
+            self.assertEqual(again.status_code, 400, options)
+            other_id = self.create_follow_up(contact_users=[self.alice.id]).data["id"]
+            self.call(
+                ActionItemViewSet, {"patch": "partial_update"}, "patch", f"/action_items/{other_id}/",
+                {"status": "not-a-status"}, pk=other_id,
+            )
+            other = ActionItem.objects.get(pk=other_id)
+            self.assertEqual((other.status, other.closed_at), ("open", None), options)
 
     def test_late_bucket_and_type_filter(self):
         late_id = self.create_follow_up(contact_companies=[self.acme.id]).data["id"]
