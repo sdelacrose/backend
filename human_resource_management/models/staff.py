@@ -116,7 +116,7 @@ class StaffCompensationHistory(models.Model):
     )
     effective_from = models.DateField()
     note = models.CharField(max_length=255, null=True, blank=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -163,7 +163,7 @@ class CompanyChargeRateHistory(models.Model):
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="superseded_by",
     )
     note = models.CharField(max_length=255, null=True, blank=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -203,7 +203,7 @@ class CompanyCostItemType(models.Model):
     # rubric's real social/fiscal treatment (see CONCEPTION_L00B3.md).
     social_tax_treatment = models.CharField(max_length=24, default="to_qualify")
     is_active = models.BooleanField(default=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -272,7 +272,7 @@ class StaffAncillaryCostHistory(models.Model):
     )
     effective_from = models.DateField()
     note = models.CharField(max_length=255, null=True, blank=True)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

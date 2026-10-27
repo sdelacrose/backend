@@ -5,7 +5,7 @@ from model_utils import FieldTracker
 from simple_history.models import HistoricalRecords
 from models.models import LeaveSubType, LeaveType, Staff, User
 
-from human_resource_management.storage import leave_attachment_storage
+from human_resource_management.storage import get_leave_attachment_storage
 
 HALF_DAY_MORNING = 'morning'
 HALF_DAY_AFTERNOON = 'afternoon'
@@ -89,7 +89,7 @@ def leave_attachment_upload_path(instance, filename):
 
 class LeaveRequestAttachment(models.Model):
     leave_request = models.ForeignKey(LeaveRequest, on_delete=models.CASCADE, related_name='attachments')
-    file = models.FileField(upload_to=leave_attachment_upload_path, storage=leave_attachment_storage)
+    file = models.FileField(upload_to=leave_attachment_upload_path, storage=get_leave_attachment_storage)
     file_name = models.CharField(max_length=255)
     file_size = models.PositiveIntegerField(null=True, blank=True)
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)

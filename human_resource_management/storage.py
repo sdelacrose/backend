@@ -84,3 +84,13 @@ def _build_private_staff_document_storage():
 
 
 staff_document_storage = _build_private_staff_document_storage()
+
+
+# HR-0036: models reference these callables (not the instances) so that migrations serialise a stable
+# import path instead of the environment-specific location/backend resolved at import time.
+def get_leave_attachment_storage():
+    return leave_attachment_storage
+
+
+def get_staff_document_storage():
+    return staff_document_storage
