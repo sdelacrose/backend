@@ -557,8 +557,37 @@ def plain_messages_for_expiring_po_reminder(contact_name, po):
     return "\n".join(lines)
 
 
-
-
+def plain_message_leave_balance_reminder(employee_name, deadline_date, balances):
+    """
+    AI-1685: plain-text leave-balance reminder ahead of a contract end date
+    or configured deadline. `balances` is the same list of dicts
+    services.leave_reminders.compute_balance_snapshot builds (available/
+    reserved/carry_over_available/carry_over_expires_on per leave type) --
+    never salary/hourly_rate, which are never read by that function.
+    """
+    lines = [
+        f"Dear {employee_name},",
+        "",
+        f"This is a reminder to review your leave balance ahead of {deadline_date}.",
+        "",
+        "Current balance by leave type:",
+    ]
+    for b in balances:
+        line = f"- {b['leave_type_name']}: {b['available']} available (reserved: {b['reserved']})"
+        if b.get("carry_over_available"):
+            expiry = b.get("carry_over_expires_on") or "no expiry recorded"
+            line += f", including a carry-over of {b['carry_over_available']} expiring {expiry}"
+        lines.append(line)
+    lines.extend([
+        "",
+        "This reflects only currently available balance -- it is not a promise "
+        "that every right shown above will remain usable until your departure, "
+        "especially any carry-over expiring before then.",
+        "",
+        "Best regards,",
+        "sharemundo team",
+    ])
+    return "\n".join(lines)
 
 
 
