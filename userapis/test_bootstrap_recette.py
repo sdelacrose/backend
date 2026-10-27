@@ -48,6 +48,10 @@ class BootstrapRecetteTests(TestCase):
         self.assertFalse(user.is_superuser or user.is_staff)
         self.assertFalse(user.has_usable_password())
         self.assertTrue(CompanyConfig.objects.filter(company_profile=company, solution="Energy Consultant Solution").exists())
+        config = CompanyConfig.objects.get(company_profile=company, solution="Energy Consultant Solution")
+        self.assertTrue(config.document_categories and config.document_status)
+        from project_management.models import Folder
+        self.assertEqual(Folder.objects.filter(company_profile=company, name=f"{company.id}_company_root_folder", parent=None).count(), 1)
         self.assertTrue(Staff.objects.filter(user=user).exists())
         self.assertEqual(Role.objects.filter(company=company).count(), 3)
         self.assertEqual(UserRole.objects.filter(user=user).count(), 2)  # the project role is assigned per project

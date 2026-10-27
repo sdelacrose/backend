@@ -121,11 +121,17 @@ class Command(BaseCommand):
     @staticmethod
     def ensure_company_data(user, company):
         from models.models import CompanyConfig, Staff
+        from models.configuration_templates import get_company_configuration_defaults
+        from project_management.models import Folder
 
         # user_info reads user.staff; the Network company form needs at least one company role.
         Staff.objects.get_or_create(user=user, defaults={"salary": 0})
         CompanyConfig.objects.get_or_create(
-            company_profile=company, solution=PRODUCT_NAME, defaults={"company_roles": ["Client", "Supplier"]}
+            company_profile=company, solution=PRODUCT_NAME,
+            defaults={**get_company_configuration_defaults(), "company_roles": ["Client", "Supplier"]},
+        )
+        Folder.objects.get_or_create(
+            company_profile=company, name=f"{company.id}_company_root_folder", parent=None,
         )
 
     @staticmethod
