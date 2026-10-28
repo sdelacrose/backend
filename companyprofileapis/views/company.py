@@ -41,6 +41,7 @@ from models.configuration_templates import (
     COMPANY_CONFIGURATION_FIELDS,
     get_company_configuration_defaults,
 )
+from models.leave_type_sync import reset_leave_type_overrides, sync_leave_types_array
 from models.models import CompanyConfig, CompanyProfile, GlobalConfig, User
 from project_management.models import ActionItem
 from project_management.models.constants import COLLABORATIVE_SOLUTION
@@ -537,6 +538,11 @@ class CompanyConfigViewSet(viewsets.ModelViewSet):
                 company_configs = CompanyConfig.objects.filter(company_profile=user.company)
 
             reset_values = get_company_configuration_defaults()
+            # LOT RH 1: leave_types is derived from LeaveType rows, not an independently
+            # writable array anymore -- dropping it here means the generic reset below
+            # never touches it; the structured reset (clear overrides only, never delete
+            # types/sub-types/requests) happens explicitly per company_config below.
+            reset_values.pop("leave_types", None)
             for company_config in company_configs.select_for_update():
                 proposed_visibility = reset_values["configuration_visibility"]
                 try:
@@ -575,6 +581,8 @@ class CompanyConfigViewSet(viewsets.ModelViewSet):
                     reset_config,
                     previous_labels,
                 )
+                reset_leave_type_overrides(reset_config)
+                sync_leave_types_array(reset_config)
 
             return Response({"message": "All company configurations have been reset."}, status=200)
 
@@ -598,25 +606,35 @@ class CompanyConfigViewSet(viewsets.ModelViewSet):
                 global_config = GlobalConfig.objects.get(company_profile=user.company)
                 company_configs = CompanyConfig.objects.filter(company_profile=user.company)
 
+            # LOT RH 1: leave_types is derived from LeaveType rows, not an independently
+            # writable array -- excluded from the generic merge/replace field list below
+            # so Sync never blindly copies the string array; the structured refresh
+            # (recompute from current effective LeaveType state, no new types created)
+            # happens explicitly per company_config below instead.
+            sync_field_names = tuple(
+                field_name
+                for field_name in COMPANY_CONFIGURATION_FIELDS
+                if field_name != "leave_types"
+            )
             template_values = configuration_values_from_instance(
                 global_config,
-                COMPANY_CONFIGURATION_FIELDS,
+                sync_field_names,
             )
             for company_config in company_configs.select_for_update():
                 local_values = configuration_values_from_instance(
                     company_config,
-                    COMPANY_CONFIGURATION_FIELDS,
+                    sync_field_names,
                 )
                 if strategy == PRESERVE_LOCAL:
                     synced_values = preserve_local_configuration(
                         local_values,
                         template_values,
-                        field_names=COMPANY_CONFIGURATION_FIELDS,
+                        field_names=sync_field_names,
                     )
                 else:
                     synced_values = replace_configuration(
                         template_values,
-                        field_names=COMPANY_CONFIGURATION_FIELDS,
+                        field_names=sync_field_names,
                     )
 
                 proposed_visibility = synced_values.get(
@@ -659,6 +677,7 @@ class CompanyConfigViewSet(viewsets.ModelViewSet):
                     synced_config,
                     previous_labels,
                 )
+                sync_leave_types_array(synced_config)
 
             public_holiday_summary = sync_company_public_holidays_from_global(
                 company_profile=getattr(user, "company", None),

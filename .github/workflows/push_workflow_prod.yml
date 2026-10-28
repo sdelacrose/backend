@@ -48,7 +48,7 @@ jobs:
               env:
                   GH_USERNAME: ${{ secrets.GH_USERNAME }}
                   GH_TOKEN: ${{ secrets.GH_TOKEN }}
-                  MODELS_REF: f8ea5539f8208a1b17589b17159269275003e776
+                  MODELS_REF: b3df54380e47a3a26d7bac3212a6cd3b860f176d
               run: |
                   git clone "https://${GH_USERNAME}:${GH_TOKEN}@github.com/sdelacrose/admin-server-models.git" ../admin-server-models
                   git -C ../admin-server-models checkout --detach "${MODELS_REF}"
@@ -218,4 +218,3 @@ jobs:
                 sed -i "s|value: \"IMAGE_VERSION\"|value: \"$IMAGE_VERSION\"|g" manifests/ecpmp-api-deployment-prod.yaml
                 kubectl apply --dry-run=server -f manifests/ecpmp-api-deployment-prod.yaml >/dev/null
                 kubectl apply -f manifests/ecpmp-api-deployment-prod.yaml
-                

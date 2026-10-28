@@ -41,6 +41,9 @@ from ecpmpapp.recette_checks import collect_problems  # noqa: E402
 RECETTE_MODE = True
 ENV = "recette"
 
+# No back-office in recette: it owns the licence tables everywhere else (see ecpmpapp/recette_apps.py).
+INSTALLED_APPS = [*INSTALLED_APPS, "ecpmpapp.recette_apps.RecettePackageLicenseConfig"]
+
 SECRET_KEY = env("RECETTE_SECRET_KEY", default="")
 DEBUG = False
 ALLOWED_HOSTS = env.list("RECETTE_ALLOWED_HOSTS", default=[])

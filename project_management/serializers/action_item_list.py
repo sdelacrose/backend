@@ -179,6 +179,8 @@ class ActionItemBoardSerializer(serializers.ModelSerializer):
         source="parent_action_item.status", read_only=True, allow_null=True
     )
     num_sub_action_items = serializers.IntegerField(read_only=True)
+    # CRM-1B: Network records the follow-up is linked to (navigation from "Mes actions").
+    crm_links = serializers.SerializerMethodField()
 
     class Meta:
         model = ActionItem
@@ -202,6 +204,7 @@ class ActionItemBoardSerializer(serializers.ModelSerializer):
             "parent_action_item",
             "assignees",
             "created_by",
+            "crm_links",
             "documents",
             "num_documents",
             "is_sub_action_item",
@@ -226,6 +229,21 @@ class ActionItemBoardSerializer(serializers.ModelSerializer):
 
     def get_is_sub_action_item(self, obj):
         return obj.parent_action_item_id is not None
+
+    def get_crm_links(self, obj):
+        return {
+            "contact_users": [
+                {"id": c.id, "name": f"{c.name} {c.surname}".strip()}
+                for c in obj.contact_users.all()
+            ],
+            "contact_companies": [
+                {"id": c.id, "name": c.company_name} for c in obj.contact_companies.all()
+            ],
+            "opportunities": [
+                {"id": o.id, "title": o.title, "reference": o.reference}
+                for o in obj.opportunities.all()
+            ],
+        }
 
 
 class ActionItemCalendarSerializer(serializers.BaseSerializer):

@@ -58,6 +58,8 @@ from project_management.views.catalog_recommendation import CatalogRecommendatio
 
 from project_management.views import GlobalConfigListView
 
+from project_management.views.crm import CrmInteractionViewSet
+
 router = OptionalSlashRouter()
 router.register('catalog-recommendations', CatalogRecommendationRunViewSet, basename='catalog-recommendations')
 
@@ -69,6 +71,7 @@ router.register('object_assessment', ObjectAssessmentViewSet)
 router.register('site-reporting', SiteReportViewSet)
 router.register('contact-user', ContactUserViewSet)
 router.register('contact-company', ContactCompanyViewSet)
+router.register('crm-interactions', CrmInteractionViewSet, basename='crm-interactions')
 router.register('time-card', TimeCardViewSet)
 router.register('timesheet-weeks', TimesheetWeekViewSet, basename='timesheet-weeks')
 router.register('monthly-timesheets', MonthlyTimesheetViewSet, basename='monthly-timesheets')

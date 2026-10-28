@@ -747,11 +747,27 @@ class ContactPermission(BaseModulePermission):
         # For other operations, allow to proceed to object-level check
         return True
     
+    @staticmethod
+    def _changes_deleted_state(request, obj):
+        """True only when the request actually flips the soft-delete flag (move to / restore
+        from the recycle bin). Having an `is_deleted` column is not a deletion request: an
+        ordinary edit never sends it, or sends the unchanged value."""
+        if not hasattr(obj, 'is_deleted'):
+            return False
+        data = getattr(request, 'data', None)
+        if not hasattr(data, 'get') or 'is_deleted' not in data:
+            return False
+        raw = data.get('is_deleted')
+        requested = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('true', '1', 'yes', 'on')
+        return requested != bool(obj.is_deleted)
+
     def has_object_permission(self, request, view, obj):
-        if request.method in ['PUT', 'PATCH'] and not hasattr(obj, 'is_deleted'):
+        if request.method in ['PUT', 'PATCH']:
+            if self._changes_deleted_state(request, obj):
+                # Soft delete / restore keeps requiring the delete permission, exactly as before.
+                return self._check_delete_permission(request.user, obj)
+            # NETWORK-CONTACT-FIX-02: an ordinary modification needs only the update permission.
             return self._check_update_permission(request.user, obj)
-        elif request.method == 'PATCH' and hasattr(obj, 'is_deleted'):
-            return self._check_delete_permission(request.user, obj)
         elif request.method == 'DELETE':
             return self._check_delete_permission(request.user, obj)
         elif request.method == 'GET':

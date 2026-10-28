@@ -540,6 +540,42 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                     )
         return value
 
+    # CRM-1B: Network records linked to a follow-up must belong to the action item's own tenant
+    # (company or freelancer), resolved exactly like opportunities above (project -> its owner).
+    def _crm_effective_tenant(self):
+        project_id, company_profile_id, freelancer_id = self.get_related_project_id_or_company_id_or_freelancer()
+        if project_id:
+            project = Project.objects.filter(id=project_id).select_related("user").first()
+            if project is None:
+                raise serializers.ValidationError("Unable to get related project for validating contacts.")
+            if project.company_profile_id:
+                return ("company", project.company_profile_id)
+            if project.user and getattr(project.user, "is_freelancer", False):
+                return ("freelancer", project.user.id)
+            return None
+        if company_profile_id:
+            return ("company", company_profile_id)
+        if freelancer_id:
+            return ("freelancer", freelancer_id)
+        return None
+
+    def _validate_crm_links(self, value, label):
+        if not value:
+            return value
+        from project_management.crm_tenancy import tenant_of
+
+        tenant = self._crm_effective_tenant()
+        for record in value:
+            if tenant is None or tenant_of(record) != tenant or record.is_deleted:
+                raise serializers.ValidationError(f"{label} {record.pk} does not belong to the same company or freelancer.")
+        return value
+
+    def validate_contact_users(self, value):
+        return self._validate_crm_links(value, "Contact")
+
+    def validate_contact_companies(self, value):
+        return self._validate_crm_links(value, "Company")
+
     def get_company_id_or_project_id_or_freelancer_from_instance(self, instance):
         project_id = None
         company_profile_id = None
@@ -696,6 +732,11 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
             status_value = choice.split(":", 1)[0].strip()
             if status_value:
                 valid_statuses[status_value.lower()] = status_value
+
+        # "open" and "closed" drive the action-item lifecycle in code (closed_at/closed_by, the
+        # lock on closed items, every "open only" filter): always valid, whatever the company configured.
+        for lifecycle_status in (StatusType.OPEN.value, "closed"):
+            valid_statuses.setdefault(lifecycle_status, lifecycle_status)
 
         normalized_value = str(value).strip()
         normalized_key = normalized_value.lower()
@@ -1155,6 +1196,14 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                 ),
             }
             for opportunity in instance.opportunities.all()
+        ]
+        representation["contact_users"] = [
+            {"id": contact.id, "name": f"{contact.name} {contact.surname}".strip()}
+            for contact in instance.contact_users.all()
+        ]
+        representation["contact_companies"] = [
+            {"id": company.id, "name": company.company_name}
+            for company in instance.contact_companies.all()
         ]
 
         if effective_milestone:

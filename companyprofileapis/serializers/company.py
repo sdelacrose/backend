@@ -199,7 +199,10 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyConfig
         fields = '__all__'
-        read_only_fields = ['company_profile']
+        # LOT RH 1: leave_types is derived from LeaveType rows (see models.leave_type_sync)
+        # -- read-only here so the generic update/Sync/Reset paths can no longer write it
+        # independently; LeaveType CRUD is the single source of truth.
+        read_only_fields = ['company_profile', 'leave_types']
 
     def validate_document_control_configuration(self, value):
         # Reference / revision / workflow settings: validated and stored in canonical form.
