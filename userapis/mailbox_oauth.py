@@ -13,6 +13,8 @@ of scopes (MS_MAIL_SCOPES, see ecpmpapp/constants.py) so the single resulting to
 working for Calendar/Contacts too.
 """
 
+import logging
+import re
 import uuid
 from datetime import timedelta
 from urllib.parse import quote, urlencode
@@ -42,6 +44,18 @@ from userapis.recette_guard import (
 from userapis.token_encryption import TokenCryptoError, encrypt_token
 
 STATE_PREFIX = "mail"
+
+logger = logging.getLogger(__name__)
+
+_SCOPE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:/\-]{1,64}$")
+
+
+def _granted_scope_names(tokens):
+    """The permission names Microsoft says it granted (the token response's `scope` field),
+    sanitized for the log. Never the token itself."""
+    scope = tokens.get("scope") if isinstance(tokens, dict) else None
+    names = [name for name in str(scope or "").split() if _SCOPE_NAME_RE.match(name)]
+    return " ".join(names[:15]) or "none"
 
 
 class MailOAuthError(Exception):
@@ -253,6 +267,9 @@ def handle_mail_oauth_callback(state_token, code):
     try:
         confirm_tenant_with_microsoft(tokens["access_token"])    # nothing is stored for a foreign tenant
     except RecetteMailBlocked as error:
+        # Scope names only (never a token): tells a missing permission from a foreign tenant.
+        logger.warning("mail oauth callback refused by the recette tenant check: granted_scopes=%s",
+                       _granted_scope_names(tokens))
         raise MailOAuthError(str(error)) from error
     if recette_mode() and mailbox.connection_type == MailboxConnection.ConnectionType.INDIVIDUAL:
         # LINKS-RECETTE-03: the address (and its domain) is only a claim; in recette the identity

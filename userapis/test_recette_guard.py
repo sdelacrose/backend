@@ -219,3 +219,109 @@ class MicrosoftAppRegistrationTests(SimpleTestCase):
                      "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"):
             with override_settings(**{**WITH_APP, name: "  "}):
                 self.assertFalse(microsoft_app_configured(), msg=name)
+
+
+GUARD_LOGGER = "userapis.recette_guard"
+SECRET_TOKEN = "eyJ-secret-access-token-value"
+
+
+@override_settings(**RECETTE)
+class RecetteTenantRefusalLoggingTests(SimpleTestCase):
+    def _refusal(self, response=None, effect=None, token=SECRET_TOKEN):
+        patch_args = {"side_effect": effect} if effect is not None else {"return_value": response}
+        with patch("userapis.recette_guard.requests.get", **patch_args):
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as captured:
+                with self.assertRaises(RecetteMailBlocked) as raised:
+                    confirm_tenant_with_microsoft(token)
+        self.assertEqual(len(captured.output), 1)
+        # the user-facing refusal never changes with the reason
+        self.assertEqual(str(raised.exception), "This Microsoft account is not in the recette Microsoft 365 tenant.")
+        return captured.output[0]
+
+    def test_each_failure_is_logged_with_its_own_reason(self):
+        broken_json = Mock()
+        broken_json.status_code = 200
+        broken_json.json.side_effect = ValueError("not json")
+        cases = [
+            (dict(response=_organization(status=401)), "reason=graph_http_status status=401"),
+            (dict(response=_organization(status=403)), "reason=graph_http_status status=403"),
+            (dict(response=_organization(status=503)), "reason=graph_http_status status=503"),
+            (dict(effect=requests.Timeout("slow")), "reason=graph_timeout"),
+            (dict(effect=requests.ConnectionError("down")), "reason=graph_network_error error=ConnectionError"),
+            (dict(effect=requests.exceptions.ProxyError("proxy")), "reason=graph_network_error error=ProxyError"),
+            (dict(response=broken_json), "reason=graph_invalid_json"),
+            (dict(response=_organization(payload=[])), "reason=graph_unexpected_payload"),
+            (dict(response=_organization(payload={"value": []})), "reason=organization_absent"),
+            (dict(response=_organization(payload={})), "reason=organization_absent"),
+            (dict(response=_organization(payload={"value": [{"id": TENANT}, {"id": TENANT}]})),
+             "reason=organization_multiple count=2"),
+            (dict(response=_organization(payload={"value": [{}]})), "reason=organization_without_id"),
+            (dict(response=_organization("99999999-0000-0000-0000-000000000000")),
+             "reason=tenant_mismatch returned_is_guid=True expected_is_guid=True same_prefix=False"),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertIn(expected, self._refusal(**kwargs))
+
+    def test_missing_token_and_missing_tenant_are_logged_without_calling_microsoft(self):
+        with patch("userapis.recette_guard.requests.get") as get:
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as no_token:
+                with self.assertRaises(RecetteMailBlocked):
+                    confirm_tenant_with_microsoft("")
+            with override_settings(RECETTE_M365_TENANT_ID=" "), self.assertLogs(GUARD_LOGGER, level="WARNING") as no_tenant:
+                with self.assertRaises(RecetteMailBlocked):
+                    confirm_tenant_with_microsoft(SECRET_TOKEN)
+        get.assert_not_called()
+        self.assertIn("reason=no_token", no_token.output[0])
+        self.assertIn("reason=tenant_not_configured", no_tenant.output[0])
+
+    def test_a_decorated_tenant_setting_is_told_apart_from_a_foreign_tenant(self):
+        with override_settings(RECETTE_M365_TENANT_ID=f'"{TENANT}"'):
+            line = self._refusal(response=_organization(TENANT))
+        self.assertIn("reason=tenant_mismatch", line)
+        self.assertIn("expected_is_guid=False", line)
+        self.assertIn("returned_is_guid=True", line)
+        self.assertIn("same_prefix=False", line)  # the quote shifts the prefix: not a plain foreign tenant either
+
+    def test_graph_error_code_is_logged_only_when_it_is_a_short_code(self):
+        def failure(code):
+            return _organization(status=403, payload={"error": {"code": code, "message": "tester@example.com denied"}})
+        self.assertIn("graph_error=Authorization_RequestDenied", self._refusal(response=failure("Authorization_RequestDenied")))
+        for odd in ("has spaces and tester@example.com", "x" * 80, None, 12):
+            with self.subTest(code=odd):
+                self.assertIn("graph_error=none", self._refusal(response=failure(odd)))
+        self.assertIn("graph_error=none", self._refusal(response=_organization(status=500, payload={"error": "plain"})))
+
+    def test_logs_never_hold_the_token_the_identifiers_or_the_graph_message(self):
+        foreign = "99999999-0000-0000-0000-000000000000"
+        lines = [
+            self._refusal(response=_organization(foreign)),
+            self._refusal(response=_organization(status=403, payload={"error": {"code": "Authorization_RequestDenied",
+                                                                              "message": f"{SENDER} denied"}})),
+            self._refusal(response=_organization(payload={"value": [{"id": foreign}, {"id": TENANT}]})),
+        ]
+        for line in lines:
+            for forbidden in (SECRET_TOKEN, "Bearer", TENANT, foreign, SENDER, RECIPIENT, "denied"):
+                self.assertNotIn(forbidden, line)
+
+    def test_a_confirmed_tenant_logs_nothing(self):
+        with patch("userapis.recette_guard.requests.get", return_value=_organization()):
+            with self.assertNoLogs(GUARD_LOGGER, level="DEBUG"):
+                confirm_tenant_with_microsoft(SECRET_TOKEN)
+
+    @override_settings(RECETTE_MODE=False)
+    def test_outside_recette_nothing_is_called_or_logged(self):
+        with patch("userapis.recette_guard.requests.get") as get, self.assertNoLogs(GUARD_LOGGER, level="DEBUG"):
+            confirm_tenant_with_microsoft(SECRET_TOKEN)
+        get.assert_not_called()
+
+
+class GrantedScopeLoggingTests(SimpleTestCase):
+    def test_only_permission_names_are_kept(self):
+        from userapis.mailbox_oauth import _granted_scope_names
+        self.assertEqual(_granted_scope_names({"scope": "Mail.Send Mail.ReadWrite offline_access"}),
+                         "Mail.Send Mail.ReadWrite offline_access")
+        self.assertEqual(_granted_scope_names({"scope": "Mail.Send bad<script> " + "x" * 80}), "Mail.Send")
+        for tokens in ({}, {"scope": ""}, {"scope": None}, None, "oops"):
+            self.assertEqual(_granted_scope_names(tokens), "none")
+        self.assertNotIn(SECRET_TOKEN, _granted_scope_names({"access_token": SECRET_TOKEN, "scope": "User.Read"}))
