@@ -121,10 +121,22 @@ class ContactUserSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
+        request = self.context.get("request")
+        contact_company = attrs.get("contact_company")
+        if contact_company is not None and request is not None:
+            # SEC-02: a contact can only be attached to a company of the requester's own tenant.
+            user = request.user
+            owned = (
+                contact_company.user_id == user.id
+                if user.is_freelancer
+                else user.company_id is not None and contact_company.company_profile_id == user.company_id
+            )
+            if not owned:
+                raise serializers.ValidationError({"contact_company": "Company not found."})
         return validate_contact_area_of_expertise(
             attrs,
             instance=self.instance,
-            request=self.context.get("request"),
+            request=request,
         )
 
     def _sync_contact_company(self, validated_data):

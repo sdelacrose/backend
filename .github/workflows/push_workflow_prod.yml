@@ -1,11 +1,21 @@
-name: Deploy
+name: Deploy production (manual)
 on:
-    push:
-        branches:
-            - 'main'
+    workflow_dispatch:
+        inputs:
+            confirm_deploy:
+                description: 'Deploy the selected main commit to production'
+                required: true
+                default: false
+                type: boolean
 
 jobs:
     build_test:
+        # No build, credentials, image push or cluster access without a manual confirmation.
+        if: >-
+            ${{ github.event_name == 'workflow_dispatch' &&
+                github.repository == 'sdelacrose/backend' &&
+                github.ref == 'refs/heads/main' &&
+                inputs.confirm_deploy == true }}
         environment: ecpmp-api-build
         name: Build Image
         runs-on: ubuntu-latest
