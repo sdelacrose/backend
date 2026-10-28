@@ -38,6 +38,11 @@
 	handle /media/private/* {
 		respond "Not found" 404
 	}
+	# GED files use the existing LINKS token cookie and per-document permissions.
+	# Keep every other media path behind its existing protection.
+	handle /media/documents/* {
+		reverse_proxy links-recette-api:8000
+	}
 	handle_path /media/* {
 		basic_auth {
 			{$RECETTE_MEDIA_USER} {$RECETTE_MEDIA_HASH}

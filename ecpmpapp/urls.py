@@ -7,6 +7,7 @@ from django.conf import settings
 from rest_framework import permissions
 from drf_yasg.views import get_schema_view
 from drf_yasg import openapi
+from project_management.views.recette_document_file import RecetteDocumentFileView
 
 schema_view = get_schema_view(
     openapi.Info(
@@ -20,6 +21,7 @@ schema_view = get_schema_view(
 )
 
 urlpatterns = [
+    path('media/documents/<path:relative_path>', RecetteDocumentFileView.as_view(), name='recette-document-file'),
     path('', lambda request: HttpResponse("Welcome to ECPMP!")),
     path('api/admin/', admin.site.urls),
     path("api/user/", include("userapis.urls")),
