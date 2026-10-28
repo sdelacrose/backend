@@ -144,7 +144,13 @@ def collect_problems(conf, environ, resolve=socket.getaddrinfo):
     if conf.get("RECETTE_MAIL_SEND_ENABLED"):
         tenant = str(conf.get("RECETTE_M365_TENANT_ID") or "").strip()
         need(tenant, "RECETTE_M365_TENANT_ID is required when sending is enabled")
-        for name in ("RECETTE_ALLOWED_SENDERS", "RECETTE_ALLOWED_RECIPIENTS"):
+        allow_any_recipient = conf.get("RECETTE_MAIL_ALLOW_ANY_RECIPIENT", False)
+        need(type(allow_any_recipient) is bool,
+             "RECETTE_MAIL_ALLOW_ANY_RECIPIENT must be a boolean")
+        names = ["RECETTE_ALLOWED_SENDERS"]
+        if allow_any_recipient is not True or conf.get("RECETTE_ALLOWED_RECIPIENTS"):
+            names.append("RECETTE_ALLOWED_RECIPIENTS")
+        for name in names:
             addresses = list(conf.get(name) or [])
             need(addresses and all(_ADDRESS_RE.match(a) for a in addresses),
                  f"{name} must list full e-mail addresses (no domain or wildcard)")

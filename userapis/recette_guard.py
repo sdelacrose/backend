@@ -79,7 +79,8 @@ def check_send_allowed(*, sender_address, to, cc=(), bcc=(), provider):
         raise RecetteMailBlocked("Sending is disabled in recette (RECETTE_MAIL_SEND_ENABLED is off).")
     senders = _allow_list("RECETTE_ALLOWED_SENDERS")
     recipients = _allow_list("RECETTE_ALLOWED_RECIPIENTS")
-    if not senders or not recipients:
+    allow_any_recipient = getattr(settings, "RECETTE_MAIL_ALLOW_ANY_RECIPIENT", False) is True
+    if not senders or (not recipients and not allow_any_recipient):
         raise RecetteMailBlocked("Sending is disabled in recette: the sender/recipient allow-lists are empty.")
     sender = normalize_address(sender_address)
     if sender is None or sender not in senders:
@@ -89,7 +90,7 @@ def check_send_allowed(*, sender_address, to, cc=(), bcc=(), provider):
         raise RecetteMailBlocked("A recipient is required.")
     for raw in [*to_list, *_as_list(cc), *_as_list(bcc)]:
         address = normalize_address(raw)
-        if address is None or address not in recipients:
+        if address is None or (not allow_any_recipient and address not in recipients):
             raise RecetteMailBlocked(f'Recipient "{raw}" is not on the recette allow-list.')
 
 
