@@ -325,3 +325,51 @@ class GrantedScopeLoggingTests(SimpleTestCase):
         for tokens in ({}, {"scope": ""}, {"scope": None}, None, "oops"):
             self.assertEqual(_granted_scope_names(tokens), "none")
         self.assertNotIn(SECRET_TOKEN, _granted_scope_names({"access_token": SECRET_TOKEN, "scope": "User.Read"}))
+
+
+class MailScopesAndGraphRequestTests(SimpleTestCase):
+    """MAIL-RECETTE-01J: Graph answered 400 to GET /organization for a token that never asked for
+    User.Read (the least delegated permission Graph documents for that call)."""
+
+    PREVIOUS_SCOPES = ("Calendars.ReadWrite", "Contacts.Read", "offline_access", "Mail.Send",
+                       "Mail.ReadWrite", "Mail.Send.Shared", "Mail.ReadWrite.Shared")
+
+    def test_mail_scopes_keep_every_previous_scope_and_add_user_read(self):
+        from ecpmpapp.constants import MS_MAIL_SCOPES, MS_OUTLOOK_CALENDAR_SCOPES
+        requested = MS_MAIL_SCOPES.split()
+        for scope in self.PREVIOUS_SCOPES:
+            self.assertIn(scope, requested)
+        self.assertEqual(requested.count("User.Read"), 1)
+        self.assertEqual(len(requested), len(self.PREVIOUS_SCOPES) + 1)
+        # the calendar-only flow is left exactly as it was
+        self.assertNotIn("User.Read", MS_OUTLOOK_CALENDAR_SCOPES.split())
+
+    @override_settings(MS_CLIENT_ID="client", MS_CLIENT_SECRET="secret", MS_REDIRECT_URI="https://app.invalid/cb/")
+    def test_the_token_exchange_asks_for_the_same_scopes(self):
+        from ecpmpapp.constants import MS_MAIL_SCOPES
+        from userapis.mailbox_oauth import get_mail_access_token
+        with patch("userapis.mailbox_oauth.requests.post") as post:
+            post.return_value.json.return_value = {}
+            get_mail_access_token("code")
+        self.assertEqual(post.call_args.kwargs["data"]["scope"], MS_MAIL_SCOPES)
+        self.assertIn("User.Read", post.call_args.kwargs["data"]["scope"].split())
+
+    def test_the_organization_request_reaches_graph_exactly_as_documented(self):
+        # $select=id must survive URL preparation untouched (Graph documents $select for this call)
+        prepared = requests.Request("GET", MS_GRAPH_ORGANIZATION_URL).prepare()
+        self.assertEqual(prepared.url, "https://graph.microsoft.com/v1.0/organization?$select=id")
+        with override_settings(**RECETTE), patch("userapis.recette_guard.requests.get",
+                                                 return_value=_organization()) as get:
+            confirm_tenant_with_microsoft(SECRET_TOKEN)
+        self.assertEqual(get.call_args.args[0], MS_GRAPH_ORGANIZATION_URL)
+        self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": f"Bearer {SECRET_TOKEN}",
+                                                            "Accept": "application/json"})
+
+    def test_a_graph_400_still_refuses_and_is_logged_with_its_error_code(self):
+        bad_request = _organization(status=400, payload={"error": {"code": "BadRequest", "message": "x"}})
+        with override_settings(**RECETTE), patch("userapis.recette_guard.requests.get", return_value=bad_request):
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as captured:
+                with self.assertRaises(RecetteMailBlocked):
+                    confirm_tenant_with_microsoft(SECRET_TOKEN)
+        self.assertIn("reason=graph_http_status status=400 graph_error=BadRequest", captured.output[0])
+        self.assertNotIn(SECRET_TOKEN, captured.output[0])
