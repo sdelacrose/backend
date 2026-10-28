@@ -103,6 +103,8 @@ MS_TOKEN_ENCRYPTION_WRITE_ENABLED = env.bool("MS_TOKEN_ENCRYPTION_WRITE_ENABLED"
 
 # Mail send guard (userapis.recette_guard): off until explicitly enabled, full addresses only.
 RECETTE_MAIL_SEND_ENABLED = env.bool("RECETTE_MAIL_SEND_ENABLED", default=False)
+# Explicit demo opt-in: sender and Microsoft tenant restrictions remain mandatory.
+RECETTE_MAIL_ALLOW_ANY_RECIPIENT = env.bool("RECETTE_MAIL_ALLOW_ANY_RECIPIENT", default=False)
 RECETTE_M365_TENANT_ID = env("RECETTE_M365_TENANT_ID", default="")
 RECETTE_ALLOWED_SENDERS = [a.strip().lower() for a in env.list("RECETTE_ALLOWED_SENDERS", default=[])]
 RECETTE_ALLOWED_RECIPIENTS = [a.strip().lower() for a in env.list("RECETTE_ALLOWED_RECIPIENTS", default=[])]
