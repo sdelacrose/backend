@@ -23,12 +23,19 @@ Microsoft/Auth0 hosts by the recette egress proxy). Account identity (mail / use
 is confirmed separately by Graph /me for individual mailboxes.
 """
 
+import logging
 import re
 
 import requests
 from django.conf import settings
 
+logger = logging.getLogger(__name__)
+
 MS_GRAPH_ORGANIZATION_URL = "https://graph.microsoft.com/v1.0/organization?$select=id"
+
+_TENANT_REFUSED = "This Microsoft account is not in the recette Microsoft 365 tenant."
+_GUID_RE = re.compile(r"^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$")
+_GRAPH_ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_.]{1,64}$")
 
 _ADDRESS_RE = re.compile(r"^[a-z0-9._%+\-']+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$")
 
@@ -109,23 +116,70 @@ def confirm_tenant_with_microsoft(access_token):
     if not recette_mode():
         return
     expected = str(getattr(settings, "RECETTE_M365_TENANT_ID", "") or "").strip().lower()
-    if not expected or not access_token:
-        raise RecetteMailBlocked("This Microsoft account is not in the recette Microsoft 365 tenant.")
-    tenant = ""
+    if not expected:
+        _refuse_tenant("tenant_not_configured")
+    if not access_token:
+        _refuse_tenant("no_token")
     try:
         response = requests.get(
             MS_GRAPH_ORGANIZATION_URL,
             headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             timeout=10,
         )
-        if response.status_code == 200:
-            organizations = response.json().get("value") or []
-            if len(organizations) == 1:
-                tenant = str(organizations[0].get("id") or "").strip().lower()
-    except (requests.RequestException, ValueError, AttributeError, TypeError):
-        tenant = ""
+    except requests.Timeout:
+        _refuse_tenant("graph_timeout")
+    except requests.RequestException as error:
+        _refuse_tenant("graph_network_error", error=type(error).__name__)
+    status = getattr(response, "status_code", None)
+    if status != 200:
+        _refuse_tenant("graph_http_status", status=status, graph_error=_graph_error_code(response))
+    try:
+        payload = response.json()
+    except ValueError:
+        _refuse_tenant("graph_invalid_json")
+    if not isinstance(payload, dict):
+        _refuse_tenant("graph_unexpected_payload")
+    organizations = payload.get("value") or []
+    if not isinstance(organizations, list) or not organizations:
+        _refuse_tenant("organization_absent")
+    if len(organizations) > 1:
+        _refuse_tenant("organization_multiple", count=len(organizations))
+    first = organizations[0]
+    tenant = str(first.get("id") or "").strip().lower() if isinstance(first, dict) else ""
+    if not tenant:
+        _refuse_tenant("organization_without_id")
     if tenant != expected:
-        raise RecetteMailBlocked("This Microsoft account is not in the recette Microsoft 365 tenant.")
+        # Only comparisons are logged -- never either identifier. `same_prefix` tells a different
+        # tenant (False) from a malformed or decorated setting (often True / expected not a GUID).
+        _refuse_tenant(
+            "tenant_mismatch",
+            returned_is_guid=bool(_GUID_RE.match(tenant)),
+            expected_is_guid=bool(_GUID_RE.match(expected)),
+            same_prefix=tenant[:8] == expected[:8],
+        )
+
+
+def _refuse_tenant(reason, **details):
+    """Log WHY the tenant check refused (technical, no personal or secret data) and refuse. The
+    refusal is always the same message: the log is the only place the reason is visible. Only
+    values built here are logged (reason codes, HTTP status, counts, booleans, a sanitized Graph
+    error code, an exception class name) -- never a token, address or full identifier."""
+    logger.warning(
+        "recette tenant check refused: reason=%s%s",
+        reason,
+        "".join(f" {name}={value}" for name, value in details.items()),
+    )
+    raise RecetteMailBlocked(_TENANT_REFUSED) from None
+
+
+def _graph_error_code(response):
+    """Graph's short error code (e.g. 'Authorization_RequestDenied') of a failed answer, or
+    'none'. Only a short code-like string is ever returned."""
+    try:
+        code = response.json().get("error", {}).get("code")
+    except (ValueError, AttributeError, TypeError):
+        return "none"
+    return code if isinstance(code, str) and _GRAPH_ERROR_CODE_RE.match(code) else "none"
 
 
 def microsoft_app_configured():
