@@ -23,6 +23,8 @@ Microsoft/Auth0 hosts by the recette egress proxy). Account identity (mail / use
 is confirmed separately by Graph /me for individual mailboxes.
 """
 
+import base64
+import json
 import logging
 import re
 
@@ -36,6 +38,10 @@ MS_GRAPH_ORGANIZATION_URL = "https://graph.microsoft.com/v1.0/organization?$sele
 _TENANT_REFUSED = "This Microsoft account is not in the recette Microsoft 365 tenant."
 _GUID_RE = re.compile(r"^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$")
 _GRAPH_ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_.]{1,64}$")
+
+# MAIL-RECETTE-01N (temporary diagnostic): the public tenant Microsoft uses for personal accounts.
+MS_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
+_MAX_DIAGNOSTIC_TOKEN_CHARS = 16384
 
 _ADDRESS_RE = re.compile(r"^[a-z0-9._%+\-']+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$")
 
@@ -132,7 +138,10 @@ def confirm_tenant_with_microsoft(access_token):
         _refuse_tenant("graph_network_error", error=type(error).__name__)
     status = getattr(response, "status_code", None)
     if status != 200:
-        _refuse_tenant("graph_http_status", status=status, graph_error=_graph_error_code(response))
+        details = {"status": status, "graph_error": _graph_error_code(response)}
+        if status == 400:
+            details.update(_bad_request_diagnostic(access_token, expected))
+        _refuse_tenant("graph_http_status", **details)
     try:
         payload = response.json()
     except ValueError:
@@ -170,6 +179,49 @@ def _refuse_tenant(reason, **details):
         "".join(f" {name}={value}" for name, value in details.items()),
     )
     raise RecetteMailBlocked(_TENANT_REFUSED) from None
+
+
+def _unverified_jwt_claims(token):
+    """The payload of a JWT, decoded WITHOUT checking its signature -- for the diagnostic below
+    only. None for anything that is not a reasonably sized, well formed JWT (an opaque token, bad
+    base64 or JSON, a payload that is not an object). Never raises."""
+    if not isinstance(token, str) or not token or len(token) > _MAX_DIAGNOSTIC_TOKEN_CHARS:
+        return None
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[0] or not parts[1]:
+        return None
+    try:
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+    except (ValueError, TypeError, RecursionError):  # bad base64/JSON/UTF-8 are all ValueErrors
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+def _bad_request_diagnostic(access_token, expected):
+    """MAIL-RECETTE-01N, TEMPORARY: what kind of token Graph answered 400 to, as four short
+    enumerations only (never a claim, identifier or address). Read from the UNVERIFIED payload, so
+    it is a hint for whoever reads the log: nothing ever authorizes or refuses on it -- the caller
+    refuses regardless. Never raises."""
+    context = {"tenant_match": "unknown", "consumer_account": "unknown",
+               "token_type": "unknown", "token_is_jwt": "false", "graph_error_category": "bad_request"}
+    try:
+        claims = _unverified_jwt_claims(access_token)
+        if claims is None:
+            return context
+        context["token_is_jwt"] = "true"
+        tid = claims.get("tid")
+        tid = tid.strip().lower() if isinstance(tid, str) else ""
+        if _GUID_RE.match(tid):
+            context["tenant_match"] = "true" if tid == expected else "false"
+            context["consumer_account"] = "true" if tid == MS_CONSUMER_TENANT_ID else "false"
+        if claims.get("idtyp") == "app" or (claims.get("roles") and not claims.get("scp")):
+            context["token_type"] = "application"
+        elif isinstance(claims.get("scp"), str) and claims["scp"].strip():
+            context["token_type"] = "delegated"
+    except Exception:  # noqa: BLE001 -- a diagnostic must never change the (refusing) outcome
+        pass
+    return context
 
 
 def _graph_error_code(response):
