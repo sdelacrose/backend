@@ -1,0 +1,6 @@
+# Additional override for a reviewed update of an already initialized recette database.
+# Check the live schema first. Never use this to initialize a new installation.
+services:
+  links-recette-api:
+    environment:
+      LINKS_RUN_MIGRATIONS: "0"

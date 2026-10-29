@@ -1,11 +1,21 @@
-name: Deploy
+name: Deploy production (manual)
 on:
-    push:
-        branches:
-            - 'main'
+    workflow_dispatch:
+        inputs:
+            confirm_deploy:
+                description: 'Deploy the selected main commit to production'
+                required: true
+                default: false
+                type: boolean
 
 jobs:
     build_test:
+        # No build, credentials, image push or cluster access without a manual confirmation.
+        if: >-
+            ${{ github.event_name == 'workflow_dispatch' &&
+                github.repository == 'sdelacrose/backend' &&
+                github.ref == 'refs/heads/main' &&
+                inputs.confirm_deploy == true }}
         environment: ecpmp-api-build
         name: Build Image
         runs-on: ubuntu-latest
@@ -38,7 +48,7 @@ jobs:
               env:
                   GH_USERNAME: ${{ secrets.GH_USERNAME }}
                   GH_TOKEN: ${{ secrets.GH_TOKEN }}
-                  MODELS_REF: 0841991f496e0f4805dd080cfbbf25e55179fa2c
+                  MODELS_REF: b3df54380e47a3a26d7bac3212a6cd3b860f176d
               run: |
                   git clone "https://${GH_USERNAME}:${GH_TOKEN}@github.com/sdelacrose/admin-server-models.git" ../admin-server-models
                   git -C ../admin-server-models checkout --detach "${MODELS_REF}"
@@ -208,4 +218,3 @@ jobs:
                 sed -i "s|value: \"IMAGE_VERSION\"|value: \"$IMAGE_VERSION\"|g" manifests/ecpmp-api-deployment-prod.yaml
                 kubectl apply --dry-run=server -f manifests/ecpmp-api-deployment-prod.yaml >/dev/null
                 kubectl apply -f manifests/ecpmp-api-deployment-prod.yaml
-                
