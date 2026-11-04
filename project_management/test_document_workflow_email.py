@@ -133,4 +133,3 @@ class WorkflowEmailTests(WorkflowTestBase):
         with self.assertLogs('project_management.services.document_workflow_email',level='WARNING'):
             self.flush(lambda:self.start(TWO))
         self.assertEqual(mail.outbox,[])
-

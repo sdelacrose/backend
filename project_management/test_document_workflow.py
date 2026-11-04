@@ -356,4 +356,3 @@ class WorkflowApiTests(WorkflowTestBase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(DocumentWorkflow.objects.exists())
         self.assertFalse(DocumentWorkflowEvent.objects.exists())
-

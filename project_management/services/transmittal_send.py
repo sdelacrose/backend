@@ -113,5 +113,3 @@ def send_transmittal(transmittal, actor, *, recipient_contact_id=None, mailbox_i
     if event.event_type == "SEND_SUCCEEDED":
         prepare_send_proof_safely(event, attachments)
     return event
-
-

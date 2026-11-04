@@ -58,4 +58,3 @@ def deliver_workflow_notification(workflow_id, status, recipient_id):
     )
     from project_management.services.document_workflow_email import send_workflow_email
     send_workflow_email(workflow, status, recipient, message)
-
