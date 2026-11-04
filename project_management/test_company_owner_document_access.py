@@ -34,6 +34,7 @@ class CompanyOwnerDocumentAccessTests(TransmittalTestBase):
         refused=call('post','start',{'workflow_type':'TWO_STEP','author':self.owner.pk,'approver':self.approver.pk})
         self.assertEqual(refused.status_code,400,refused.data)
         self.assertIn('approver',refused.data)
+        self.assertIn('This actor cannot access the document',str(refused.data['approver']))
         from project_management.models import DocumentWorkflow
         self.assertFalse(DocumentWorkflow.objects.filter(revision=revision).exists())
         response=call('post','start',{'workflow_type':'TWO_STEP','author':self.owner.pk,'approver':self.owner.pk})

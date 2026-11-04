@@ -8,8 +8,8 @@ Project configuration read visibility follows this documentary access; writes un
 Frontend: workflow actor choices combine project team and company, matching creation.
 Author may be approver in two-step workflow; author may never be verifier.
 
-Validation: 133 targeted backend tests and 48 targeted frontend tests PASS.
-Production build and independent Claude gate recorded in delivery report.
+Validation: 153 targeted backend tests and 48 targeted frontend tests PASS.
+Production frontend build PASS. Independent Claude review GO (2026-11-04).
 
 DATA REPAIR (manual, separate from code deployment)
 Three existing canonical LINKS member roles restored in local/recipe company1:
@@ -25,3 +25,6 @@ STAGING: not deployed. Preserve rc.1 integration baseline and shared models b3df
 Align legacy workflow models pin before future staging integration. No automatic migration.
 Office editor, client revision/review/portal, delegation and real Microsoft delivery checks
 remain backlog; this release does not close them.
+
+Project workflows: company actors without document visibility are rejected with HTTP400 before launch; assign a suitable project role first. No new access is granted to actors. This launch guard does not change the pre-existing actor replacement or freelancer paths, which remain follow-up items.
+

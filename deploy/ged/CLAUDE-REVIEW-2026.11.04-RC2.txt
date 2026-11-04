@@ -1,0 +1,56 @@
+# Revue indépendante — LINKS GED rc.2
+
+## Verdict : **GO**, sous réserve de corriger la note de release avant le tag
+
+Je ne relève aucun défaut bloquant démontré dans le code fourni. Les règles validées sont respectées. Plusieurs réserves sont prouvées par le diff, mais aucune ne constitue une régression de sécurité ou une violation de règle métier.
+
+## Vérification des règles validées
+
+| Règle | Preuve dans le code fourni | Statut |
+|---|---|---|
+| Owner réel, actif, avec `documents.full_access` entreprise | `documentary_owner_company_id` vérifie `is_authenticated`, `is_active`, `is_deleted`, `CompanyProfile.admin_user_id=user.pk`, un `UserRole` scope company / solution, `role__is_active` et la clé `documents.full_access` | OK |
+| Documents, correspondances et transmittals des projets de son entreprise sans appartenance | Mixin limité à `scope == 'project'` avec une liste explicite d'actions et `Project.company_profile_id=company_id`. Filtre ajouté dans `document_access.py`. Tests API list / retrieve / patch / create | OK |
+| Aucun accès à une autre entreprise | Le mixin, le queryset document et le queryset config filtrent sur `company_profile_id=owner_company`. Tests : `other_tenant_project` (403), `foreign_doc` (403/404), `foreign_config` exclu | OK |
+| Pas de `manage_cycle` ni d'autres modules | `manage_cycle` est absent de `documentary_actions`. `document_cycle._explicit_role_right` n'utilise pas le mixin. Test `ActionItemPermission` refusé | OK |
+| Config projet en lecture seule | Seul `ecpmp_configurations` + `view` est accordé. Test API : PATCH, PUT, DELETE, reset et sync renvoient 403, et la config reste inchangée | OK |
+| Auteur = approbateur en deux signatures, auteur ≠ vérificateur | `_validate_actors` bloque l'égalité vérificateur = auteur en THREE_STEP, et `change_actor` fait de même. L'approbateur n'est pas contraint. Test API complet start → SIGN auto → APPROVE | OK |
+| Mêmes sources d'acteurs qu'à la création | `sources: ["project-team","company"]` pour PROJECT. Test frontend avec le `projectId` du document (et non le projet actif 99) et déduplication | OK |
+| Pas de migration, pas de RH | Aucun fichier de migration ni de modèle dans le diff | OK |
+| Non-Owners non élargis | `test_non_owner_company_full_access_does_not_gain_project_scope`. La garde d'acteur ne fait que restreindre | OK |
+
+Script de réparation : le décompte du JSON confirme 15, 37 et 29 permissions. Le script fonctionne en dry-run par défaut. Il ne fait que des créations, jamais de mise à jour. Il contrôle avant et après les `UserRole`, `ProjectTeamMembers` et `RolePermission` existants, dans une transaction atomique, et l'Owner est exclu. `verify` lit bien `GED_ROLE_COMPANY`.
+
+## Réserves non bloquantes (faits démontrés)
+
+**R1. La garde d'accès ne couvre que le lancement, pas le remplacement d'acteur.**
+- **Fait :** dans `views/document_workflow.py`, `act` → `CHANGE_VERIFIER`/`CHANGE_APPROVER` appelle `change_actor(..., allowed_users=get_allowed_owner_queryset(...))` sans le contrôle `get_accessible_document_queryset` ajouté dans `_start`.
+- **Conséquence possible :** si `allowed_users` contient un acteur sans accès au document, ce dernier peut être désigné par remplacement. Il obtiendrait alors un 404 sur `act`, car `_revision` passe par `get_register_document_or_404`, et le circuit resterait bloqué jusqu'à un STOP.
+- **Non démontré :** je ne sais pas si le dialogue de remplacement du frontend réutilise les nouvelles options entreprise. Le comportement backend est préexistant et non introduit par ce diff. À traiter en suivi.
+
+**R2. La garde ignore les acteurs sans `company_id`.**
+- **Fait :** `if actor is None or not actor.company_id: continue`. Un freelancer désigné n'est donc pas contrôlé.
+- **Risque hypothétique :** cela ne pose problème que si `get_allowed_owner_queryset` peut renvoyer un freelancer sans accès au document. Ce n'est pas démontré par le contexte fourni.
+- La formulation « un acteur sans accès réel est refusé » est donc plus large que le code.
+
+**R3. Le test négatif ne prouve pas que la nouvelle garde est à l'origine du refus.**
+- **Fait :** `test_api_owner_outside_team_can_launch_and_act_as_assigned_author_approver` vérifie seulement `assertIn('approver', refused.data)`.
+- Une clé `approver` peut aussi provenir de `_validate_actors` (« This user cannot be selected. »). Le test ne distingue donc pas la garde d'accès du filtre `allowed_users`.
+- Le diff fourni ne contient pas d'autre test négatif dédié à la garde. Il faudrait asserter le message « This actor cannot access the document… ».
+
+**R4. La note de release est inexacte ou incomplète** (à corriger avant le tag) :
+- Elle indique « 133 targeted backend tests », alors que le résultat déclaré est de 153 tests PASS.
+- Elle indique « independent Claude gate recorded in delivery report » alors que cette revue n'a pas encore été versée au rapport.
+- Le nouveau refus 400 au lancement, pour un acteur sans accès au document, n'est pas mentionné. C'est pourtant un changement de comportement visible par l'utilisateur.
+
+**R5. La garde construit un faux objet requête (`SimpleNamespace`).**
+- **Fait :** `actor_request = SimpleNamespace(user=actor, query_params=...)`.
+- **Risque :** si `get_product_name_from_request` ou `require_any_permission_multiple_modules` lisent un autre attribut de requête (`headers`, `GET`, etc.), on obtiendrait une `AttributeError`, donc une erreur 500. Les tests passent sur le chemin couvert. Ce n'est pas démontré au-delà.
+
+## Points vérifiés sans défaut
+
+- `project_id` reçu en entier, en chaîne ou en objet est géré par `getattr(project, 'pk', project)`. Un contexte vide renvoie au parent.
+- Le queryset `ECPMPConfig` élargi s'applique à toutes les actions, mais les écritures restent bloquées par la permission, ce qui est testé.
+- L'Owner non assigné ne peut pas signer ni approuver à la place d'un autre, car `perform_action` compare `expected_actor.pk`. C'est testé.
+- La garde est exécutée dans la transaction, avant `start_workflow*`. Le test confirme qu'aucun `DocumentWorkflow` n'est créé en cas de refus.
+
+Je n'ai rien modifié.
