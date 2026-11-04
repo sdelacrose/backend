@@ -1,3 +1,4 @@
+from project_management.services.company_owner_document_access import DocumentaryOwnerPermissionMixin
 from ecpmpapp.constants import StatusType
 from ecpmpapp.permissions import BaseModulePermission
 from rest_framework.permissions import BasePermission
@@ -837,7 +838,7 @@ class ContactPermission(BaseModulePermission):
         return False
 
 
-class DocumentPermission(BaseModulePermission):
+class DocumentPermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     def __init__(self, action='view', scope='company'):
         super().__init__('documents', action, scope)
 
@@ -1203,7 +1204,7 @@ class DocumentWithdrawPermission(BasePermission):
         return permission._check_delete_permission_project(user, obj, context)
 
 
-class CorrespondencePermission(BaseModulePermission):
+class CorrespondencePermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     """documents.correspondence_<action>: same module ("documents") and scope mechanism as
     DocumentPermission, but Correspondence already carries its own project/company_profile
     fields directly, so scope is read straight from the object/payload -- no folder-style
@@ -1254,7 +1255,7 @@ class CorrespondencePermission(BaseModulePermission):
         return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
-class TransmittalPermission(BaseModulePermission):
+class TransmittalPermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     """documents.transmittal_<action>: same module ("documents") and scope mechanism as
     CorrespondencePermission -- Transmittal likewise carries its own project/company_profile
     fields directly, so scope is read straight from the object/payload (LOT 3C section 16).
@@ -1303,7 +1304,7 @@ class TransmittalPermission(BaseModulePermission):
         return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
-class ECPMPConfigPermission(BaseModulePermission):
+class ECPMPConfigPermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     def __init__(self, action='view', scope='project'):
         super().__init__('ecpmp_configurations', action, scope)
 

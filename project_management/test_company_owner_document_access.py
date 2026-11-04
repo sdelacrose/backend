@@ -1,0 +1,82 @@
+from types import SimpleNamespace
+from unittest.mock import patch
+from models.models import Permission,RolePermission,UserRole
+from project_management.permissions import DocumentPermission,TransmittalPermission,CorrespondencePermission,ECPMPConfigPermission,ActionItemPermission
+from project_management.test_transmittal import TransmittalTestBase,grant_transmittal_permissions
+
+
+class CompanyOwnerDocumentAccessTests(TransmittalTestBase):
+    def test_config_queryset_includes_other_creators_projects_only_in_owner_company(self):
+        from project_management.models import ECPMPConfig, ProjectTeamMembers
+        from project_management.views.ecpmp_config import ECPMPConfigViewSet
+        self.grant_company_documents(self.owner)
+        # Membership must not be needed: this reproduces the recipe gap.
+        ProjectTeamMembers.objects.filter(team_member=self.owner).delete()
+        own_config, _ = ECPMPConfig.objects.get_or_create(project=self.other_project)
+        foreign_config, _ = ECPMPConfig.objects.get_or_create(project=self.other_tenant_project)
+        view = ECPMPConfigViewSet()
+        view.request = SimpleNamespace(user=self.owner, query_params={})
+        with patch('project_management.views.ecpmp_config.get_product_name_from_request', return_value=self.other_project.solution):
+            ids = set(view.get_queryset().values_list('pk', flat=True))
+        self.assertIn(own_config.pk, ids)
+        self.assertNotIn(foreign_config.pk, ids)
+        view.request.user = self.approver
+        with patch('project_management.views.ecpmp_config.get_product_name_from_request', return_value=self.other_project.solution):
+            self.assertNotIn(own_config.pk, set(view.get_queryset().values_list('pk', flat=True)))
+
+    def grant_company_documents(self,user):
+        grant_transmittal_permissions(user,self.company,actions=())
+        role=UserRole.objects.get(user=user,role__company=self.company,role__scope='company').role
+        permission,_=Permission.objects.get_or_create(key='documents.full_access',defaults={'module':'documents','name':'Documents full access','description':'test'})
+        RolePermission.objects.get_or_create(role=role,permission=permission)
+        return role
+
+    def check(self,cls,user,project,action='full_access',module='documents'):
+        return cls()._check_permission(user,module,action,'project',{'project':project})
+
+    def test_owner_existing_company_document_rights_cover_every_own_project(self):
+        self.grant_company_documents(self.owner)
+        for project in [self.project,self.other_project]:
+            for cls in [DocumentPermission,CorrespondencePermission,TransmittalPermission]:
+                with self.subTest(project=project.pk,permission=cls.__name__):
+                    self.assertTrue(self.check(cls,self.owner,project))
+        request=SimpleNamespace(user=self.owner,method='POST',data={'project':self.other_project.pk})
+        self.assertTrue(TransmittalPermission('create').has_permission(request,SimpleNamespace(action='create')))
+
+    def test_owner_does_not_gain_other_company_project(self):
+        self.grant_company_documents(self.owner)
+        for cls in [DocumentPermission,CorrespondencePermission,TransmittalPermission]:
+            self.assertFalse(self.check(cls,self.owner,self.other_tenant_project))
+
+    def test_non_owner_company_full_access_does_not_gain_project_scope(self):
+        self.grant_company_documents(self.approver)
+        for cls in [DocumentPermission,CorrespondencePermission,TransmittalPermission]:
+            self.assertFalse(self.check(cls,self.approver,self.project))
+
+    def test_owner_without_documentary_entitlement_is_not_automatically_granted(self):
+        self.assertFalse(self.check(TransmittalPermission,self.owner,self.project))
+
+    def test_inactive_owner_or_role_is_not_eligible(self):
+        role=self.grant_company_documents(self.owner)
+        self.owner.is_active=False
+        self.assertFalse(self.check(TransmittalPermission,self.owner,self.project))
+        self.owner.is_active=True
+        role.is_active=False;role.save(update_fields=['is_active'])
+        self.assertFalse(self.check(TransmittalPermission,self.owner,self.project))
+
+    def test_no_document_control_or_other_module_or_config_write_granted(self):
+        self.grant_company_documents(self.owner)
+        self.assertFalse(self.check(TransmittalPermission,self.owner,self.project,'manage_cycle'))
+        self.assertFalse(self.check(ActionItemPermission,self.owner,self.project,'full_access','action_item'))
+        self.assertTrue(self.check(ECPMPConfigPermission,self.owner,self.project,'view','ecpmp_configurations'))
+        for action in ['update','delete','full_access','sync_admin']:
+            self.assertFalse(self.check(ECPMPConfigPermission,self.owner,self.project,action,'ecpmp_configurations'))
+        self.assertFalse(self.check(ECPMPConfigPermission,self.owner,self.other_tenant_project,'view','ecpmp_configurations'))
+
+    def test_project_id_context_supported_without_creating_memberships_or_roles(self):
+        self.grant_company_documents(self.owner)
+        from project_management.models import ProjectTeamMembers
+        from models.models import Role
+        before=(ProjectTeamMembers.objects.count(),Role.objects.count(),RolePermission.objects.count())
+        self.assertTrue(self.check(TransmittalPermission,self.owner,self.project.pk))
+        self.assertEqual(before,(ProjectTeamMembers.objects.count(),Role.objects.count(),RolePermission.objects.count()))

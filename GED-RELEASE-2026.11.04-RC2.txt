@@ -1,0 +1,27 @@
+LINKS GED — ged-2026.11.04-rc.2
+
+Extends ged-2026.11.04-rc.1; no migration and no RH change.
+Backend: actual active Company Owner with existing company documents.full_access
+can manage documentary records within own-company projects without team membership.
+Dedicated documents.manage_cycle remains explicit. Other modules and companies unchanged.
+Project configuration read visibility follows this documentary access; writes unchanged.
+Frontend: workflow actor choices combine project team and company, matching creation.
+Author may be approver in two-step workflow; author may never be verifier.
+
+Validation: 133 targeted backend tests and 48 targeted frontend tests PASS.
+Production build and independent Claude gate recorded in delivery report.
+
+DATA REPAIR (manual, separate from code deployment)
+Three existing canonical LINKS member roles restored in local/recipe company1:
+Project Manager (15 permissions), Project User – Internal (37),
+Project User - External (29). Original definitions: admin-server-backend/accounts/utils.py
+create_default_project_role. No assignments and no existing Owner/role permissions changed.
+Tools under backend/deploy/ged default to dry-run. Review target company and permission
+catalogue before applying in another environment. Set GED_ROLE_SPEC to the JSON path,
+GED_ROLE_COMPANY to target company id, and GED_ROLE_APPLY=1 only after approval.
+Execute through manage.py shell; never run a global role sync command for this repair.
+
+STAGING: not deployed. Preserve rc.1 integration baseline and shared models b3df543.
+Align legacy workflow models pin before future staging integration. No automatic migration.
+Office editor, client revision/review/portal, delegation and real Microsoft delivery checks
+remain backlog; this release does not close them.
