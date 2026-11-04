@@ -6,6 +6,60 @@ from project_management.test_transmittal import TransmittalTestBase,grant_transm
 
 
 class CompanyOwnerDocumentAccessTests(TransmittalTestBase):
+    def test_api_owner_outside_team_can_launch_and_act_as_assigned_author_approver(self):
+        from django.db import connection
+        # The solution reads these admin-owned tables through SQL; their models
+        # are not installed in this app. Populate real rows in the isolated test DB.
+        with connection.cursor() as cursor:
+            cursor.execute("INSERT INTO package_license_product (name,description,price,status) VALUES (%s,'test',0,'Active') RETURNING id", ['Energy Consultant Solution'])
+            product_id=cursor.fetchone()[0]
+            cursor.execute("INSERT INTO package_license_package (is_active,created_at,updated_at,expires_at,status,is_freetrial) VALUES (TRUE,NOW(),NOW(),NOW()+INTERVAL '30 days','Cancelled',TRUE) RETURNING id")
+            package_id=cursor.fetchone()[0]
+            cursor.execute("INSERT INTO package_license_license (is_active,created_at,updated_at,package_id,product_id,user_id,license_assigned_at) VALUES (TRUE,NOW(),NOW(),%s,%s,%s,NOW())", [package_id,product_id,self.owner.pk])
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from project_management.views.document_workflow import DocumentWorkflowViewSet
+        from project_management.models import ProjectTeamMembers
+        self.grant_company_documents(self.owner)
+        self.project.user=self.approver
+        self.project.save(update_fields=['user'])
+        ProjectTeamMembers.objects.filter(team_member=self.owner).delete()
+        document=self.make_document()
+        document.author=self.owner
+        document.save(update_fields=['author'])
+        revision=self.add_revision(document)
+        def call(method,action,data=None):
+            request=getattr(APIRequestFactory(),method)('/test',data or {},format='json')
+            force_authenticate(request,user=self.owner)
+            return DocumentWorkflowViewSet.as_view({method:action})(request,document_id=document.pk,revision_id=revision.pk)
+        refused=call('post','start',{'workflow_type':'TWO_STEP','author':self.owner.pk,'approver':self.approver.pk})
+        self.assertEqual(refused.status_code,400,refused.data)
+        self.assertIn('approver',refused.data)
+        from project_management.models import DocumentWorkflow
+        self.assertFalse(DocumentWorkflow.objects.filter(revision=revision).exists())
+        response=call('post','start',{'workflow_type':'TWO_STEP','author':self.owner.pk,'approver':self.owner.pk})
+        self.assertEqual(response.status_code,201,response.data)
+        self.assertEqual(response.data['status'],'APPROVE')
+        self.assertEqual(call('get','retrieve').status_code,200)
+        response=call('post','act',{'action':'APPROVE'})
+        self.assertEqual(response.status_code,200,response.data)
+        self.assertEqual(response.data['status'],'APPROVED')
+
+    def test_api_owner_config_read_does_not_allow_any_configuration_write(self):
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from project_management.views.ecpmp_config import ECPMPConfigViewSet
+        from project_management.models import ECPMPConfig, ProjectTeamMembers
+        self.grant_company_documents(self.owner)
+        ProjectTeamMembers.objects.filter(team_member=self.owner).delete()
+        config,_=ECPMPConfig.objects.get_or_create(project=self.project)
+        original=config.status_options
+        for method,action in [('get','retrieve'),('patch','partial_update'),('put','update'),('delete','destroy'),('post','reset_config'),('post','sync_with_admin')]:
+            request=getattr(APIRequestFactory(),method)('/test',{'status_options':['changed']},format='json')
+            force_authenticate(request,user=self.owner)
+            response=ECPMPConfigViewSet.as_view({method:action})(request,pk=config.pk)
+            self.assertEqual(response.status_code,200 if method=='get' else 403,(action,response.data))
+        config.refresh_from_db()
+        self.assertEqual(config.status_options,original)
+
     def test_documentary_owner_cannot_sign_for_assigned_actor_or_gain_unknown_right(self):
         from rest_framework.exceptions import PermissionDenied
         from project_management.services.document_workflow import start_workflow, perform_action

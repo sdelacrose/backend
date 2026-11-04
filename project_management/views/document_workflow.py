@@ -126,6 +126,18 @@ class DocumentWorkflowViewSet(viewsets.GenericViewSet):
                     _user_or_none(data.get("verifier")),
                     _user_or_none(data.get("approver")), request.user,
                 )
+                # Company actors are also available in the launch form. Do not start
+                # an inaccessible step: selection never grants project/document access.
+                if locked_document.folder.project_id:
+                    from types import SimpleNamespace
+                    from project_management.services.document_access import get_accessible_document_queryset
+                    for field, actor in zip(('author', 'verifier', 'approver'), args[1:4]):
+                        if actor is None or not actor.company_id:
+                            continue
+                        actor_request = SimpleNamespace(user=actor, query_params=request.query_params)
+                        if not get_accessible_document_queryset(actor_request,
+                            project_id=locked_document.folder.project_id).filter(pk=locked_document.pk).exists():
+                            raise DjangoValidationError({field: 'This actor cannot access the document. Assign the appropriate project role before starting the workflow.'})
                 if revision is None:
                     workflow = start_workflow_for_document(
                         locked_document, *args, allowed_users=allowed

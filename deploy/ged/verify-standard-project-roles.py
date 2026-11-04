@@ -6,7 +6,7 @@ from models.models import CompanyProfile, Role
 from rest_framework.test import APIRequestFactory, force_authenticate
 from companyprofileapis.views.role import RoleViewSet
 
-company = CompanyProfile.objects.get(pk=1)
+company = CompanyProfile.objects.get(pk=int(os.environ.get('GED_ROLE_COMPANY', '1')))
 specs = json.loads(Path(os.environ['GED_ROLE_SPEC']).read_text(encoding='utf-8-sig'))
 expected = {s['name']: set(s['permissions']) for s in specs if s['name'] != 'Project Owner'}
 request = APIRequestFactory().get('/api/company/role', {'type':'solution', 'scope':'project', 'page_size':1000})
