@@ -147,6 +147,17 @@ def assert_can_update_document(user, document):
         raise PermissionDenied(
             "You do not have permission to update this Document."
         )
+    # GED-L1.4: after the permission check (state is not disclosed to others). Shared by the
+    # register edit, attachments, versions, workflow and surveillance endpoints.
+    from rest_framework.exceptions import ValidationError as ApiValidationError
+
+    from project_management.services.document_withdrawal import (
+        WITHDRAWN_MESSAGE,
+        is_withdrawn,
+    )
+
+    if is_withdrawn(document):
+        raise ApiValidationError({"detail": WITHDRAWN_MESSAGE})
 
 
 def get_allowed_owner_queryset(user):
@@ -167,6 +178,10 @@ CONTROL_FIELDS = ("reference", "document_type", "discipline", "revision", "statu
 @transaction.atomic
 def save_document_control(document, validated_data):
     """Create the DocumentControl on first save, otherwise update it."""
+    if {"author", "verifier", "approver"} & set(validated_data):
+        document = Document.objects.select_for_update().get(pk=document.pk)
+        from project_management.services.document_workflow import assert_review_assignments_unlocked
+        assert_review_assignments_unlocked(document, validated_data)
     control, _created = DocumentControl.objects.get_or_create(document=document)
     for field in CONTROL_FIELDS:
         if field in validated_data:

@@ -13,6 +13,7 @@ from project_management.models import Document, DocumentOrigin, DocumentRevision
 from project_management.utils import get_product_name_from_request, has_project_permission, get_abbreviation
 from project_management.models import ECPMPConfig
 from project_management.services.document_reference import generate_document_reference
+from project_management.services.document_withdrawal import WITHDRAWN_MESSAGE, is_withdrawn
 from project_management.services.document_workflow import (
     document_has_workflow,
     get_internal_status,
@@ -82,6 +83,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         required=False,
         allow_empty=True,
     )
+    cycle_permissions = serializers.SerializerMethodField()
     workflow = serializers.SerializerMethodField()
     internal_status = serializers.SerializerMethodField()
     revision_label = serializers.SerializerMethodField()
@@ -102,6 +104,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         model = Document
         fields = [
             'id',
+            'cycle_permissions',
             'folder',
             'author',
             'file',
@@ -146,8 +149,21 @@ class DocumentSerializer(serializers.ModelSerializer):
             'file_size',
             'description',
             'tags',
+            'withdrawn_at',
+            'withdrawn_by',
+            'withdrawal_reason',
         ]
-        read_only_fields = ['full_document_number', 'sequence_number', 'created_by', 'assignee']
+        # GED-L1.4: the withdrawal is only ever written by POST document/<id>/withdraw
+        read_only_fields = [
+            'full_document_number', 'sequence_number', 'created_by', 'assignee',
+            'withdrawn_at', 'withdrawn_by', 'withdrawal_reason',
+        ]
+
+    def get_cycle_permissions(self, obj):
+        from project_management.services.document_cycle import document_cycle_permissions
+        request = self.context.get("request")
+        user = getattr(request, "user", None) or self.context.get("user")
+        return document_cycle_permissions(user, obj)
 
     def validate_tags(self, value):
         # Trim, drop empty values and exact duplicates; capitalization is preserved.
@@ -265,6 +281,11 @@ class DocumentSerializer(serializers.ModelSerializer):
         return value
 
     def validate_status(self, value):
+        from project_management.services.document_manual_status import is_reserved_manual_status
+        if is_reserved_manual_status(value) and not self._is_unchanged_value("status", value):
+            raise serializers.ValidationError(
+                "This status is reserved and cannot be selected manually. Existing values may be kept unchanged."
+            )
         return self._validate_optional_choice_field(
             value, "document_status", "document status", "status"
         )
@@ -330,10 +351,27 @@ class DocumentSerializer(serializers.ModelSerializer):
         return value
     
 
+    def _assert_document_type_not_locked(self, value):
+        """GED-L1.1: the document type is one segment of the official reference, so it is frozen
+        once that reference (full_document_number) has been assigned. Shared by the single edit,
+        the API and the bulk update, which all validate through this serializer. Re-sending the
+        current value is not a change; a document without reference (legacy, external origin)
+        keeps its type editable."""
+        instance = self.instance
+        if instance is None or not (getattr(instance, "full_document_number", None) or "").strip():
+            return
+        if (value or None) == (instance.document_type or None):
+            return
+        raise serializers.ValidationError(
+            "The document type cannot be changed once the official reference "
+            f"({instance.full_document_number}) has been assigned."
+        )
+
     def validate_document_type(self, value):
+        self._assert_document_type_not_locked(value)
         if not value:
             return value
-        
+
         request = self.context.get('request')
         project_id, company_id, freelancer_id = self.get_project_id_and_company_id()
 
@@ -378,7 +416,41 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         return value
 
+    def _discipline_lock_message(self, attrs):
+        """GED-L1.2: like the document type (GED-L1.1), the discipline is frozen once the official
+        reference (full_document_number) has been assigned. Runs on the final, normalised attrs
+        (validate()), so the single edit, the API and the bulk update -- preview included -- share
+        it. The discipline is identified by its label, plus its option id when the document already
+        stores one: re-sending the same discipline (even with the group/option ids a legacy
+        document was missing) is not a change; replacing or clearing it is. A document without
+        reference keeps its discipline editable. Returns the refusal message, or None."""
+        instance = self.instance
+        if instance is None or not (getattr(instance, "full_document_number", None) or "").strip():
+            return None
+        label_changed = "discipline" in attrs and (
+            (attrs["discipline"] or None) != (instance.discipline or None)
+        )
+        new_option = attrs.get("discipline_option_id")
+        option_changed = bool(
+            new_option
+            and instance.discipline_option_id
+            and new_option != instance.discipline_option_id
+        )
+        if not (label_changed or option_changed):
+            return None
+        return (
+            "The discipline cannot be changed once the official reference "
+            f"({instance.full_document_number}) has been assigned."
+        )
+
     def validate_discipline(self, value):
+        # Before the choice validation below, so a locked document always gets the business
+        # message. Hierarchical submissions (option id sent) are judged on the final normalised
+        # discipline in validate().
+        if not (getattr(self, "initial_data", None) or {}).get("discipline_option_id"):
+            message = self._discipline_lock_message({"discipline": value})
+            if message:
+                raise serializers.ValidationError(message)
         if not value:
             return value
 
@@ -495,7 +567,51 @@ class DocumentSerializer(serializers.ModelSerializer):
             )
         return attrs
 
+    def _reference_edit_message(self):
+        """GED-L1.3: the official reference is generated by LINKS and never edited by a user.
+        full_document_number is read-only, so DRF would silently drop a value sent by a client:
+        refuse explicitly instead when the raw request tries to change or clear it. Re-sending
+        the stored value (an edit form echoing the whole record) is not a change. Returns the
+        refusal message, or None."""
+        instance = self.instance
+        raw = getattr(self, "initial_data", None)
+        if instance is None or not hasattr(raw, "get") or "full_document_number" not in raw:
+            return None
+        sent = raw.get("full_document_number")
+        sent = sent.strip() if isinstance(sent, str) else sent
+        stored = getattr(instance, "full_document_number", None)
+        if (sent or None) == ((stored or "").strip() or None):
+            return None
+        return (
+            "The official document reference is generated by LINKS and cannot be edited"
+            " or cleared."
+        )
+
     def validate(self, attrs):
+        # GED-L1.4: every update path (single, API PATCH/PUT, bulk) validates through here
+        if self.instance is not None and (
+            getattr(self.instance, "withdrawn_at", None) or is_withdrawn(self.instance)
+        ):
+            raise serializers.ValidationError({"detail": WITHDRAWN_MESSAGE})
+        reference_message = self._reference_edit_message()
+        if reference_message:
+            raise serializers.ValidationError({"full_document_number": reference_message})
+        # GED-L1.2. First on what was sent (the label, or the option id when one is sent), so a
+        # locked document gets the business message before any discipline-option error; then on
+        # the final normalised discipline, which also catches an option id swapped for another
+        # one or a legacy document gaining ids for a different discipline.
+        sent = {key: attrs[key] for key in ("discipline", "discipline_option_id") if key in attrs}
+        if attrs.get("discipline_option_id"):
+            sent.pop("discipline", None)
+        message = self._discipline_lock_message(sent)
+        if not message:
+            attrs = self._validate_attrs(attrs)
+            message = self._discipline_lock_message(attrs)
+        if message:
+            raise serializers.ValidationError({"discipline": message})
+        return attrs
+
+    def _validate_attrs(self, attrs):
         attrs = super().validate(attrs)
         attrs = self._validate_origin(attrs)
 
@@ -689,7 +805,14 @@ class DocumentSerializer(serializers.ModelSerializer):
             self._save_review_preferences(instance)
             return instance
 
+    @transaction.atomic
     def update(self, instance, validated_data):
+        instance = Document.objects.select_for_update().get(pk=instance.pk)
+        from project_management.services.document_workflow import assert_review_assignments_unlocked
+        assignments = {key: value for key, value in validated_data.items() if key == "author"}
+        raw = getattr(self, "initial_data", {})
+        assignments.update({key: raw[key] for key in ("verifier", "approver") if key in raw})
+        assert_review_assignments_unlocked(instance, assignments)
         if 'file' in validated_data:
             # The controlled main file only changes through a new version (revision endpoint);
             # an ordinary update can never silently replace it.

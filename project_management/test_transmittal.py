@@ -1024,7 +1024,7 @@ class TransmittalDetailSerializationTests(TransmittalTestBase):
         self.assertEqual(data["external_company_name"], self.client_company.company_name)
         self.assertEqual(
             data["external_contacts_detail"],
-            [{"id": self.client_contact.id, "name": "Jane Doe"}],
+            [{"id": self.client_contact.id, "name": "Jane Doe", "email": self.client_contact.email, "is_deleted": False}],
         )
         item = data["items"][0]
         self.assertEqual(item["document_revision_detail"]["document"]["id"], revision.document_id)

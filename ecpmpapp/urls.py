@@ -36,5 +36,11 @@ urlpatterns = [
     path('api/health-check/', include('health_check.urls')),
 ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
+# Recipe file access must precede the DEBUG media route, without changing local behaviour.
+if getattr(settings, 'RECETTE_MODE', False):
+    from project_management.views.recette_document_file import RecetteDocumentFileView
+    urlpatterns.insert(0, path('media/documents/<path:relative_path>',
+                              RecetteDocumentFileView.as_view(), name='recette-document-file'))
+
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

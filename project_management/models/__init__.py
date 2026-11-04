@@ -79,3 +79,5 @@ from .process_recommendation import ProcessAssemblyRecommendationRun
 from .catalog_recommendation import CatalogRecommendationRun
 from .funding_opportunity import FundingSourceConfig, FundingOpportunity, FundingOpportunityRevision, ProjectFundingMatch
 from .workstation_compliance import WorkstationComplianceRule, WorkstationComplianceEvaluation
+
+from .transmittal_send_proof import TransmittalSendProof, TransmittalSendProofFile

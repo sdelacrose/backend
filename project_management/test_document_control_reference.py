@@ -229,8 +229,8 @@ class ReferenceGenerationTests(ProjectFixtureMixin, WorkflowTestBase):
         wf = self.start(TWO, revision=version)
         perform_action(wf, self.alice, "SIGN", "s")
         perform_action(wf, self.carol, "APPROVE", "a")
-        for change in ({"document_type": "Report"}, {"discipline": "Electrical"},
-                       {"category": "Design"}, {"status": "Issued"}, {"revision": 4}):
+        # (type and discipline are no longer editable once referenced: GED-L1.1/L1.2, test_document_type_lock)
+        for change in ({"category": "Design"}, {"status": "Issued"}, {"revision": 4}):
             self.update_doc(document, **change)
             self.assertEqual(Document.objects.get(pk=document.pk).full_document_number, original)
         # neither a project rename nor a configuration change touches it
@@ -563,7 +563,8 @@ class CompanyReferenceTests(CompanyFixtureMixin, WorkflowTestBase):
     def test_reference_is_permanent_and_never_gains_a_company_code_retroactively(self):
         document = self.create_company_doc(self.folder)
         original = document.full_document_number
-        for change in ({"document_type": "Report"}, {"discipline": "Electrical"}, {"status": "Issued"}):
+        # (type and discipline are no longer editable once referenced: GED-L1.1/L1.2, test_document_type_lock)
+        for change in ({"status": "Issued"},):
             serializer = DocumentSerializer(
                 Document.objects.get(pk=document.pk), data=change, partial=True,
                 context={"user": self.creator})

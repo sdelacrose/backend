@@ -428,4 +428,12 @@ def annotate_ready_to_send(rows):
         row["ready_to_send"] = (
             row.get("entity_type") == "CORRESPONDENCE" and row["id"] in ready_ids
         )
+    from project_management.models import TransmittalEvent
+    transmittal_ids = [row['id'] for row in rows if row.get('entity_type') == 'TRANSMITTAL']
+    sent_ids = set(TransmittalEvent.objects.filter(
+        transmittal_id__in=transmittal_ids, event_type='SEND_SUCCEEDED'
+    ).values_list('transmittal_id', flat=True))
+    for row in rows:
+        if row.get('entity_type') == 'TRANSMITTAL':
+            row['delivery_status'] = 'SENT' if row['id'] in sent_ids else None
     return rows

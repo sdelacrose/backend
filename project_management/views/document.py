@@ -13,6 +13,7 @@ from django.contrib.auth.models import AnonymousUser
 from django.db.models import Case, CharField, Exists, F, Func, OuterRef, Prefetch, Q, Value, When
 from django.db.models.functions import Coalesce, Concat, NullIf
 from django.core.exceptions import ValidationError
+from django.db.models import ProtectedError
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import PermissionDenied
 
@@ -25,7 +26,16 @@ from ecpmpapp.constants import UserType
 from ecpmpapp.ordering import TableOrderingFilter
 from project_management.utils import get_product_name_from_request, has_project_permission
 from project_management.serializers.document import DocumentHistorySerializer
-from project_management.permissions import DocumentIssuerLookupPermission, DocumentPermission
+from project_management.permissions import (
+    DocumentIssuerLookupPermission,
+    DocumentPermission,
+    DocumentWithdrawPermission,
+)
+from project_management.services.document_withdrawal import (
+    assert_physically_deletable,
+    filter_by_withdrawal,
+    withdraw_document,
+)
 from project_management.filters import DocumentFilter
 from project_management.services.document_access import get_accessible_document_queryset
 from project_management.services.document_workflow import (
@@ -558,8 +568,20 @@ class FolderViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": " ".join(e.messages)}, status=status.HTTP_400_BAD_REQUEST
             )
+        except ProtectedError:
+            return Response(
+                {"detail": FOLDER_PROTECTED_MESSAGE}, status=status.HTTP_400_BAD_REQUEST
+            )
  
  
+FOLDER_PROTECTED_MESSAGE = (
+    "This folder contains documents that have been transmitted and cannot be deleted."
+)
+DOCUMENT_PROTECTED_MESSAGE = (
+    "This document is linked to preserved records and cannot be deleted. Withdraw it instead."
+)
+
+
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.select_related('folder').all()
     serializer_class = DocumentSerializer
@@ -630,6 +652,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
         return serializer
 
     def get_permissions(self):
+        if self.action == 'withdraw':
+            return [DocumentWithdrawPermission()]
         if self.action == 'bulk_update':
             return [DocumentPermission('update', 'mixed')]
         if self.action == 'issuer_companies':
@@ -737,6 +761,31 @@ class DocumentViewSet(viewsets.ModelViewSet):
             list(queryset.order_by("company_name", "id").values("id", "company_name"))
         )
 
+    @action(detail=True, methods=["post"], url_path="withdraw")
+    def withdraw(self, request, pk=None):
+        """GED-L1.4: logical withdrawal (reason mandatory). Nothing is deleted."""
+        document = self.get_object()
+        data = request.data if hasattr(request.data, "get") else {}
+        try:
+            withdrawn = withdraw_document(document, request.user, data.get("reason"))
+        except ValidationError as error:
+            body = (
+                error.message_dict
+                if hasattr(error, "error_dict")
+                else {"detail": " ".join(error.messages)}
+            )
+            return Response(body, status=status.HTTP_400_BAD_REQUEST)
+        return Response(
+            {
+                "id": withdrawn.pk,
+                "full_document_number": withdrawn.full_document_number,
+                "withdrawn_at": withdrawn.withdrawn_at,
+                "withdrawn_by": withdrawn.withdrawn_by_id,
+                "withdrawal_reason": withdrawn.withdrawal_reason,
+            },
+            status=status.HTTP_200_OK,
+        )
+
     @action(detail=False, methods=["patch"], url_path="bulk-update")
     def bulk_update(self, request):
         request_serializer = BulkDocumentUpdateRequestSerializer(
@@ -823,7 +872,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
         
         
         queryset = filter_backend.filter_queryset(request, queryset, self)
-
+        try:
+            queryset = filter_by_withdrawal(queryset, request.query_params.get('withdrawn'))
+        except ValidationError as error:
+            return Response(error.message_dict, status=status.HTTP_400_BAD_REQUEST)
 
         print(f'[DEBUG] DocumentViewSet: list: after DjangoFilterBackend: {queryset.count()}')
         
@@ -876,10 +928,16 @@ class DocumentViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
+            assert_physically_deletable(instance)
             return super().destroy(request, *args, **kwargs)
         except ValidationError as error:
             return Response(
                 {"detail": " ".join(error.messages)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProtectedError:
+            return Response(
+                {"detail": DOCUMENT_PROTECTED_MESSAGE},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

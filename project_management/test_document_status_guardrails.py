@@ -25,7 +25,7 @@ class BusinessStatusIndependenceTests(WorkflowTestBase):
     def revise(self, kind="minor"):
         return create_document_revision(
             self.document,
-            ContentFile(b"next", name="plan.txt"),
+            ContentFile(f"next-{kind}".encode(), name="plan.txt"),
             self.creator,
             kind,
             "Next version",
@@ -74,7 +74,7 @@ class BusinessStatusIndependenceTests(WorkflowTestBase):
         for step in (None, ("SIGN", self.alice), ("VALIDATE", self.bob)):
             if step:
                 perform_action(wf, step[1], step[0], "c")
-            valid, errors = self.try_status("Sent")
+            valid, errors = self.try_status("On Hold")
             self.assertTrue(valid, errors)
 
     def test_configurable_status_validation_still_applies(self):
@@ -83,5 +83,5 @@ class BusinessStatusIndependenceTests(WorkflowTestBase):
         self.assertFalse(valid)
         self.assertIn("status", errors)
         self.assertIn("Invalid document status", str(errors["status"]))
-        self.assertTrue(self.try_status("Issued")[0])
+        self.assertTrue(self.try_status("On Hold")[0])
         self.assertEqual(wf.status, "DRAFT")

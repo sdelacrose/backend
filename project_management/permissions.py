@@ -1,5 +1,6 @@
 from ecpmpapp.constants import StatusType
 from ecpmpapp.permissions import BaseModulePermission
+from rest_framework.permissions import BasePermission
 from django.db.models import Q
 from project_management.models import Milestone, ActionItem
 from project_management.models import Project
@@ -1183,6 +1184,23 @@ class DocumentPermission(BaseModulePermission):
             return True
         
         return False
+
+
+class DocumentWithdrawPermission(BasePermission):
+    """POST document/<id>/withdraw (GED-L1.4): the document's own DELETE rights -- Company or
+    Project library, delete / delete_assigned_created / full_access, exactly as for a deletion.
+    Object level only: DocumentPermission maps every POST to the creation rights."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if DocumentPermission().is_company_document(obj):
+            return DocumentPermission("delete", "company")._check_delete_permission(user, obj)
+        permission = DocumentPermission("delete", "project")
+        context = permission._get_context(request=None, view=None, scope="project", obj=obj)
+        return permission._check_delete_permission_project(user, obj, context)
 
 
 class CorrespondencePermission(BaseModulePermission):

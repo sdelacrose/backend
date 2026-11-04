@@ -1,3 +1,5 @@
+from project_management.views.transmittal_send_proof import TransmittalProofView
+from project_management.views.transmittal import TransmittalSendView
 from django.urls import path, include, re_path
 
 from project_management.views import ContactViewset, DocumentViewSet, FolderViewSet, \
@@ -559,6 +561,9 @@ urlpatterns = [
         'post': 'create'  
     }), name='documents'),
 
+    path('document/<int:pk>/withdraw', DocumentViewSet.as_view({
+        'post': 'withdraw',
+    }), name='document-withdraw'),
     path('document/bulk-update', DocumentViewSet.as_view({
         'patch': 'bulk_update',
     }), name='document-bulk-update'),
@@ -613,6 +618,10 @@ urlpatterns = [
     }), name='transmittal-detail'),
     path('transmittal/<int:transmittal_id>/items', TransmittalItemViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittal-items'),
     path('transmittal/<int:transmittal_id>/items/<int:item_id>', TransmittalItemViewSet.as_view({'delete': 'destroy'}), name='transmittal-item-detail'),
+    path('transmittal/<int:transmittal_id>/proofs', TransmittalProofView.as_view({'get': 'list'}), name='transmittal-proofs'),
+    path('transmittal/<int:transmittal_id>/proofs/<int:proof_id>/archive', TransmittalProofView.as_view({'post': 'archive'}), name='transmittal-proof-archive'),
+    path('transmittal/<int:transmittal_id>/proofs/<int:proof_id>/files/<int:file_id>/download', TransmittalProofView.as_view({'get': 'download'}), name='transmittal-proof-download'),
+    path('transmittal/<int:transmittal_id>/send', TransmittalSendView.as_view({'post': 'create'}), name='transmittal-send'),
     path('transmittal/<int:transmittal_id>/issue', TransmittalIssueView.as_view({'post': 'create'}), name='transmittal-issue'),
     path('transmittal/<int:transmittal_id>/events', TransmittalEventViewSet.as_view({'get': 'list'}), name='transmittal-events'),
 

@@ -50,10 +50,15 @@ def can_manage_templates(user):
     return CorrespondencePermission()._check_action_or_full_access(user, MANAGE_ACTION, "company", {})
 
 
-def can_use_templates(user, project=None):
+def can_use_templates(user, project=None, usage="correspondence"):
     """The right to create an OUT correspondence where the template would be applied."""
     if not _company_id(user):
         return False
+    if usage == "transmittal":
+        if project is None: return False
+        from types import SimpleNamespace
+        from project_management.permissions import TransmittalPermission
+        return TransmittalPermission("issue").has_object_permission(SimpleNamespace(user=user), None, SimpleNamespace(project=project))
     scope, context = ("project", {"project": project}) if project is not None else ("company", {})
     return CorrespondencePermission()._check_action_or_full_access(
         user, "correspondence_create", scope, context,
@@ -99,9 +104,14 @@ class CorrespondenceTemplateViewSet(viewsets.GenericViewSet):
                 raise PermissionDenied()
         else:
             project = self._project_for_scope(request, request.query_params.get("project"))
-            if not manager and not can_use_templates(request.user, project):
+            if not manager and not can_use_templates(request.user, project, request.query_params.get("usage", "correspondence")):
                 raise PermissionDenied()
             queryset = queryset.filter(is_active=True)
+        if not _truthy(request.query_params.get("include_inactive")):
+            from project_management.services.correspondence_template import is_document_distribution_template
+            distribution = request.query_params.get("usage") == "transmittal"
+            ids = [tpl.pk for tpl in queryset if is_document_distribution_template(tpl.name) == distribution]
+            queryset = queryset.filter(pk__in=ids)
         language = (request.query_params.get("language") or "").strip().upper()
         if language:
             if language not in CorrespondenceTemplate.Language.values:
@@ -155,7 +165,11 @@ class CorrespondenceTemplateViewSet(viewsets.GenericViewSet):
         context_serializer.is_valid(raise_exception=True)
         data = context_serializer.validated_data
         project = self._project_for_scope(request, data.get("project"))
-        if not can_use_templates(request.user, project):
+        usage = request.data.get("usage", "correspondence")
+        from project_management.services.correspondence_template import is_document_distribution_template
+        if is_document_distribution_template(template.name) != (usage == "transmittal"):
+            raise ValidationError({"template": "This template is reserved for its document distribution context."})
+        if not can_use_templates(request.user, project, usage):
             raise PermissionDenied()
         if not template.is_active:
             raise ValidationError({"template": "This template is not active."})

@@ -25,3 +25,18 @@ def merge_missing_document_type_defaults(stored, canonical):
             merged.append(entry)
             existing_labels.add(label)
     return merged
+
+
+def required_document_type_defaults(canonical, stored):
+    """Keep a previously stored default code; never invent permission to change it.
+
+    The editor merges defaults by label. Its validation must accept the same
+    legacy entry it displays, while still requiring every default label.
+    """
+    stored = list(stored or [])
+    result = []
+    for default in canonical:
+        label = str(default).split(":", 1)[0]
+        legacy = next((entry for entry in stored if str(entry).split(":", 1)[0] == label), default)
+        result.append(default if default in stored else legacy)
+    return result

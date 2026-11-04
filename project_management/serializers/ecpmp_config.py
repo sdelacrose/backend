@@ -25,6 +25,7 @@ from companyprofileapis.services.hierarchical_configurations import (
 )
 from companyprofileapis.services.document_type_defaults import (
     merge_missing_document_type_defaults,
+    required_document_type_defaults,
 )
 
 class ECPMPCONFIGSerializer(serializers.ModelSerializer):
@@ -85,7 +86,9 @@ class ECPMPCONFIGSerializer(serializers.ModelSerializer):
 
     def validate_document_types(self, value):
         return self._validate_with_defaults(
-            value, constants.GC_PROJECT_DOCUMENT_TYPES, "document_types"
+            value, required_document_type_defaults(
+                constants.GC_PROJECT_DOCUMENT_TYPES, getattr(self.instance, "document_types", None)
+            ), "document_types"
         )
 
     def validate_document_categories(self, value):

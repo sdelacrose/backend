@@ -109,7 +109,7 @@ class TransmittalSerializer(serializers.ModelSerializer):
 
     def get_external_contacts_detail(self, obj):
         return [
-            {"id": contact.pk, "name": f"{contact.name} {contact.surname}".strip()}
+            {"id": contact.pk, "name": f"{contact.name} {contact.surname}".strip(), "email": contact.email, "is_deleted": contact.is_deleted}
             for contact in obj.external_contacts.all()
         ]
 

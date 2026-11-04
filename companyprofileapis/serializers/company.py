@@ -33,6 +33,7 @@ from companyprofileapis.services.offer_validity import (
 )
 from companyprofileapis.services.document_type_defaults import (
     merge_missing_document_type_defaults,
+    required_document_type_defaults,
 )
 from companyprofileapis.models import Opportunity, NoticeBoard
 from ecpmpapp.constants import (
@@ -326,7 +327,9 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
 
     def validate_document_types(self, value):
         return self._validate_with_defaults(
-            value, constants.GC_COMPANY_DOCUMENT_TYPES, "document_types"
+            value, required_document_type_defaults(
+                constants.GC_COMPANY_DOCUMENT_TYPES, getattr(self.instance, "document_types", None)
+            ), "document_types"
         )
 
     def validate_document_categories(self, value):
@@ -533,8 +536,15 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("You do not have permission to update this company configuration.")
 
         if request_user.company:
-            if instance.company_profile != request_user.company or not request_user.groups.filter(
-                    name=UserType.ADMIN.value).exists():
+            from companyprofileapis.services.document_configuration_access import (
+                can_update_document_configuration,
+            )
+            same_company = instance.company_profile == request_user.company
+            legacy_admin = request_user.groups.filter(name=UserType.ADMIN.value).exists()
+            documentary_update = same_company and can_update_document_configuration(
+                request_user, validated_data
+            )
+            if not same_company or not (legacy_admin or documentary_update):
                 raise serializers.ValidationError("You do not have permission to update this company's configuration.")
 
         return super().update(instance, validated_data)

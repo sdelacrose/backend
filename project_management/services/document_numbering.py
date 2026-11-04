@@ -1,6 +1,6 @@
 from typing import NamedTuple
 
-from django.db import transaction
+from django.db import connection, transaction
 from django.db.models import Max
 from rest_framework import serializers
 
@@ -58,6 +58,33 @@ def _company_scope(folder):
             return DocumentLibraryScope("company_profile", company_id)
         return DocumentLibraryScope("freelancer", project.user_id)
     return resolve_document_library_scope(folder)
+
+
+_REFERENCE_LOCK_OWNER_TYPES = {"project": 1, "company_profile": 2, "freelancer": 3}
+
+
+def lock_reference_perimeter(folder, sequence_scope="PROJECT"):
+    """GED-L1.3: serialise the generation of official references inside ONE numbering perimeter.
+
+    The sequence counters only serialise creations that share a counter row. With the DISCIPLINE
+    or DOCUMENT_TYPE sequence scopes two creations of the same library use different counters, and
+    a reference format without those segments can then produce the same reference twice: the
+    "reference already exists" check cannot see a document that is not committed yet. A
+    transaction-level advisory lock per owner (project / company / freelancer library, or the
+    company for the COMPANY sequence scope) closes that gap without any schema change: the second
+    creation waits for the first to commit and then sees its reference. Other perimeters are not
+    blocked. Released automatically at commit/rollback, so the caller must hold a transaction
+    (generate_document_reference does); a no-op outside PostgreSQL."""
+    if connection.vendor != "postgresql":
+        return
+    scope = (
+        _company_scope(folder)
+        if sequence_scope == "COMPANY"
+        else resolve_document_library_scope(folder)
+    )
+    key = (_REFERENCE_LOCK_OWNER_TYPES[scope.owner_type] << 40) | int(scope.owner_id)
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT pg_advisory_xact_lock(%s)", [key])
 
 
 @transaction.atomic

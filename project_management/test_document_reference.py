@@ -112,23 +112,35 @@ class PermanentReferenceTests(WorkflowTestBase):
     def test_metadata_updates_do_not_change_the_reference(self):
         document = self.create_document()
         original = document.full_document_number
+        # (type and discipline are no longer editable once referenced: GED-L1.1/L1.2, test_document_type_lock)
         for change in (
-            {"document_type": "Report"},
             {"category": "Design"},
-            {"discipline": "Civil"},
             {"status": "Issued"},
             {"identification_number": "ID-42"},
             {"transmittal_category": "For review"},
             {"revision": 7},  # legacy Document.revision
-            {"revision": 0, "document_type": "Manual", "category": "Other"},
+            {"revision": 0, "category": "Other"},
         ):
             self.update(document, **change)
             self.assertEqual(self.reference(document), original, change)
 
-    def test_direct_attempt_to_replace_the_reference_is_ignored(self):
+    def test_direct_attempt_to_replace_the_reference_is_refused(self):
+        # GED-L1.3: formerly silently ignored, now an explicit refusal (more in
+        # test_document_reference_protection); re-sending the stored reference stays harmless
         document = self.create_document()
         original = document.full_document_number
-        self.update(document, full_document_number="HACKED-00001-00", status="Sent")
+        serializer = DocumentSerializer(
+            Document.objects.get(pk=document.pk),
+            data={"full_document_number": "HACKED-00001-00", "status": "Sent"},
+            partial=True,
+            context={"user": self.creator},
+        )
+        with self.relaxed_configuration():
+            self.assertFalse(serializer.is_valid())
+        self.assertIn("full_document_number", serializer.errors)
+        self.assertEqual(self.reference(document), original)
+        self.assertNotEqual(Document.objects.get(pk=document.pk).status, "Sent")
+        self.update(document, full_document_number=original, status="Sent")
         self.assertEqual(self.reference(document), original)
         self.assertEqual(Document.objects.get(pk=document.pk).status, "Sent")
 

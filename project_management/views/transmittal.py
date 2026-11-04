@@ -154,3 +154,26 @@ class TransmittalEventViewSet(viewsets.GenericViewSet):
             }
             for event in events
         ])
+
+
+class TransmittalSendView(viewsets.GenericViewSet):
+    def create(self, request, transmittal_id=None, *args, **kwargs):
+        from rest_framework import serializers
+        from project_management.services.transmittal_send import send_transmittal
+        class SendInput(serializers.Serializer):
+            recipient_contact = serializers.IntegerField(min_value=1, required=False)
+            mailbox_id = serializers.IntegerField(min_value=1, required=False, allow_null=True)
+            subject = serializers.CharField(max_length=500, required=False, allow_blank=False)
+            body = serializers.CharField(max_length=20000, required=False, allow_blank=True, trim_whitespace=False)
+        transmittal = _transmittal_for_action(request, transmittal_id, "issue")
+        payload = SendInput(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        try:
+            event = send_transmittal(transmittal, request.user,
+                recipient_contact_id=data.get('recipient_contact'), mailbox_id=data.get('mailbox_id'),
+                subject=data.get('subject'), body=data.get('body'))
+        except DjangoValidationError as error:
+            raise _to_drf_error(error)
+        return Response({'id': event.pk, 'event_type': event.event_type, 'metadata': event.metadata},
+                        status=200 if event.event_type == 'SEND_SUCCEEDED' else 502)

@@ -153,11 +153,11 @@ class WorkflowTransitionTests(WorkflowTestBase):
         with self.assertRaises(ValidationError):
             perform_action(two, self.bob, "VALIDATE", "no verifier step")
 
-    def test_comment_is_required_for_every_decision(self):
+    def test_comment_is_required_for_rejection_only(self):
         wf = self.start(TWO)
         for comment in ("", "   ", None):
             with self.assertRaises(ValidationError):
-                perform_action(wf, self.alice, "SIGN", comment)
+                perform_action(wf, self.alice, "REJECT", comment)
         with self.assertRaises(ValidationError):
             perform_action(wf, self.alice, "REJECT", "")
         wf.refresh_from_db()
@@ -242,6 +242,13 @@ class WorkflowRevisionTests(WorkflowTestBase):
 
 @override_settings(MEDIA_ROOT=MEDIA)
 class WorkflowApiTests(WorkflowTestBase):
+    def setUp(self):
+        super().setUp()
+        self.previous_revision = self.revision
+        self.revision = self.revision2
+        self.document.author = self.alice
+        self.document.save(update_fields=["author"])
+
     ACCESS = "project_management.views.document_workflow.get_register_document_or_404"
     CAN_UPDATE = "project_management.views.document_workflow.assert_can_update_document"
     ALLOWED = "project_management.views.document_workflow.get_allowed_owner_queryset"
@@ -299,7 +306,7 @@ class WorkflowApiTests(WorkflowTestBase):
         self.assertEqual(len(got["events"]), 4)
         self.assertEqual(got["events"][1]["actor"]["id"], self.alice.pk)
 
-    def test_wrong_actor_403_wrong_order_and_missing_comment_400(self):
+    def test_wrong_actor_wrong_order_and_missing_rejection_comment_are_refused(self):
         self.everything_allowed()
         self.call("post", self.creator, self.payload())
         self.assertEqual(
@@ -309,11 +316,11 @@ class WorkflowApiTests(WorkflowTestBase):
             self.call("post", self.alice, {"action": "APPROVE", "comment": "c"}, True).status_code, 400
         )
         self.assertEqual(
-            self.call("post", self.alice, {"action": "SIGN", "comment": ""}, True).status_code, 400
+            self.call("post", self.alice, {"action": "REJECT", "comment": ""}, True).status_code, 400
         )
         self.assertEqual(
-            self.call("post", self.alice, {"action": "REJECT", "comment": "no"}, True).data["status"],
-            "REJECTED",
+            self.call("post", self.alice, {"action": "REJECT", "comment": "no"}, True).status_code,
+            400,
         )
 
     def test_invalid_start_is_a_400(self):
@@ -342,3 +349,11 @@ class WorkflowApiTests(WorkflowTestBase):
         ), patch(self.ALLOWED, return_value=User.objects.all()):
             self.assertEqual(self.call("post", self.creator, self.payload()).status_code, 403)
         self.assertFalse(DocumentWorkflow.objects.exists())
+
+    def test_api_refuses_start_on_old_revision_without_events(self):
+        self.everything_allowed()
+        response = self.call("post", self.creator, self.payload(), revision_id=self.previous_revision.pk)
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(DocumentWorkflow.objects.exists())
+        self.assertFalse(DocumentWorkflowEvent.objects.exists())
+

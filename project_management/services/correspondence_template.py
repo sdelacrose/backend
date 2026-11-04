@@ -232,3 +232,9 @@ def apply_template(template, values):
         "unresolved_variables": unresolved,
         "has_unresolved": bool(unresolved),
     }
+
+
+def is_document_distribution_template(name):
+    import unicodedata
+    value = ''.join(c for c in unicodedata.normalize('NFKD', name or '') if not unicodedata.combining(c)).strip().casefold()
+    return value in {'transmission documentaire', 'document transmittal', 'document transmission', 'dokumentenversand'}

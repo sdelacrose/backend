@@ -35,6 +35,7 @@ rule above is OUT-only and never applied to IN.
 from django.core.exceptions import ValidationError
 
 from project_management.models.document import DocumentOrigin
+from project_management.services.document_withdrawal import assert_not_withdrawn
 from project_management.models.supplier_surveillance import SupplierSurveillance
 
 # Case-insensitive on purpose: transmittal_category is a free-text field whose options are
@@ -99,6 +100,8 @@ def validate_item_eligibility(transmittal, document_revision):
     """Full eligibility check for adding (or re-validating at finalization) one item."""
     validate_item_scope(transmittal, document_revision)
     document = document_revision.document
+    # GED-L1.4: never transmitted (nor finalized into a transmittal) once withdrawn
+    assert_not_withdrawn(document)
 
     if transmittal.direction == transmittal.Direction.OUT:
         if document.document_origin == DocumentOrigin.INTERNAL:

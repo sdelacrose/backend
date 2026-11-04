@@ -1,8 +1,10 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import status, viewsets
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from project_management.models import DocumentControl
+from project_management.services.document_withdrawal import filter_by_withdrawal
 from project_management.permissions import DocumentPermission
 from project_management.serializers.document_register import (
     DocumentControlWriteSerializer,
@@ -52,6 +54,11 @@ class DocumentRegisterViewSet(viewsets.GenericViewSet):
     def list(self, request, *args, **kwargs):
         project_id = parse_int_or_none(request.query_params.get("project"))
         queryset = get_register_queryset(request, project_id=project_id)
+        # GED-L1.4: withdrawn documents leave the active register (?withdrawn=include|only)
+        try:
+            queryset = filter_by_withdrawal(queryset, request.query_params.get("withdrawn"))
+        except DjangoValidationError as error:
+            return Response(error.message_dict, status=status.HTTP_400_BAD_REQUEST)
         queryset = apply_register_filters(queryset, request.query_params)
         queryset = apply_register_ordering(
             queryset, request.query_params.get("ordering")

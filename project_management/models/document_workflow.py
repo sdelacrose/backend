@@ -39,6 +39,7 @@ class DocumentWorkflow(models.Model):
         APPROVE = "APPROVE", "Approve"
         APPROVED = "APPROVED", "Approved"
         REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Stopped"
 
     ACTIVE_STATUSES = (Status.DRAFT, Status.VERIFY, Status.APPROVE)
 
@@ -131,12 +132,14 @@ class DocumentWorkflowEvent(models.Model):
 
     class Step(models.TextChoices):
         START = "START", "Start"
+        STOP = "STOP", "Workflow stopped"
         AUTHOR_SIGN = "AUTHOR_SIGN", "Author signature"
         VERIFY = "VERIFY", "Verification"
         APPROVE = "APPROVE", "Approval"
 
     class Action(models.TextChoices):
         START = "START", "Started"
+        STOP = "STOP", "Stopped"
         SIGN = "SIGN", "Signed"
         VALIDATE = "VALIDATE", "Validated"
         APPROVE = "APPROVE", "Approved"

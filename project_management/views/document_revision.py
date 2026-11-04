@@ -1,13 +1,17 @@
 import posixpath
 
+from project_management.services.document_cycle import assert_can_manage_document_cycle
+from project_management.services.document_version_context import change_contexts_for_files
+
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import FileResponse, Http404
+from django.db import transaction
 from rest_framework import status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 
-from project_management.models import DocumentWorkflow, SupplierSurveillance
+from project_management.models import Document, DocumentWorkflow, SupplierSurveillance
 from project_management.serializers.document_register import user_reference
 from project_management.services.document_register import (
     assert_can_update_document,
@@ -43,13 +47,17 @@ def serialize_workflow_summary(workflow):
         "id": workflow.id,
         "status": workflow.status,
         "workflow_type": workflow.workflow_type,
+        "author": user_reference(workflow.author),
         "verifier": user_reference(workflow.verifier),
         "approver": user_reference(workflow.approver),
         "approved_at": workflow.completed_at if approved else None,
     }
 
 
-def serialize_revision(revision, request, document, workflow=None, surveillance=None):
+_CHANGE_CONTEXT_UNSET = object()
+
+
+def serialize_revision(revision, request, document, workflow=None, surveillance=None, change_context=_CHANGE_CONTEXT_UNSET):
     return {
         # Latest workflow of this revision (summary only; events: the workflow endpoint).
         # Only ever non-None for an INTERNAL-origin revision (services.document_workflow.
@@ -67,6 +75,10 @@ def serialize_revision(revision, request, document, workflow=None, surveillance=
             else None
         ),
         "id": revision.id,
+        "change_context": (
+            change_contexts_for_files(document, [revision.file.name]).get(revision.file.name)
+            if change_context is _CHANGE_CONTEXT_UNSET else change_context
+        ),
         "version_number": revision.version_number,
         "revision_label": revision.revision_label,
         # D13: the EXTERNAL issuer's own revision designation (Supplier, potentially Client) --
@@ -84,6 +96,7 @@ def serialize_revision(revision, request, document, workflow=None, surveillance=
         "comment": revision.comment,
         "created_at": revision.created_at,
         "created_by": user_reference(revision.created_by),
+        "author": user_reference(document.author),
         "download_url": reverse(
             "document-revision-download",
             kwargs={"document_id": document.id, "revision_id": revision.id},
@@ -113,10 +126,11 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
     def list(self, request, document_id=None, *args, **kwargs):
         document = get_register_document_or_404(request, document_id=document_id)
         revisions = list(get_revision_history(document))
+        change_contexts = change_contexts_for_files(document, [r.file.name for r in revisions])
         workflows = {}
         for workflow in DocumentWorkflow.objects.filter(
             revision__in=revisions
-        ).select_related("verifier", "approver").order_by("created_at", "id"):
+        ).select_related("author", "verifier", "approver").order_by("created_at", "id"):
             workflows[workflow.revision_id] = workflow  # latest wins
         # HISTORY-3: this exact revision's own Supplier Surveillance (OneToOne, L3B) -- one
         # bulk query for every revision of this Document, same N+1-avoidance convention as
@@ -136,6 +150,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
         results = [
             serialize_revision(
                 r, request, document, workflows.get(r.id), surveillances.get(r.id),
+                change_context=change_contexts.get(r.file.name),
             )
             for r in revisions
         ]
@@ -148,6 +163,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
             results = [
                 {
                     "id": None,
+                    "change_context": None,
                     "version_number": 1,
                     "revision_label": None,
                     "external_revision": None,
@@ -165,6 +181,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                     "surveillance": None,
                     "created_at": document.uploaded_at,
                     "created_by": user_reference(document.created_by),
+                    "author": user_reference(document.author),
                     "download_url": file_url,
                 }
             ]
@@ -183,9 +200,12 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
             }
         )
 
+    @transaction.atomic
     def create(self, request, document_id=None, *args, **kwargs):
         document = get_register_document_or_404(request, document_id=document_id)
+        document = Document.objects.select_for_update().get(pk=document.pk)
         assert_can_update_document(request.user, document)
+        assert_can_manage_document_cycle(request.user, document)
         try:
             revision = create_document_revision(
                 document,
@@ -194,6 +214,7 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                 request.data.get("revision_type"),
                 request.data.get("comment"),
                 external_revision=request.data.get("external_revision"),
+                change_context=request.data.get("change_context"),
             )
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)

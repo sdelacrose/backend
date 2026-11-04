@@ -21,8 +21,8 @@ STARTER_TEMPLATES = (
             "\n"
             "Veuillez trouver ci-joint les documents relatifs au projet {{project_name}}.\n"
             "\n"
-            "Merci de bien vouloir nous accuser réception de cet envoi et de nous faire part "
-            "de vos éventuelles remarques.\n"
+            "Ce bordereau accompagne les documents transmis. Les éventuelles revues sont "
+            "rattachées individuellement aux documents.\n"
             "\n"
             "Cordialement,"
         ),

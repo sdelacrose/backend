@@ -1,10 +1,12 @@
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
+from django.db import transaction
 from models.models import User
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 
-from project_management.models import DocumentRevision
+from project_management.models import Document, DocumentRevision
+from project_management.services.document_cycle import assert_can_manage_document_cycle, can_stop_workflow
 from project_management.serializers.document_register import user_reference
 from project_management.services.document_register import (
     assert_can_update_document,
@@ -15,18 +17,20 @@ from project_management.services.document_workflow import (
     change_actor,
     get_workflow_for_revision,
     perform_action,
+    stop_workflow,
     start_workflow,
     start_workflow_for_document,
 )
 
 
-def serialize_workflow(workflow):
+def serialize_workflow(workflow, user=None):
     return {
         "id": workflow.id,
         "revision": workflow.revision_id,
         "workflow_type": workflow.workflow_type,
         "status": workflow.status,
         "is_active": workflow.is_active,
+        "can_stop": can_stop_workflow(user, workflow),
         "author": user_reference(workflow.author),
         "verifier": user_reference(workflow.verifier),
         "approver": user_reference(workflow.approver),
@@ -94,32 +98,47 @@ class DocumentWorkflowViewSet(viewsets.GenericViewSet):
         _document, revision = self._revision(request, document_id, revision_id)
         workflow = get_workflow_for_revision(revision)
         return Response(
-            {"workflow": serialize_workflow(workflow) if workflow else None}
+            {"workflow": serialize_workflow(workflow, request.user) if workflow else None}
         )
 
     def _start(self, request, document, revision):
         assert_can_update_document(request.user, document)
+        assert_can_manage_document_cycle(request.user, document)
         data = request.data
-        args = (
-            data.get("workflow_type"),
-            _user_or_none(data.get("author")),
-            _user_or_none(data.get("verifier")),
-            _user_or_none(data.get("approver")),
-            request.user,
-        )
         allowed = get_allowed_owner_queryset(request.user)
         try:
-            if revision is None:
-                # Current revision; a legacy document gets its first real one here.
-                workflow = start_workflow_for_document(
-                    document, *args, allowed_users=allowed
+            with transaction.atomic():
+                # Serialize author assignment, launch and optional signature as one operation.
+                locked_document = Document.objects.select_for_update().get(pk=document.pk)
+                assert_can_manage_document_cycle(request.user, locked_document)
+                if revision is not None:
+                    from project_management.services.document_workflow import get_current_revision
+                    current = get_current_revision(locked_document)
+                    if current is None or current.pk != revision.pk:
+                        raise DjangoValidationError({"revision": "Only the current document revision can start a workflow."})
+                author = _user_or_none(data.get("author"))
+                if locked_document.author_id:
+                    if author is not None and author.pk != locked_document.author_id:
+                        raise DjangoValidationError({"author": "The workflow must use the document's assigned author."})
+                    author = locked_document.author
+                args = (
+                    data.get("workflow_type"), author,
+                    _user_or_none(data.get("verifier")),
+                    _user_or_none(data.get("approver")), request.user,
                 )
-            else:
-                workflow = start_workflow(revision, *args, allowed_users=allowed)
+                if revision is None:
+                    workflow = start_workflow_for_document(
+                        locked_document, *args, allowed_users=allowed
+                    )
+                else:
+                    workflow = start_workflow(revision, *args, allowed_users=allowed)
+                # START records the launcher. SIGN is only recorded for the assigned author.
+                if workflow.author_id == request.user.pk:
+                    perform_action(workflow, request.user, "SIGN", "")
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
         return Response(
-            serialize_workflow(get_workflow_for_revision(workflow.revision)),
+            serialize_workflow(get_workflow_for_revision(workflow.revision), request.user),
             status=status.HTTP_201_CREATED,
         )
 
@@ -138,7 +157,9 @@ class DocumentWorkflowViewSet(viewsets.GenericViewSet):
             raise Http404
         action = request.data.get("action")
         try:
-            if action in CHANGE_ACTIONS:
+            if action == "STOP":
+                stop_workflow(workflow, request.user, request.data.get("comment"))
+            elif action in CHANGE_ACTIONS:
                 change_actor(
                     workflow,
                     request.user,
@@ -153,4 +174,4 @@ class DocumentWorkflowViewSet(viewsets.GenericViewSet):
                 )
         except DjangoValidationError as error:
             return Response(_error_payload(error), status=status.HTTP_400_BAD_REQUEST)
-        return Response(serialize_workflow(get_workflow_for_revision(revision)))
+        return Response(serialize_workflow(get_workflow_for_revision(revision), request.user))

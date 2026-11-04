@@ -6,6 +6,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Max
 
 from project_management.models import Document, DocumentRevision
+from project_management.services.document_withdrawal import assert_not_withdrawn
 from project_management.services.document_workflow import (
     assert_document_file_unlocked,
 )
@@ -336,6 +337,7 @@ def add_document_revision(
     revision_type=MINOR,
     comment="",
     external_revision=None,
+    change_context=None,
 ):
     """Store a new immutable version of `document` and make it the current file.
 
@@ -351,8 +353,16 @@ def add_document_revision(
     with transaction.atomic():
         # Serialize concurrent version numbering for one document.
         locked = Document.objects.select_for_update().get(pk=document.pk)
+        from project_management.services.document_version_context import CONTEXTS, validate_change_context
+        context = validate_change_context(locked, change_context, revision_type) if locked.file else None
+        # GED-L1.4: a withdrawn document never receives a new version.
+        assert_not_withdrawn(locked)
+        from project_management.services.document_withdrawal import assert_no_active_document_workflow
+        assert_no_active_document_workflow(locked)
         # The current revision/file cannot change while its workflow is running.
         assert_document_file_unlocked(locked)
+        from project_management.services.document_revision_duplicates import checked_revision_upload_hash
+        upload_hash = checked_revision_upload_hash(locked, uploaded_file, external_revision)
         revisions = DocumentRevision.objects.filter(document=locked)
 
         _materialize_first_revision(locked)
@@ -384,7 +394,7 @@ def add_document_revision(
             file_name=posixpath.basename(getattr(uploaded_file, "name", "") or ""),
             file_size=getattr(uploaded_file, "size", None),
             # Calculated from the upload itself (no download from storage), before it is stored.
-            file_sha256=sha256_of_file(uploaded_file),
+            file_sha256=upload_hash,
             comment=comment,
             # D13: the external issuer's own revision designation (never revision_label -- that
             # stays exclusively the INTERNAL-approval-assigned value, untouched here).
@@ -407,6 +417,9 @@ def add_document_revision(
             # Keep the integer shown by the Register in step with numeric majors.
             locked.revision = int(major)
             fields.append("revision")
+        if context:
+            # Native audit reason of this exact file-pointer update, not the user comment.
+            locked._change_reason = CONTEXTS[context][1]
         locked.save(update_fields=fields)
         return revision
 
@@ -419,7 +432,7 @@ def is_first_main_file_upload(document):
 
 
 def create_document_revision(
-    document, uploaded_file, user, revision_type, comment, external_revision=None
+    document, uploaded_file, user, revision_type, comment, external_revision=None, change_context=None
 ):
     """Validated entry point used by the API: new file + reason are mandatory.
 
@@ -456,4 +469,5 @@ def create_document_revision(
         revision_type=revision_type,
         comment=comment,
         external_revision=external_revision,
+        change_context=change_context,
     )

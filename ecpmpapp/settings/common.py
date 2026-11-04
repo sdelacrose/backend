@@ -567,3 +567,7 @@ LOGGING = {
         'level': 'INFO',  # Or DEBUG, WARNING, etc.
     },
 }
+
+# Requires the dedicated proof migration and explicit activation.
+TRANSMITTAL_PROOF_ENABLED = env.bool("TRANSMITTAL_PROOF_ENABLED", default=False)
+TRANSMITTAL_PROOF_MAX_BYTES = 25 * 1024 * 1024

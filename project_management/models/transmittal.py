@@ -18,7 +18,7 @@ creation), by the same save() guard.
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
-from django.db.models.signals import m2m_changed
+from django.db.models.signals import m2m_changed, pre_delete
 from django.dispatch import receiver
 from simple_history.models import HistoricalRecords
 
@@ -28,6 +28,56 @@ from .client_issue import ClientIssue
 from .contact import ContactCompany, ContactUser
 from .document_revision import DocumentRevision
 from .project import Project
+
+
+class TransmittalQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if self.filter(status="ISSUED").exists():
+            raise ValidationError("An issued transmittal is immutable.")
+        return super().update(**kwargs)
+
+    def delete(self):
+        if self.filter(status="ISSUED").exists():
+            raise ValidationError("An issued transmittal cannot be deleted.")
+        return super().delete()
+
+
+class TransmittalItemQuerySet(models.QuerySet):
+    def bulk_create(self, objs, **kwargs):
+        objs = list(objs)
+        parent_ids = [obj.transmittal_id for obj in objs]
+        existing_ids = [obj.pk for obj in objs if obj.pk is not None]
+        if (
+            Transmittal.objects.filter(pk__in=parent_ids, status="ISSUED").exists()
+            or self.model.objects.filter(
+                pk__in=existing_ids, transmittal__status="ISSUED"
+            ).exists()
+        ):
+            raise ValidationError("An item of an issued transmittal is immutable.")
+        return super().bulk_create(objs, **kwargs)
+
+    def update(self, **kwargs):
+        if self.filter(transmittal__status="ISSUED").exists():
+            raise ValidationError("An item of an issued transmittal is immutable.")
+        target = kwargs.get("transmittal_id", kwargs.get("transmittal"))
+        if target is not None:
+            target = getattr(target, "pk", target)
+            if Transmittal.objects.filter(pk=target, status="ISSUED").exists():
+                raise ValidationError("An item of an issued transmittal is immutable.")
+        return super().update(**kwargs)
+
+    def delete(self):
+        if self.filter(transmittal__status="ISSUED").exists():
+            raise ValidationError("An item of an issued transmittal cannot be removed.")
+        return super().delete()
+
+
+class TransmittalEventQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Transmittal events cannot be modified.")
+
+    def delete(self):
+        raise ValidationError("Transmittal events cannot be deleted.")
 
 
 class Transmittal(models.Model):
@@ -86,6 +136,7 @@ class Transmittal(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     history = HistoricalRecords()
+    objects = TransmittalQuerySet.as_manager()
 
     class Meta:
         ordering = ["-created_at", "-id"]
@@ -135,7 +186,8 @@ class Transmittal(models.Model):
                 # Items/contacts are protected separately (FK/M2M below).
                 for field in (
                     "project_id", "external_company_id", "subject", "message",
-                    "issued_at", "received_at",
+                    "issued_at", "received_at", "evidence_snapshot",
+                    "created_by_id", "created_at", "transmittal_number",
                 ):
                     if getattr(self, field) != getattr(original, field):
                         raise ValidationError("An issued transmittal is immutable.")
@@ -212,6 +264,19 @@ class TransmittalItem(models.Model):
             ),
         ]
 
+    objects = TransmittalItemQuerySet.as_manager()
+
+    def save(self, *args, **kwargs):
+        parent_ids = [self.transmittal_id]
+        if self.pk:
+            stored_parent = TransmittalItem.objects.filter(pk=self.pk).values_list(
+                "transmittal_id", flat=True
+            ).first()
+            parent_ids.append(stored_parent)
+        if Transmittal.objects.filter(pk__in=parent_ids, status="ISSUED").exists():
+            raise ValidationError("An item of an issued transmittal is immutable.")
+        super().save(*args, **kwargs)
+
     def delete(self, *args, **kwargs):
         if self.transmittal.status == Transmittal.Status.ISSUED:
             raise ValidationError("An item of an issued transmittal cannot be removed.")
@@ -228,6 +293,9 @@ class TransmittalEvent(models.Model):
         ITEM_REMOVED = "ITEM_REMOVED", "Item removed"
         ISSUED = "ISSUED", "Issued"
         RECEIVED = "RECEIVED", "Received"
+        SEND_STARTED = "SEND_STARTED", "Sending"
+        SEND_SUCCEEDED = "SEND_SUCCEEDED", "Sent"
+        SEND_FAILED = "SEND_FAILED", "Send failed"
 
     transmittal = models.ForeignKey(Transmittal, related_name="events", on_delete=models.CASCADE)
     event_type = models.CharField(max_length=20, choices=EventType.choices)
@@ -240,6 +308,8 @@ class TransmittalEvent(models.Model):
     class Meta:
         ordering = ["created_at", "id"]
 
+    objects = TransmittalEventQuerySet.as_manager()
+
     def save(self, *args, **kwargs):
         if not self._state.adding:
             raise ValidationError("Transmittal events cannot be modified.")
@@ -247,6 +317,16 @@ class TransmittalEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Transmittal events cannot be deleted.")
+
+
+@receiver(pre_delete, sender=Transmittal)
+@receiver(pre_delete, sender=TransmittalItem)
+@receiver(pre_delete, sender=TransmittalEvent)
+def protect_issued_transmittal_evidence(sender, instance, **kwargs):
+    # Collectors bypass model.delete(), including cascades from a Project or Folder.
+    parent_id = instance.pk if sender is Transmittal else instance.transmittal_id
+    if Transmittal.objects.filter(pk=parent_id, status="ISSUED").exists():
+        raise ValidationError("Issued transmittal evidence cannot be deleted.")
 
 
 class TransmittalReferenceCounter(models.Model):
