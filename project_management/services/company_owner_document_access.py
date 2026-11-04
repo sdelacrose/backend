@@ -21,8 +21,16 @@ def documentary_owner_company_id(user):
 
 class DocumentaryOwnerPermissionMixin:
     def _check_permission(self, user, module, action, scope, context):
+        documentary_actions = {
+            'view', 'create', 'update', 'delete', 'full_access',
+            'view_assigned_created', 'update_assigned_created', 'delete_assigned_created',
+            'correspondence_view', 'correspondence_create', 'correspondence_update',
+            'correspondence_delete', 'correspondence_send', 'correspondence_template_manage',
+            'transmittal_view', 'transmittal_create', 'transmittal_update',
+            'transmittal_delete', 'transmittal_issue', 'transmittal_send',
+        }
         if scope == 'project' and (
-            (module == 'documents' and action != 'manage_cycle')
+            (module == 'documents' and action in documentary_actions)
             or (module == 'ecpmp_configurations' and action == 'view')
         ):
             company_id = documentary_owner_company_id(user)

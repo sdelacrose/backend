@@ -7,6 +7,7 @@ from project_management.models.constants import (
     SPECIAL_SOLUTION,
 )
 from project_management.utils import get_product_name_from_request
+from project_management.services.company_owner_document_access import documentary_owner_company_id
 
 
 def get_accessible_document_queryset(request, *, project_id=None):
@@ -82,6 +83,10 @@ def get_accessible_document_queryset(request, *, project_id=None):
     )
 
     filters = Q()
+    owner_company = documentary_owner_company_id(user)
+    if owner_company:
+        filters |= Q(folder__project__company_profile_id=owner_company,
+                     folder__project__solution__in=products)
     if not user.is_freelancer and has_company_documents:
         filters |= Q(folder__company_profile=user.company)
 
