@@ -5,6 +5,12 @@ from .document_control import DocumentControl
 from .document_revision import DocumentRevision
 from .client_issue import ClientIssue
 from .document_attachment import DocumentAttachment
+from .intervention import (
+    InterventionImportBatch,
+    InterventionImportRow,
+    InterventionReferenceCounter,
+    InterventionRequest,
+)
 from .correspondence import Correspondence, CorrespondenceAttachment, CorrespondenceReferenceCounter
 from .correspondence_workflow import CorrespondenceValidationWorkflow, CorrespondenceValidationEvent
 from .correspondence_send import CorrespondenceSendEvent

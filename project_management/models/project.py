@@ -419,9 +419,24 @@ class ActionItem(models.Model):
     # CRM-1B: follow-ups linked to Network records (same tenant only, enforced in the serializer).
     contact_users = models.ManyToManyField('ContactUser', related_name='action_items', blank=True)
     contact_companies = models.ManyToManyField('ContactCompany', related_name='action_items', blank=True)
+    # DEMO-01: optional link to the intervention request that generated this action. PROTECT: a
+    # request that still owns actions can never be deleted. The key makes the generation unique.
+    intervention_request = models.ForeignKey(
+        'InterventionRequest', related_name='action_items', on_delete=models.PROTECT, null=True, blank=True
+    )
+    intervention_action_key = models.CharField(max_length=32, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tracker = FieldTracker()
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['intervention_request', 'intervention_action_key'],
+                condition=Q(intervention_request__isnull=False) & ~Q(intervention_action_key=''),
+                name='unique_action_per_intervention_key',
+            )
+        ]
 
     def __str__(self):
         return f"{self.name}"

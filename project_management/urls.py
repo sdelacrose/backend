@@ -23,6 +23,13 @@ from project_management.views.correspondence_workflow import (
 )
 from project_management.views.correspondence_send import CorrespondenceSendViewSet
 from project_management.views.correspondence_template import CorrespondenceTemplateViewSet
+from project_management.views.intervention import (
+    InterventionImportBatchView,
+    InterventionImportConfirmView,
+    InterventionImportPreviewView,
+    InterventionRequestDetailView,
+    InterventionRequestListView,
+)
 from project_management.views.transmittal import (
     TransmittalEventViewSet,
     TransmittalIssueView,
@@ -601,6 +608,12 @@ urlpatterns = [
     # MAIL-1.4-D: the proof of one send -- download of a kept file, and a manual retry of its archiving.
     path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/files/<int:file_id>/download', CorrespondenceSendViewSet.as_view({'get': 'proof_file_download'}), name='correspondence-send-proof-file-download'),
     path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/retry', CorrespondenceSendViewSet.as_view({'post': 'proof_retry'}), name='correspondence-send-proof-retry'),
+    # DEMO-01: intervention requests + reviewed CSV import (preview, then confirm).
+    path('intervention-requests', InterventionRequestListView.as_view(), name='intervention-requests'),
+    path('intervention-requests/<int:pk>', InterventionRequestDetailView.as_view(), name='intervention-request-detail'),
+    path('intervention-requests/import/preview', InterventionImportPreviewView.as_view(), name='intervention-import-preview'),
+    path('intervention-requests/import/<uuid:batch_id>', InterventionImportBatchView.as_view(), name='intervention-import-batch'),
+    path('intervention-requests/import/<uuid:batch_id>/confirm', InterventionImportConfirmView.as_view(), name='intervention-import-confirm'),
     # MAIL-1.5-B: the company's library of e-mail templates (no delete: a template is deactivated).
     path('correspondence-templates', CorrespondenceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-templates'),
     path('correspondence-templates/<int:pk>', CorrespondenceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='correspondence-template-detail'),
