@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from project_management.models import Document, DocumentRevision
@@ -22,7 +23,11 @@ from project_management.test_client_surveillance_lot3 import Lot3Base
 from project_management.views.document_revision import DocumentRevisionViewSet
 
 
+@override_settings(RECETTE_MODE=False)
 class LogicalBase(Lot3Base):
+    # These workflow fixtures simulate SMTP through OpeningBase's locmem backend.
+    # The recette mail restriction is exercised separately by test_recette_guard;
+    # no production setting or delivery path is changed here.
     def rows(self, document=None):
         return list(DocumentRevision.objects.filter(document=document or self.document).order_by("version_number"))
 
