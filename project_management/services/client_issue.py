@@ -22,6 +22,6 @@ def get_or_create_client_issue(*, document_revision, client_company, actor):
     issue, _created = ClientIssue.objects.get_or_create(
         document_revision=document_revision,
         client_company=client_company,
-        defaults={"created_by": actor},
+        defaults={"created_by": actor, "client_revision_label": (document_revision.document.planned_client_revision or "").strip() or None},
     )
     return issue

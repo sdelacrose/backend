@@ -15,6 +15,11 @@ class NotificationSerializer(serializers.ModelSerializer):
     )
     object_id = serializers.IntegerField()
     status = serializers.SerializerMethodField()
+    target_url = serializers.SerializerMethodField()
+
+    def get_target_url(self, obj):
+        from supplier_portal.notifications import notification_target
+        return notification_target(obj)
 
     class Meta:
         model = Notification
@@ -29,6 +34,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             'content_type',
             'object_id',
             'status',
+            'target_url',
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'message', 'type']
     

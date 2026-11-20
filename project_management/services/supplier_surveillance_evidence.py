@@ -175,6 +175,15 @@ def _response_display_value(item, response):
     return text or "—"
 
 
+def _annotation_response_display(item, response, annotations):
+    if response and item.get("type") in ("TEXT", "TEXTAREA"):
+        compiled = "\n".join(f"[Page {row.page}] {row.text}" for row in annotations)
+        external_compiled = "\n".join(f"[Page {row.page}] {row.text}" for row in annotations if row.visibility == "EXTERNAL")
+        if response.text_value and response.text_value in (compiled, external_compiled):
+            return ""  # annotations are rendered once, with page and reviewer, below
+    return _response_display_value(item, response)
+
+
 def _build_report_sections(surveillance):
     """L3G-2 section 13/15/27/28: the detailed Q&A, rendered directly from the frozen
     template_snapshot (never the live Template -- section 28, it may be edited or deleted after
@@ -196,6 +205,8 @@ def _build_report_sections(surveillance):
         for assignment in assignments
     ]
 
+    from project_management.models import SupplierReviewAnnotation
+    annotations = list(SupplierReviewAnnotation.objects.filter(assignment__surveillance=surveillance,retracted_at__isnull=True).select_related("assignment__reviewer"))
     sections = []
     for section in snapshot.get("sections", []):
         items = []
@@ -206,8 +217,10 @@ def _build_report_sections(surveillance):
                     "reviewer_name": (
                         row["reviewer"]["name"] if row["reviewer"] else "—"
                     ),
-                    "display_value": _response_display_value(
-                        item, row["responses_by_item"].get(item_id)
+                    "annotations": [annotation for annotation in annotations if annotation.visibility == "EXTERNAL" and annotation.item_snapshot_id == item_id and annotation.assignment.reviewer_id == row["reviewer"]["id"]],
+                    "display_value": _annotation_response_display(
+                        item, row["responses_by_item"].get(item_id),
+                        [annotation for annotation in annotations if annotation.item_snapshot_id == item_id and annotation.assignment.reviewer_id == row["reviewer"]["id"]]
                     ),
                 }
                 for row in reviewer_rows
@@ -262,9 +275,11 @@ def build_evidence_report_context(surveillance, metadata, *, generated_at):
     fresh from template_snapshot + persisted Responses/Assignments (section 13) -- distinct
     sources, deliberately never merged into one JSON blob (L3G-1 section 11), and `metadata`
     itself is only ever read here, never mutated (it is the exact object persisted verbatim)."""
+    sections = _build_report_sections(surveillance)
     return {
         "metadata": metadata,
-        "sections": _build_report_sections(surveillance),
+        "sections": sections,
+        "external_annotation_count": sum(len(entry["annotations"]) for section in sections for item in section["items"] for entry in item["reviewer_entries"]),
         "reviewer_summary": _build_reviewer_summary(surveillance),
         "generated_at_display": _display_dt(generated_at),
         "created_at_display": _display_dt(surveillance.created_at),

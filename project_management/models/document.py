@@ -192,6 +192,8 @@ class Document(models.Model):
     # create()). client_reference is new: no prior field represented it at all.
     identification_number = models.CharField(max_length=255, null=True, blank=True)
     client_reference = models.CharField(max_length=255, null=True, blank=True)
+    # Planned outgoing customer index, frozen on a new ClientIssue at distribution.
+    planned_client_revision = models.CharField(max_length=20, null=True, blank=True)
     status = models.CharField(max_length=255, null=True, blank=True)
     # Legacy documents predate this distinction and keep the internal Document Control behaviour.
     document_origin = models.CharField(
@@ -216,6 +218,8 @@ class Document(models.Model):
     # creation time, enforced in the serializer (see services/validators), not at this model
     # layer -- INTERNAL/SUPPLIER documents and Company Documents never require it.
     received_date = models.DateField(null=True, blank=True)
+    # Planned document issue date; missing plans use the actual issue day for display only.
+    due_date = models.DateField(null=True, blank=True)
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
     # L2A: "Client Transmittal Category" -- how this document is intended to be transmitted to

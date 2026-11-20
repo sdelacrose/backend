@@ -163,15 +163,17 @@ class ReviewedClosureTests(ClosureBase):
 
 class CommentedClosureTests(ClosureBase):
     # 14/15/16/17
-    def test_commented_blank_comment_rejected(self):
+    def test_commented_blank_comment_accepted(self):
         surveillance, _reviewers = self.make_ready_surveillance(
             reviewer_names=("closealice7",)
         )
-        with self.assertRaises(ValidationError):
-            close_supplier_surveillance(
-                surveillance=surveillance, actor=self.creator,
-                result=Result.COMMENTED, closure_comment="   ",
-            )
+        closed = close_supplier_surveillance(
+            surveillance=surveillance, actor=self.creator,
+            result=Result.COMMENTED, closure_comment="   ",
+        )
+
+        self.assertEqual(closed.closure_comment, "")
+        self.assertTrue(closed.new_revision_required)
 
     def test_commented_non_empty_comment_accepted(self):
         surveillance, _reviewers = self.make_ready_surveillance(
@@ -188,15 +190,17 @@ class CommentedClosureTests(ClosureBase):
 
 class RejectedClosureTests(ClosureBase):
     # 18/19/20/21
-    def test_rejected_blank_comment_rejected(self):
+    def test_rejected_blank_comment_accepted(self):
         surveillance, _reviewers = self.make_ready_surveillance(
             reviewer_names=("closealice9",)
         )
-        with self.assertRaises(ValidationError):
-            close_supplier_surveillance(
-                surveillance=surveillance, actor=self.creator,
-                result=Result.REJECTED, closure_comment="",
-            )
+        closed = close_supplier_surveillance(
+            surveillance=surveillance, actor=self.creator,
+            result=Result.REJECTED, closure_comment="",
+        )
+
+        self.assertEqual(closed.closure_comment, "")
+        self.assertTrue(closed.new_revision_required)
 
     def test_rejected_non_empty_comment_accepted(self):
         surveillance, _reviewers = self.make_ready_surveillance(
@@ -457,7 +461,7 @@ class ClosureApiTests(ClosureBase):
         self.assertEqual(response.data["closure_comment"], "Please revise.")
         self.assertIsNotNone(response.data["closed_by"])
 
-    def test_close_via_real_view_blocked_without_comment_for_commented(self):
+    def test_close_via_real_view_accepts_optional_comment_for_commented(self):
         surveillance, _reviewers = self.make_ready_surveillance(
             reviewer_names=("closealice26",)
         )
@@ -465,4 +469,4 @@ class ClosureApiTests(ClosureBase):
         response = self._request(
             document, surveillance.id, {"result": "COMMENTED", "closure_comment": ""},
         )
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, 200)

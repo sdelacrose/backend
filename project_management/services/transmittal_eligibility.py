@@ -1,3 +1,4 @@
+from project_management.services.document_file_name import controlled_file_name
 """LOT 3C: eligibility rules for a DocumentRevision joining a Transmittal.
 
 OUT (client delivery): eligible origins are INTERNAL and SUPPLIER, each subject to its own gate
@@ -12,8 +13,7 @@ Document.status is never used as proof (LOT 3C section 6).
 
 SUPPLIER gate (new, L3F.1 sections 8/9/10): the exact DocumentRevision's own SupplierSurveillance
 (OneToOne, L3B -- never "the Document's most recent Surveillance") must be CLOSED with
-result=REVIEWED, UNLESS the Document's supplier_transmittal_category is FOR_INFORMATION, which
-carries no mandatory Surveillance at all (the established L3B/L3D/L3F semantic, reused as-is).
+result=REVIEWED, regardless of the supplier transmittal category.
 COMMENTED/REJECTED (new_revision_required=True) and every pre-closure Surveillance status
 (DRAFT/UNDER_REVIEW/READY_FOR_CLOSURE) are deliberately NOT eligible -- read-only here, this
 module never writes to SupplierSurveillance (L3B-E stay closed, untouched).
@@ -76,15 +76,11 @@ def supplier_out_eligible(document_revision):
     """L3F.1 sections 8/9/10: the Supplier gate for OUT distribution, evaluated against THIS
     exact DocumentRevision's own SupplierSurveillance (OneToOne, never "most recent").
 
-    FOR_INFORMATION carries no mandatory Surveillance (established L3B/L3D/L3F semantic) -- the
-    gate is satisfied without one. Otherwise: CLOSED + REVIEWED only; every other Surveillance
+    CLOSED + REVIEWED only, including FOR_INFORMATION; every other Surveillance
     state (none yet, DRAFT, UNDER_REVIEW, READY_FOR_CLOSURE, or CLOSED with COMMENTED/REJECTED,
     i.e. new_revision_required=True) is NOT eligible. Read-only: never writes to
     SupplierSurveillance.
     """
-    document = document_revision.document
-    if document.supplier_transmittal_category == document.SupplierTransmittalCategory.FOR_INFORMATION:
-        return True
     surveillance = SupplierSurveillance.objects.filter(
         document_revision=document_revision
     ).first()
@@ -106,7 +102,15 @@ def validate_item_eligibility(transmittal, document_revision):
     if transmittal.direction == transmittal.Direction.OUT:
         if document.document_origin == DocumentOrigin.INTERNAL:
             # L3F.1 section 7: preserved exactly, unchanged since LOT 3C/3E-1C1.
-            if not document_revision.revision_label:
+            # LOT 1: the ONLY exemption is the BPE technical version of code A, for the client of that return.
+            from project_management.services.client_surveillance_followup import eligibility_exemption
+            if not document_revision.revision_label and not eligibility_exemption(document_revision, transmittal):
+                if document_revision.index_revision_id:
+                    # SURVEILLANCE LOT 5-FIX: the BPE technical version of an accepted index, for the wrong client / outside its follow-up
+                    raise ValidationError({
+                        "detail": "This BPE version can only be distributed to the client of its confirmed client return, while that return is being processed.",
+                        "code": "bpe_version_restricted",
+                    })
                 raise ValidationError(
                     "This document revision is not internally approved and cannot be "
                     "distributed."
@@ -140,7 +144,7 @@ def validate_item_eligibility(transmittal, document_revision):
             )
 
 
-def build_item_evidence_snapshot(document_revision, distribution_purpose):
+def build_item_evidence_snapshot(document_revision, distribution_purpose, *, outgoing=False):
     """Frozen per-item evidence (LOT 3C section 12): document permanent reference, revision
     label, file name, file SHA-256, distribution purpose. Read-only: never writes to
     DocumentRevision, which stays the single source of that same evidence."""
@@ -164,6 +168,22 @@ def build_item_evidence_snapshot(document_revision, distribution_purpose):
                 )
             }
         )
+    file_sha256 = document_revision.file_sha256
+    if outgoing and document.document_origin == DocumentOrigin.SUPPLIER:
+        from project_management.services.document_revision import sha256_of_file
+
+        try:
+            with document_revision.file.open("rb") as stored_file:
+                digest = sha256_of_file(stored_file)
+        except (OSError, ValueError) as error:
+            raise ValidationError("The reviewed supplier file could not be read.") from error
+        if file_sha256 and digest != file_sha256:
+            raise ValidationError("The reviewed supplier file no longer matches its recorded hash.")
+        file_sha256 = digest
+
+    from project_management.services.client_surveillance_followup import display_index
+    index_label = display_index(document_revision)
+    issue_state = document_revision.issue_state or document.status
     return {
         "schema_version": 1,
         "document": {
@@ -175,10 +195,14 @@ def build_item_evidence_snapshot(document_revision, distribution_purpose):
             "id": document_revision.pk,
             "version_number": document_revision.version_number,
             "revision_label": document_revision.revision_label,
+            # LOT 1: the frozen index shown to the client and the immutable PREL/BPE state of THIS file
+            "index_label": index_label,
+            "issue_state": document_revision.issue_state,
             # D13: the external issuer's own revision designation (IN items, primarily).
             "external_revision": document_revision.external_revision,
             "file_name": document_revision.file_name,
-            "file_sha256": document_revision.file_sha256,
+            "download_name": controlled_file_name(document.full_document_number, index_label, issue_state, document_revision.file.name),
+            "file_sha256": file_sha256,
         },
         "distribution_purpose": distribution_purpose,
     }

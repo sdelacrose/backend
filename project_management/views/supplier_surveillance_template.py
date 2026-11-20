@@ -6,6 +6,8 @@ from rest_framework.response import Response
 from models.models import CompanyProfile
 from project_management.models import Project, SupplierSurveillanceTemplate
 from project_management.permissions import ECPMPConfigPermission
+from companyprofileapis.permissions import CompanyConfigurationsPermission
+from rest_framework.permissions import IsAuthenticated
 from project_management.serializers.supplier_surveillance_template import (
     SupplierSurveillanceTemplateSerializer,
 )
@@ -53,10 +55,25 @@ class SupplierSurveillanceTemplateViewSet(viewsets.ModelViewSet):
     configuration permission (ecpmp_configurations), never stored on the Template itself.
     """
 
+    permission_classes = [IsAuthenticated]
     serializer_class = SupplierSurveillanceTemplateSerializer
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def _company_for_request(self, *, write):
+        company_id = self.request.query_params.get("company") or self.request.data.get("company")
+        if company_id is not None:
+            # Company ownership comes from the authenticated account, never from a selected project.
+            if str(company_id) != str(self.request.user.company_id):
+                raise Http404
+            permission = CompanyConfigurationsPermission(action="update" if write else "view", scope="company")
+            allowed = (
+                permission._check_update_permission(self.request.user, None)
+                if write else permission._check_view_permission(self.request.user, None)
+            )
+            if not allowed:
+                raise PermissionDenied("You do not have permission to manage Supplier Surveillance Templates.")
+            return self.request.user.company_id
+        # Preserve existing project-scoped callers and their permissions.
         project = _resolve_project(self.request)
         _assert_permission(self.request, project, write=write)
         return resolve_company_for_project(project)

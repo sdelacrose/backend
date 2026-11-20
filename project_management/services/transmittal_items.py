@@ -30,6 +30,11 @@ def add_transmittal_item(transmittal, document_revision, distribution_purpose, a
             raise ValidationError({"distribution_purpose": "Invalid distribution purpose."})
         distribution_purpose = distribution_purpose or None
     validate_item_eligibility(locked, document_revision)
+    if locked.direction == Transmittal.Direction.OUT:
+        # LOT 1: a revision born from a client return is sent with the purpose its PREL/BPE state requires.
+        from project_management.services.client_surveillance_followup import assert_followup_sendable, assert_purpose
+        assert_purpose(document_revision, distribution_purpose)
+        assert_followup_sendable(locked, document_revision, distribution_purpose)  # LOT 3
     if TransmittalItem.objects.filter(
         transmittal=locked, document_revision=document_revision
     ).exists():

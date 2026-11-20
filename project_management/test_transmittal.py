@@ -587,12 +587,15 @@ class TransmittalEligibilityTests(TransmittalTestBase):
         item = add_transmittal_item(transmittal, revision, "FOR_REVIEW", self.owner)
         self.assertEqual(item.document_revision_id, revision.id)
 
-    def test_out_accepts_supplier_for_information_without_surveillance(self):  # C.10
-        # Established L3B/L3D/L3F semantic: FOR_INFORMATION carries no mandatory Surveillance --
-        # the Supplier gate is satisfied without one.
+    def test_out_requires_review_for_supplier_for_information(self):
         transmittal = self.create_transmittal()
         revision = self.make_supplier_revision(
             category="FOR_INFORMATION", client_category="For information",
+        )
+        with self.assertRaises(ValidationError):
+            add_transmittal_item(transmittal, revision, "FOR_INFORMATION", self.owner)
+        self.make_surveillance(
+            revision, SupplierSurveillance.Status.CLOSED, SupplierSurveillance.Result.REVIEWED,
         )
         item = add_transmittal_item(transmittal, revision, "FOR_INFORMATION", self.owner)
         self.assertEqual(item.document_revision_id, revision.id)

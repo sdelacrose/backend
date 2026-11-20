@@ -42,5 +42,19 @@ if getattr(settings, 'RECETTE_MODE', False):
     urlpatterns.insert(0, path('media/documents/<path:relative_path>',
                               RecetteDocumentFileView.as_view(), name='recette-document-file'))
 
+# Originals are retained; only the authenticated evidence API serves internal reports.
+urlpatterns.insert(0, path(settings.MEDIA_URL.lstrip('/')+'supplier_surveillance_evidence/<path:relative_path>',
+    lambda request, relative_path: HttpResponse(status=404), name='private-supplier-report-media'))
+
+def private_aware_media(request, path):
+    import posixpath
+    from urllib.parse import unquote
+    from django.views.static import serve
+    normalized=posixpath.normpath(unquote(path).replace(chr(92),'/')).lstrip('/')
+    if normalized.split('/')[0].lower()=='supplier_surveillance_evidence':
+        return HttpResponse(status=404)
+    return serve(request,path,document_root=settings.MEDIA_ROOT)
+
 if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    import re
+    urlpatterns += [re_path(r'^'+re.escape(settings.MEDIA_URL.lstrip('/'))+r'(?P<path>.*)',private_aware_media)]

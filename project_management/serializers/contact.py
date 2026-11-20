@@ -309,6 +309,17 @@ class ContactCompanySerializer(CrmOwnerFieldMixin, serializers.ModelSerializer):
         model = ContactCompany
         fields = "__all__"
 
+    def validate_company_logo(self, value):
+        # GED-SEC.08.2-B0.3: nothing, the logo the company already holds, or the finalised upload of this user
+        # for this usage (see services/upload_reference.py); any other URL is refused.
+        request = self.context.get("request")
+        if request is None or not getattr(request.user, "is_authenticated", False):
+            return value  # internal use without a request (imports, seeds): not an upload from a browser
+        from project_management.services.upload_reference import bind_public_url
+
+        current = self.instance.company_logo if self.instance else None
+        return bind_public_url(request.user, "contact_company_logo", value, current=current)
+
     def validate(self, attrs):
         attrs = super().validate(attrs)
         return validate_contact_area_of_expertise(

@@ -68,7 +68,10 @@ def _external_snapshot(transmittal):
 
 
 @transaction.atomic
-def finalize_transmittal(transmittal, actor):
+def finalize_transmittal(transmittal, actor, allow_empty_items=False, event_metadata=None):
+    # GED-WF.4.3.1: `allow_empty_items` is passed ONLY by the incoming confirmation, for an IN that carries valid client
+    # return lines (they are not items); an empty transmittal of any other kind is still refused. `event_metadata`
+    # is recorded on the immutable finalization event.
     locked = Transmittal.objects.select_for_update().get(pk=transmittal.pk)
     if locked.status != Transmittal.Status.DRAFT:
         raise ValidationError("This transmittal is already finalized.")
@@ -86,7 +89,7 @@ def finalize_transmittal(transmittal, actor):
 
     # 3. At least one item.
     items = list(locked.items.select_related("document_revision", "document_revision__document"))
-    if not items:
+    if not items and not (allow_empty_items and locked.direction == Transmittal.Direction.IN):
         raise ValidationError("At least one item is required to finalize a transmittal.")
 
     # Captured once, up front, so it is the EXACT SAME instant used for Transmittal.issued_at
@@ -97,8 +100,11 @@ def finalize_transmittal(transmittal, actor):
     # 4/12. Revalidate every item's eligibility and freeze its evidence.
     for item in items:
         validate_item_eligibility(locked, item.document_revision)
+        from project_management.services.client_surveillance_followup import assert_followup_sendable
+        assert_followup_sendable(locked, item.document_revision, item.distribution_purpose)  # LOT 3
         item.evidence_snapshot = build_item_evidence_snapshot(
-            item.document_revision, item.distribution_purpose
+            item.document_revision, item.distribution_purpose,
+            outgoing=locked.direction == Transmittal.Direction.OUT,
         )
         update_fields = ["evidence_snapshot"]
         # HISTORY-1: every real OUT distribution gets/reuses a ClientIssue -- FOR_REVIEW and
@@ -139,5 +145,5 @@ def finalize_transmittal(transmittal, actor):
     locked.save(update_fields=["evidence_snapshot", "issued_at", "received_at", "status"])
 
     # 8. Immutable finalization event.
-    TransmittalEvent.objects.create(transmittal=locked, event_type=event_type, actor=actor)
+    TransmittalEvent.objects.create(transmittal=locked, event_type=event_type, actor=actor, metadata=event_metadata)
     return locked

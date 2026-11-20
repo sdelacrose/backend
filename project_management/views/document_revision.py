@@ -1,3 +1,4 @@
+from project_management.services.document_file_name import controlled_file_name, revision_file_name
 import posixpath
 
 from project_management.services.document_cycle import assert_can_manage_document_cycle
@@ -57,7 +58,12 @@ def serialize_workflow_summary(workflow):
 _CHANGE_CONTEXT_UNSET = object()
 
 
-def serialize_revision(revision, request, document, workflow=None, surveillance=None, change_context=_CHANGE_CONTEXT_UNSET):
+def serialize_revision(revision, request, document, workflow=None, surveillance=None, change_context=_CHANGE_CONTEXT_UNSET, logical=None):
+    # B1 / LOT 1: `logical` = (logical revision id, logical version number), computed once per list; else looked up here
+    if logical is None:
+        from project_management.services.document_logical_version import logical_revision_of, logical_version_number
+        source = logical_revision_of(revision)
+        logical = (source.pk if source else None, logical_version_number(revision))
     return {
         # Latest workflow of this revision (summary only; events: the workflow endpoint).
         # Only ever non-None for an INTERNAL-origin revision (services.document_workflow.
@@ -79,8 +85,17 @@ def serialize_revision(revision, request, document, workflow=None, surveillance=
             change_contexts_for_files(document, [revision.file.name]).get(revision.file.name)
             if change_context is _CHANGE_CONTEXT_UNSET else change_context
         ),
-        "version_number": revision.version_number,
+        "version_number": revision.version_number,  # PHYSICAL number (unchanged)
+        # B1 / LOT 1: the logical version (technical BPE rows share the one of their source) and the row kind
+        "logical_version_number": logical[1],
+        "logical_revision_id": logical[0],
+        "is_technical": revision.index_revision_id is not None,
         "revision_label": revision.revision_label,
+        # SURVEILLANCE LOT 4 (read only): PREL/BPE, and the index a TECHNICAL BPE version inherits from the approved
+        # revision it points to (index_revision) -- never a label of its own.
+        "issue_state": revision.issue_state,
+        "index_revision_id": revision.index_revision_id,
+        "index_label": revision.revision_label or (revision.index_revision.revision_label if revision.index_revision_id else None),
         # D13: the EXTERNAL issuer's own revision designation (Supplier, potentially Client) --
         # distinct from revision_label (INTERNAL-origin, workflow-approval-only).
         "external_revision": revision.external_revision,
@@ -88,6 +103,7 @@ def serialize_revision(revision, request, document, workflow=None, surveillance=
         "minor_revision": revision.minor_revision,
         "label": revision.label,
         "file_name": revision.file_name,
+        "download_name": revision_file_name(document, revision),
         "file_size": revision.file_size,
         # Approval evidence (read-only): exact-bytes hash and the approval-time metadata.
         "file_sha256": revision.file_sha256,
@@ -109,6 +125,22 @@ def _error_payload(error):
     if hasattr(error, "message_dict"):
         return error.message_dict
     return {"detail": error.messages}
+
+
+def stored_file_response(stored_file, filename):
+    """GED-SEC.08.2-A2.2: the bytes of one already-authorised stored file.
+
+    Callers resolve the Document through get_register_document_or_404 first. A file missing from the storage is a
+    404 (never a 500), the MIME type follows the file name, and nothing is cached by a shared intermediary."""
+    try:
+        response = FileResponse(stored_file.open("rb"), as_attachment=True, filename=filename)
+    except (FileNotFoundError, OSError, ValueError):
+        raise Http404
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Vary"] = "Authorization"
+    response["Access-Control-Expose-Headers"] = "Content-Disposition"
+    return response
 
 
 class DocumentRevisionViewSet(viewsets.GenericViewSet):
@@ -147,10 +179,12 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
             "evidence",
         ):
             surveillances[surveillance.document_revision_id] = surveillance
+        from project_management.services.document_logical_version import logical_info
+        logical = logical_info(revisions)  # one pass, no query
         results = [
             serialize_revision(
                 r, request, document, workflows.get(r.id), surveillances.get(r.id),
-                change_context=change_contexts.get(r.file.name),
+                change_context=change_contexts.get(r.file.name), logical=logical.get(r.id),
             )
             for r in revisions
         ]
@@ -165,6 +199,9 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
                     "id": None,
                     "change_context": None,
                     "version_number": 1,
+                    "logical_version_number": 1,
+                    "logical_revision_id": None,
+                    "is_technical": False,
                     "revision_label": None,
                     "external_revision": None,
                     "major_revision": major,
@@ -230,8 +267,18 @@ class DocumentRevisionViewSet(viewsets.GenericViewSet):
         )
         if revision is None or not revision.file:
             raise Http404
-        return FileResponse(
-            revision.file.open("rb"),
-            as_attachment=True,
-            filename=revision.file_name or posixpath.basename(revision.file.name),
+        return stored_file_response(
+            revision.file,
+            revision_file_name(document, revision),
+        )
+
+    def download_current(self, request, document_id=None, *args, **kwargs):
+        """The main file of the Document itself (what the page shows as "Main document"); same access as the
+        Document: a document outside the accessible register is a 404."""
+        document = get_register_document_or_404(request, document_id=document_id)
+        if not document.file:
+            raise Http404
+        return stored_file_response(
+            document.file,
+            controlled_file_name(document.full_document_number, get_revision_history(document).values_list('revision_label', flat=True).first(), document.status, document.file.name),
         )

@@ -21,6 +21,7 @@ supplier_surveillance_evidence) -- no PDF rendering, no file write, no row creat
 """
 
 from django.core.exceptions import ValidationError
+from supplier_portal.shared_storage import PrivateSupplierStorage
 from django.db import models
 
 from models.models import User
@@ -58,7 +59,7 @@ class SupplierSurveillanceEvidence(models.Model):
     surveillance = models.OneToOneField(
         SupplierSurveillance, related_name="evidence", on_delete=models.CASCADE,
     )
-    file = models.FileField(upload_to=get_supplier_surveillance_evidence_upload_path)
+    file = models.FileField(upload_to=get_supplier_surveillance_evidence_upload_path, storage=PrivateSupplierStorage())
     generated_at = models.DateTimeField(auto_now_add=True)
     # Informational provenance only (same on_delete choice as SupplierSurveillance.created_by/
     # DocumentWorkflow.created_by) -- never load-bearing for the evidence's own meaning.

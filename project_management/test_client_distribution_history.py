@@ -6,6 +6,7 @@ Review/comments/numbering (future lots, deliberately not covered).
 from datetime import timedelta
 from unittest import mock
 
+from django.db import connection
 from django.http import Http404
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -86,7 +87,9 @@ class ClientIssueLabelTests(ClientDistributionHistoryTestBase):
         item = finalized.items.get()
         # Simulate a pre-HISTORY-1 historical row (section 11): client_issue was never set.
         item.client_issue = None
-        item.save(update_fields=["client_issue"])
+        # Build a pre-ClientIssue historical fixture without weakening issued-item immutability.
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE ' + connection.ops.quote_name(item._meta.db_table) + ' SET client_issue_id = NULL WHERE id = %s', [item.pk])
         result = list_client_distribution_history(revision.document)[0]
         self.assertIsNone(result["client_issue_id"])
         self.assertIsNone(result["client_revision_label"])
@@ -103,10 +106,24 @@ class DeadlineTests(ClientDistributionHistoryTestBase):
         finalized = self.issue(revision, purpose="FOR_REVIEW")
         item = finalized.items.get()
         item.review_due_date = item.review_due_date - timedelta(days=100)
-        item.save(update_fields=["review_due_date"])
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE ' + connection.ops.quote_name(item._meta.db_table) + ' SET review_due_date = %s WHERE id = %s', [item.review_due_date, item.pk])
         result = list_client_distribution_history(revision.document)[0]
         self.assertIsNotNone(result["review_due_date"])
+        # GED-WF.4.4-B (D4): the item's date alone is never an active delay; only an OPEN surveillance's due_at is.
+        self.assertFalse(result["is_overdue"])
+        from django.utils import timezone
+        from project_management.models import ClientSurveillance
+        surveillance = ClientSurveillance.objects.create(
+            client_issue_id=result["client_issue_id"], status=ClientSurveillance.Status.UNDER_REVIEW,
+            due_at=timezone.now() - timedelta(days=2))
+        result = list_client_distribution_history(revision.document)[0]
+        self.assertEqual(result["due_at"], surveillance.due_at)
         self.assertTrue(result["is_overdue"])
+        ClientSurveillance.objects.filter(pk=surveillance.pk).update(status=ClientSurveillance.Status.CLOSED)
+        result = list_client_distribution_history(revision.document)[0]
+        self.assertFalse(result["is_overdue"])  # a closed surveillance is never an active delay
+        self.assertFalse(result["due_active"])
 
     def test_for_information_has_no_review_deadline(self):
         revision = self.make_approved_internal_revision()
@@ -243,7 +260,9 @@ class ActualClientRecipientTests(ClientDistributionHistoryTestBase):
         finalized = self.issue(revision)
         item = finalized.items.get()
         item.client_issue = None
-        item.save(update_fields=["client_issue"])
+        # Build a pre-ClientIssue historical fixture without weakening issued-item immutability.
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE ' + connection.ops.quote_name(item._meta.db_table) + ' SET client_issue_id = NULL WHERE id = %s', [item.pk])
 
         results = list_client_distribution_history(revision.document)
         self.assertEqual(len(results), 1)

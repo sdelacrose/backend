@@ -127,23 +127,7 @@ GC_PROJECT_TYPES = [
 ]
 LEGACY_GC_PROJECT_TYPES = ["Angebot", "iSFP", "Dachsanierung", "Other Project"]
 GC_PROJECT_PRIORITY_LEVELS = ["Very Low","Low", "Medium", "High", "Very High"]
-GC_DOCUMENT_STATUSES = [
-    "Draft",
-    "Under review",
-    "Submitted",
-    "Approved",
-    "Sent",
-    "To be updated",
-    "For construction (IFC)",
-    "Issued",
-    "Revised",
-    "Final",
-    "As-Built",
-    "On Hold",
-    "Cancelled",
-    "Archived",
-    "Other",
-]
+GC_DOCUMENT_STATUSES = ["PREL", "BPE"]
 GC_DOCUMENT_INTERNAL_REVIEW_STATUSES = [
     "In progress",
     "Approved",

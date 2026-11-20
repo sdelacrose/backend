@@ -52,3 +52,41 @@ def can_stop_workflow(user, workflow):
     document = workflow.revision.document
     return bool(user and user.is_authenticated and workflow.is_active and
                 user.pk in (workflow.author_id, document.created_by_id) and can_update_document(user, document))
+
+
+# GED-WF.1.1: dedicated validation right. It only lets the ASSIGNED actor of the current step sign,
+# verify, approve or reject (the assignment is checked in services.document_workflow); it never
+# authorises editing a document, its metadata, files or revisions, and documents.update alone never
+# authorises a validation. documents.full_access is honoured as the superior right, as everywhere else
+# in Documents, at the scope of the document (company library or project).
+VALIDATE_PERMISSION_KEY = "documents.validate"
+VALIDATION_ACTIONS = ("SIGN", "VALIDATE", "APPROVE", "REJECT")
+
+
+def can_validate_document(user, document):
+    if not user or not user.is_authenticated or not user.is_active or document is None:
+        return False
+    from project_management.permissions import DocumentPermission
+
+    checker = DocumentPermission(action="validate", scope="mixed")
+    if checker.is_company_document(document):
+        scope, context = "company", {}
+    else:
+        scope = "project"
+        context = checker._get_context(request=None, view=None, scope="project", obj=document)
+    return bool(
+        checker._check_permission(user, "documents", "validate", scope, context)
+        or checker._check_permission(user, "documents", "full_access", scope, context)
+    )
+
+
+def assert_can_validate_document(user, document):
+    """Write-side guard of the validation actions, run after the document access check (404)."""
+    if not can_validate_document(user, document):
+        raise PermissionDenied("You do not have permission to validate this Document.")
+    from rest_framework.exceptions import ValidationError as ApiValidationError
+
+    from project_management.services.document_withdrawal import WITHDRAWN_MESSAGE, is_withdrawn
+
+    if is_withdrawn(document):
+        raise ApiValidationError({"detail": WITHDRAWN_MESSAGE})

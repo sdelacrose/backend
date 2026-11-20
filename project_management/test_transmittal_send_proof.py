@@ -142,7 +142,10 @@ class TransmittalProofTests(TransmittalTestBase):
         grant_transmittal_project_permissions(self.owner,self.project,self.company,actions)
 
     def test_api_requires_project_permission(self):
-        self.sent(); self.assertEqual(self.request('list',self.approver).status_code,403)
+        self.sent()
+        from project_management.models import ProjectTeamMembers  # GED-SEC.2 (SEC-06): a member without the right is refused with 403
+        ProjectTeamMembers.objects.get_or_create(project=self.project,team_member=self.approver,defaults={'role':'Member','project_access':'RW'})
+        self.assertEqual(self.request('list',self.approver).status_code,403)
 
     def test_api_lists_no_storage_path(self):
         self.sent(); self.grant();response=self.request('list')
@@ -204,7 +207,7 @@ class TransmittalProofTests(TransmittalTestBase):
         from models.models import User
         stranger=User.objects.create_user(email='foreign-archive@test.invalid',first_name='Other',last_name='Tenant',title='Mr',user_type='company_user',company=self.other_company)
         grant_transmittal_project_permissions(stranger,self.other_tenant_project,self.other_company,('view','issue'))
-        self.assertEqual(self.request('list',stranger).status_code,403)
+        self.assertEqual(self.request('list',stranger).status_code,404)  # GED-SEC.2 (SEC-06): another tenant -> 404
 
     @override_settings(TRANSMITTAL_PROOF_ENABLED=False)
     def test_disabled_api_does_not_access_proof_table(self):

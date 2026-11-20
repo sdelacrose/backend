@@ -23,7 +23,7 @@ CREATE_ONLY_FIELDS = (
 
 class MailboxImportRequestSerializer(serializers.Serializer):
     reference = serializers.CharField(max_length=4096)
-    project = serializers.IntegerField(min_value=1)
+    project = serializers.IntegerField(min_value=1, required=False, allow_null=True)
     mode = serializers.ChoiceField(choices=(MODE_CREATE, MODE_ATTACH, MODE_COMPLETE))
     # The signed references of the attachments the user chose in the preview; nothing else is imported.
     attachments = serializers.ListField(
@@ -65,7 +65,7 @@ class MailboxImportView(APIView):
         data = serializer.validated_data
         try:
             result = import_message(
-                request, reference=data["reference"], project_id=data["project"], mode=data["mode"],
+                request, reference=data["reference"], project_id=data.get("project"), mode=data["mode"],
                 target_id=data.get("target_correspondence"),
                 fields={name: data.get(name) for name in CREATE_ONLY_FIELDS},
                 attachment_references=data.get("attachments") or [],
