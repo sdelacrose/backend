@@ -81,6 +81,9 @@ STATIC_URL = "/static/"
 STATIC_ROOT = _DATA_DIR / "static"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = _DATA_DIR / "media"
+# Persist private supplier files in the existing data volume, outside public media.
+# The package default is under BASE_DIR, which is the disposable API container.
+SUPPLIER_SHARED_STORAGE_ROOT = _DATA_DIR / "private_supplier_shared"
 
 # No real e-mail, no external notification, no scheduler.
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
