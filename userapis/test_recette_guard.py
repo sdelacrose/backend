@@ -43,6 +43,7 @@ def _send(**overrides):
     check_send_allowed(**kwargs)
 
 
+@override_settings(RECETTE_MODE=False)
 class OutsideRecetteTests(SimpleTestCase):
     def test_guard_is_inert_outside_recette(self):
         _send(sender_address="anyone@real-company.com", to="client@real-company.com", provider="smtp")

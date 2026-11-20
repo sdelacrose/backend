@@ -45,6 +45,27 @@ def _assignee_or_creator(user) -> Q:
     return Q(assignees=user) | Q(created_by=user)
 
 
+# Actions / Interventions separation. An "intervention action" is any action born from an intervention
+# request: the mother, its sub-actions (also those added by hand under the mother) and the flat actions of
+# older requests (before the mother/sub-action model). The Actions screens ask for `scope=classic`, the
+# Interventions screens for `scope=interventions`; without the parameter nothing is filtered (other
+# consumers, e.g. time booking, keep seeing every action they are allowed to see).
+INTERVENTION_SCOPE_Q = Q(intervention_request__isnull=False) | Q(
+    parent_action_item__intervention_request__isnull=False
+)
+SCOPE_CLASSIC = "classic"
+SCOPE_INTERVENTIONS = "interventions"
+
+
+def apply_action_scope(queryset: QuerySet, scope) -> QuerySet:
+    value = str(scope or "").strip().lower()
+    if value == SCOPE_INTERVENTIONS:
+        return queryset.filter(INTERVENTION_SCOPE_Q)
+    if value == SCOPE_CLASSIC:
+        return queryset.exclude(INTERVENTION_SCOPE_Q)
+    return queryset
+
+
 @dataclass(frozen=True)
 class ActionItemVisibility:
     queryset: QuerySet
@@ -242,7 +263,52 @@ class ActionItemFilterService:
         self.params = params
         self.search = str(params.get("search") or "").strip()
 
+    # --- Interventions space: the "closed interventions" toggle acts on the INTERVENTIONS only ---------------------
+    # `show_closed` hides / includes closed mothers (and older flat requests, grouped by request); a visible mother
+    # keeps ALL its sub-actions, open or closed: the toggle never hides a sub-action. An explicit status filter or a
+    # closure-date filter keeps its usual meaning, and the classic Actions space is untouched.
+    def _closed_rule_is_implicit(self) -> bool:
+        if str(self.params.get("scope") or "").strip().lower() != "interventions":
+            return False
+        if self._date_any("closure_date_after", "closed_at_from") or self._date_any(
+            "closure_date_before", "closed_at_to"
+        ):
+            return False
+        if any(self._normalize_status(value) for value in self._values("status") if value):
+            return False
+        return str(self.params.get("bucket") or "").strip().lower() != "done"
+
+    def _intervention_closed_rule(self) -> Q:
+        """Top-level rows (mothers and older flat actions) shown for the current toggle position."""
+        if self._truthy("show_closed"):
+            return Q()
+        # an older request counts as ONE intervention: its flat actions stay together while one of them is open
+        open_flat_requests = (
+            ActionItem.objects.filter(
+                parent_action_item__isnull=True, intervention_request__isnull=False
+            )
+            .exclude(intervention_action_key="mother")
+            .exclude(status__iexact="closed")
+            .values("intervention_request_id")
+        )
+        return ~Q(status__iexact="closed") | (
+            Q(intervention_request__isnull=False)
+            & ~Q(intervention_action_key="mother")
+            & Q(intervention_request_id__in=open_flat_requests)
+        )
+
     def filter_tree(self, parents: QuerySet) -> QuerySet:
+        if self._closed_rule_is_implicit():
+            parent_predicate = self._predicate(is_child=False, skip_status=True)
+            child_predicate = self._predicate(is_child=True, skip_status=True)
+            if parent_predicate.children or child_predicate.children:
+                matching_children = ActionItem.objects.filter(
+                    parent_action_item_id=OuterRef("pk")
+                ).filter(child_predicate)
+                parents = parents.annotate(
+                    _action_item_has_matching_child=Exists(matching_children)
+                ).filter(parent_predicate | Q(_action_item_has_matching_child=True))
+            return parents.filter(self._intervention_closed_rule()).distinct()
         parent_predicate = self._predicate(is_child=False)
         child_predicate = self._predicate(is_child=True)
         if not parent_predicate.children and not child_predicate.children:
@@ -260,6 +326,10 @@ class ActionItemFilterService:
         )
 
     def filter_children(self, children: QuerySet) -> QuerySet:
+        if self._closed_rule_is_implicit():
+            return children.filter(
+                self._predicate(is_child=True, skip_status=True)
+            ).distinct()
         return children.filter(self._predicate(is_child=True)).distinct()
 
     def filter_flat(self, action_items: QuerySet) -> QuerySet:
@@ -319,7 +389,7 @@ class ActionItemFilterService:
             target_date__gte=range_start,
         )
 
-    def _predicate(self, *, is_child: bool | None) -> Q:
+    def _predicate(self, *, is_child: bool | None, skip_status: bool = False) -> Q:
         predicate = Q()
         if self.search:
             predicate &= (
@@ -327,7 +397,8 @@ class ActionItemFilterService:
                 | Q(name__icontains=self.search)
                 | Q(status__icontains=self.search)
             )
-        predicate &= self._status_predicate()
+        if not skip_status:
+            predicate &= self._status_predicate()
         predicate &= self._date_predicate()
         predicate &= self._relation_predicate(is_child=is_child)
         return predicate
@@ -553,6 +624,8 @@ class ActionItemOrderingService:
         "start_date": "start_date",
         "target_date": "target_date",
         "forecast_date": "forecast_date",
+        # customer deadline - own forecast date in days (alias built by the view); NULLs are sorted last
+        "margin_days": "margin_days_sort",
         "closed_at": "closed_at",
         "priority_level": "priority_level",
         "created_at": "created_at",
@@ -700,15 +773,23 @@ class ActionItemQueryService:
             "parent_action_item__milestone__project",
             "created_by",
             "closed_by",
+            "progress_setting",  # list "Progress" column: points of the sub-actions, no query per row
         ).prefetch_related("assignees", "opportunities")
 
         return (
             cls._with_list_annotations(parents)
-            .select_related("milestone", "created_by", "closed_by")
+            .select_related("milestone", "created_by", "closed_by", "intervention_request")
             .select_related("milestone__project")
             .prefetch_related(
                 "assignees",
                 "opportunities",
+                # progress of a mother = ALL its sub-actions (closed ones, and those a restricted user cannot
+                # see, included), loaded once for the page: the visible children below are not enough
+                Prefetch(
+                    "sub_action_items",
+                    queryset=ActionItem.objects.select_related("progress_setting").order_by("id"),
+                    to_attr="progress_children",
+                ),
                 Prefetch(
                     "sub_action_items",
                     queryset=child_queryset.order_by("id"),

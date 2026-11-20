@@ -95,11 +95,25 @@ class UserSerializer(serializers.ModelSerializer):
             'main_area_of_expertise', 'sub_area_of_expertise',
         ]
 
+    def validate_user_image(self, value):
+        # GED-SEC.08.2-B0.3: a user's avatar is changed by that user only, to nothing, to what it already is, or to
+        # the finalised avatar upload of that user (see services/upload_reference.py).
+        request = self.context.get("request")
+        if request is None or not getattr(request.user, "is_authenticated", False):
+            return value  # internal use without a request (imports, seeds): not an upload from a browser
+        from project_management.services.upload_reference import INVALID, bind_public_url
+        from rest_framework import serializers as drf_serializers
+
+        current = self.instance.user_image if self.instance else None
+        if self.instance is not None and self.instance.pk != request.user.pk and value != current:
+            raise drf_serializers.ValidationError(INVALID)
+        return bind_public_url(request.user, "user_avatar", value, current=current)
+
     def get_availability(self, obj):
         return not Project.objects.filter(team_members__team_member=obj.id, project_status='In progress').exists()
 
     def get_staff_id(self, obj):
-        return obj.staff.id if obj.staff else None
+        return getattr(getattr(obj, "staff", None), "pk", None)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)

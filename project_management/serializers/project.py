@@ -124,6 +124,18 @@ class ProjectSerializer(serializers.ModelSerializer):
             for machine in obj.machines.all().order_by("sort_order", "id")
         ]
 
+    def validate_project_image(self, value):
+        # GED-SEC.08.2-B0.3: nothing, the value the project already holds, or the finalised upload of this user
+        # for this project image (see services/upload_reference.py); any other URL is refused.
+        request = self.context.get("request")
+        if request is None or not getattr(request.user, "is_authenticated", False):
+            return value  # internal use without a request (imports, seeds): not an upload from a browser
+        from project_management.services.upload_reference import bind_public_url
+
+        current = self.instance.project_image if self.instance else None
+        project_id = self.instance.pk if self.instance else None
+        return bind_public_url(request.user, "project_image", value, current=current, project_id=project_id)
+
     def validate_project_code(self, value):
         # Proposed automatically when blank; editable only until the first document of the
         # project has a permanent reference (then locked, derived from the documents).

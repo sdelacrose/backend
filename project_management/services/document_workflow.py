@@ -77,8 +77,13 @@ def annotate_current_workflow(queryset):
     current_revision = DocumentRevision.objects.filter(
         document=OuterRef("pk")
     ).order_by("-created_at", "-id")
+    # B1 / LOT 1: the approval status and the official label describe the CURRENT LOGICAL revision (the newest ordinary
+    # row): a technical BPE version has no workflow of its own and must not turn the document back into a draft.
+    # current_revision_id stays the latest PHYSICAL row (file, client cycle, supplier flags: unchanged).
+    from project_management.services.document_logical_version import logical_annotations
+    logical_revision, logical_count = logical_annotations(OuterRef("pk"))
     latest_workflow = DocumentWorkflow.objects.filter(
-        revision=OuterRef("current_revision_id")
+        revision=OuterRef("logical_revision_id")
     ).order_by("-created_at", "-id")
     expected = Case(
         When(status=Status.DRAFT, then=F("author_id")),
@@ -88,14 +93,16 @@ def annotate_current_workflow(queryset):
         output_field=IntegerField(),
     )
     return queryset.annotate(
-        current_revision_id=Subquery(current_revision.values("pk")[:1])
+        current_revision_id=Subquery(current_revision.values("pk")[:1]),
+        logical_revision_id=Subquery(logical_revision.values("pk")[:1]),
+        logical_version_number=logical_count,
     ).annotate(
-        # Official Revision of the CURRENT version (null until it is approved).
-        current_revision_label=Subquery(current_revision.values("revision_label")[:1]),
-        # D13: the external issuer's own revision designation of the CURRENT version
+        # Official Revision of the CURRENT LOGICAL version (null until it is approved).
+        current_revision_label=Subquery(logical_revision.values("revision_label")[:1]),
+        # D13: the external issuer's own revision designation of the CURRENT logical version
         # (Supplier/Client origin, primarily).
         current_external_revision=Subquery(
-            current_revision.values("external_revision")[:1]
+            logical_revision.values("external_revision")[:1]
         ),
         wf_status=Subquery(latest_workflow.values("status")[:1]),
         wf_expected_actor_id=Subquery(
@@ -149,12 +156,15 @@ def get_internal_status(document):
     current = get_current_revision(document)
     if current is None and not document.file:
         return INTERNAL_TO_CREATE
+    # B1 / LOT 1: the workflow of the CURRENT LOGICAL revision (a technical BPE version has none and is not a draft)
+    from project_management.services.document_logical_version import get_current_logical_revision
+    logical = get_current_logical_revision(document) if current else None
     latest = (
-        DocumentWorkflow.objects.filter(revision=current)
+        DocumentWorkflow.objects.filter(revision=logical)
         .order_by("-created_at", "-id")
         .values_list("status", flat=True)
         .first()
-        if current
+        if logical
         else None
     )
     return internal_status_from_workflow_status(latest)
@@ -302,6 +312,9 @@ def start_workflow(
     """
     _assert_document_not_withdrawn(revision.document)
     assert_internal_origin(revision.document)
+    if revision.index_revision_id:
+        # SURVEILLANCE LOT 2 (code A): the technical BPE version of an approved index is never validated again.
+        raise ValidationError("This BPE version belongs to an index that is already approved: it needs no new internal validation.")
     workflow_type = resolve_workflow_type(revision.document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
     if workflow_type == WorkflowType.TWO_STEP:
@@ -425,6 +438,9 @@ def perform_action(workflow, actor, action, comment):
 
             assign_revision_label(locked.revision)
             record_approval_evidence(locked.revision, locked)
+            # LOT 1: trace for a revision born from a client return (never blocks the approval)
+            from project_management.services.client_surveillance_followup import on_revision_approved_safely
+            on_revision_approved_safely(locked.revision)
         schedule_workflow_notification(locked)
         return locked
 

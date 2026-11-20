@@ -6,6 +6,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 env = environ.Env()
 environ.Env.read_env(".env.local")
 
+# Supplier portal V1: activation follows schema and account validation, never migration import.
+SUPPLIER_PORTAL_ENABLED = env.bool('SUPPLIER_PORTAL_ENABLED', default=False)
+SUPPLIER_REGISTER_ENABLED = env.bool('SUPPLIER_REGISTER_ENABLED', default=False)
+SUPPLIER_PORTAL_MAX_FILE_BYTES = env.int('SUPPLIER_PORTAL_MAX_FILE_BYTES', default=50 * 1024 * 1024)
+
 
 for key, value in env.ENVIRON.items():
     os.environ[key] = value
@@ -57,6 +62,7 @@ INSTALLED_APPS = [
     "userapis",
     "companyprofileapis",
     "project_management",
+    "supplier_portal",
     "ai_tools",
     "aas_integration",
     "project_content.apps.ProjectContentConfig",

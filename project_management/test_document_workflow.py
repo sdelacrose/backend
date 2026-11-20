@@ -251,7 +251,8 @@ class WorkflowApiTests(WorkflowTestBase):
 
     ACCESS = "project_management.views.document_workflow.get_register_document_or_404"
     CAN_UPDATE = "project_management.views.document_workflow.assert_can_update_document"
-    ALLOWED = "project_management.views.document_workflow.get_allowed_owner_queryset"
+    CAN_VALIDATE = "project_management.views.document_workflow.assert_can_validate_document"
+    ALLOWED ="project_management.views.document_workflow.get_allowed_owner_queryset"
 
     def call(self, method, user, data=None, action_view=False, revision_id=None):
         mapping = {"post": "act"} if action_view else {"get": "retrieve", "post": "start"}
@@ -279,6 +280,7 @@ class WorkflowApiTests(WorkflowTestBase):
         stack = [
             patch(self.ACCESS, return_value=self.document),
             patch(self.CAN_UPDATE),
+            patch(self.CAN_VALIDATE),
             patch(self.ALLOWED, return_value=User.objects.all()),
         ]
         for p in stack:
@@ -350,9 +352,40 @@ class WorkflowApiTests(WorkflowTestBase):
             self.assertEqual(self.call("post", self.creator, self.payload()).status_code, 403)
         self.assertFalse(DocumentWorkflow.objects.exists())
 
+    def test_management_actions_need_the_update_permission_and_validation_does_not(self):
+        # GED-WF.1.1: replacing an actor and stopping keep the update right; validating does not need it.
+        workflow = self.start(THREE)
+        events = workflow.events.count()
+        with patch(self.ACCESS, return_value=self.document), patch(
+            self.CAN_UPDATE, side_effect=PermissionDenied
+        ), patch(self.CAN_VALIDATE):
+            for action in ("CHANGE_VERIFIER", "STOP"):
+                response = self.call(
+                    "post", self.alice, {"action": action, "comment": "c", "new_actor": self.dave.pk}, action_view=True
+                )
+                self.assertEqual(response.status_code, 403, action)
+            self.assertEqual(workflow.events.count(), events)
+            signed = self.call("post", self.alice, {"action": "SIGN", "comment": "c"}, action_view=True)
+            self.assertEqual(signed.status_code, 200)
+            self.assertEqual(signed.data["status"], "VERIFY")
+
+    def test_validation_actions_need_the_validate_permission_whatever_the_update_right(self):
+        workflow = self.start(THREE)
+        events = workflow.events.count()
+        with patch(self.ACCESS, return_value=self.document), patch(self.CAN_UPDATE), patch(
+            self.CAN_VALIDATE, side_effect=PermissionDenied
+        ):
+            for action in ("SIGN", "VALIDATE", "APPROVE", "REJECT"):
+                response = self.call("post", self.alice, {"action": action, "comment": "c"}, action_view=True)
+                self.assertEqual(response.status_code, 403, action)
+        workflow.refresh_from_db()
+        self.assertEqual(workflow.status, Status.DRAFT)
+        self.assertEqual(workflow.events.count(), events)
+
     def test_api_refuses_start_on_old_revision_without_events(self):
         self.everything_allowed()
         response = self.call("post", self.creator, self.payload(), revision_id=self.previous_revision.pk)
         self.assertEqual(response.status_code, 400)
         self.assertFalse(DocumentWorkflow.objects.exists())
         self.assertFalse(DocumentWorkflowEvent.objects.exists())
+

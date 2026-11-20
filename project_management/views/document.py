@@ -200,6 +200,12 @@ class FolderViewSet(viewsets.ModelViewSet):
             if len(name_param) == 2 and name_param[1] == 'root_folder':
                 project_id = name_param[0]
                 print(f'[DEBUG] FolderViewSet: get_queryset: project_id: {project_id}')
+        if project_id is None and self.action == 'search_folders':
+            # SEC-01: the folder search carries its project in `project_id`, so the project-scoped
+            # permission checks below must be evaluated for that project.
+            raw_project_id = self.request.query_params.get('project_id')
+            if raw_project_id and str(raw_project_id).isdigit():
+                project_id = raw_project_id
 
         if user.is_anonymous:
             return Folder.objects.none()
@@ -409,52 +415,73 @@ class FolderViewSet(viewsets.ModelViewSet):
         if (not project_id and not company_profile_id and not freelancer_id) or not search_term:
             return Response({'error': 'root_folder_name and search_term are required'}, status=400)
 
+        # SEC-01: every id is validated, and every queryset below starts from the scoped
+        # visibility helpers (folders: get_queryset, documents: get_accessible_document_queryset),
+        # never from Folder.objects / Document.objects.
+        user = request.user
         project = None
         company_profile = None
         freelancer = None
+        scoped_project_id = None
         if project_id:
-            try:
-                project = get_object_or_404(Project, pk=project_id)
-                # TODO: Adjust as per new permission system
-                # if not has_project_permission(self.request.method, self.request.user, project, get_product_name_from_request(request)):
-                #     raise PermissionDenied("You do not have permission to perform this action.")
-            except Project.DoesNotExist:
+            if not str(project_id).isdigit():
+                return Response({'error': 'Invalid Project ID'}, status=400)
+            scoped_project_id = int(project_id)
+            project = Project.objects.filter(pk=scoped_project_id).first()
+            if project is None:
                 return Response({'error': 'Invalid Project ID'}, status=404)
         elif company_profile_id:
-            try:
-                company_profile = get_object_or_404(CompanyProfile, pk=company_profile_id)
-                if self.request.user.is_freelancer or self.request.user.company != company_profile:
-                    raise PermissionDenied("You do not have permission to search company documents.")
-            except CompanyProfile.DoesNotExist:
+            if not str(company_profile_id).isdigit():
+                return Response({'error': 'Invalid CompanyProfile ID'}, status=400)
+            company_profile = CompanyProfile.objects.filter(pk=int(company_profile_id)).first()
+            if company_profile is None:
                 return Response({'error': 'Invalid CompanyProfile ID'}, status=404)
+            if user.is_freelancer or user.company != company_profile:
+                raise PermissionDenied("You do not have permission to search company documents.")
         elif freelancer_id:
-            try:
-                freelancer = get_object_or_404(User, pk=freelancer_id)
-                if not self.request.user.is_freelancer or self.request.user != freelancer:
-                    raise PermissionDenied("You do not have permission to search freelancer documents.")
-            except User.DoesNotExist:
+            if not str(freelancer_id).isdigit():
+                return Response({'error': 'Invalid Freelancer ID'}, status=400)
+            freelancer = User.objects.filter(pk=int(freelancer_id)).first()
+            if freelancer is None:
                 return Response({'error': 'Invalid Freelancer ID'}, status=404)
+            if not user.is_freelancer or user != freelancer:
+                raise PermissionDenied("You do not have permission to search freelancer documents.")
+
+        visible_folders = self.get_queryset()
         try:
             if project:
-                root_folder = Folder.objects.get(project=project, name=f"{project_id}_root_folder", parent=None)
+                root_folder = visible_folders.get(project=project, name=f"{project.pk}_root_folder", parent=None)
             elif company_profile:
-                root_folder = Folder.objects.get(company_profile=company_profile, name=f"{company_profile_id}_company_root_folder", parent=None)
+                root_folder = visible_folders.get(company_profile=company_profile, name=f"{company_profile.pk}_company_root_folder", parent=None)
             elif freelancer:
-                root_folder = Folder.objects.get(freelancer=freelancer, name=f"{freelancer_id}_freelancer_root_folder", parent=None)
+                root_folder = visible_folders.get(freelancer=freelancer, name=f"{freelancer.pk}_freelancer_root_folder", parent=None)
         except (ValueError, Folder.DoesNotExist):
+            # A project the user cannot see is indistinguishable from a missing one (404).
+            # Only a project the user belongs to, without the documents view right, is refused (403).
+            if project and Project.objects.filter(pk=project.pk, team_members__team_member=user).exists():
+                if not DocumentPermission('view', 'project')._check_view_permission_project(
+                    user, None, {'project': project}
+                ):
+                    raise PermissionDenied("You do not have permission to perform this action.")
+            elif company_profile and not DocumentPermission('view', 'company')._check_view_permission(user, None, {}):
+                raise PermissionDenied("You do not have permission to perform this action.")
             return Response({'error': 'Invalid root folder'}, status=404)
 
-        # Search for matching folders and documents
+        # Search for matching folders and documents (scoped querysets, filtered in the database)
+        accessible_documents = get_accessible_document_queryset(
+            request, project_id=scoped_project_id if project else None
+        )
+        text_filter = Q(file__icontains=search_term) | Q(file_name__icontains=search_term)
         if project:
-            matching_folders = Folder.objects.filter(name__icontains=search_term, project_id=project_id)
-            matching_documents = Document.objects.filter(Q(file__icontains=search_term) | Q(file_name__icontains=search_term), folder__project_id=project_id)
+            matching_folders = visible_folders.filter(name__icontains=search_term, project_id=project.pk)
+            matching_documents = accessible_documents.filter(text_filter, folder__project_id=project.pk)
         elif company_profile:
-            matching_folders = Folder.objects.filter(name__icontains=search_term, company_profile=company_profile)
-            matching_documents = Document.objects.filter(Q(file__icontains=search_term) | Q(file_name__icontains=search_term), folder__company_profile=company_profile)
+            matching_folders = visible_folders.filter(name__icontains=search_term, company_profile=company_profile)
+            matching_documents = accessible_documents.filter(text_filter, folder__company_profile=company_profile)
         elif freelancer:
-            matching_folders = Folder.objects.filter(name__icontains=search_term, freelancer=freelancer)
-            matching_documents = Document.objects.filter(Q(file__icontains=search_term) | Q(file_name__icontains=search_term), folder__freelancer=freelancer)
-            
+            matching_folders = visible_folders.filter(name__icontains=search_term, freelancer=freelancer)
+            matching_documents = accessible_documents.filter(text_filter, folder__freelancer=freelancer)
+
         # Create a structure to store folder hierarchy
         folder_structure = {}
         for folder in matching_folders:
@@ -619,6 +646,9 @@ class DocumentViewSet(viewsets.ModelViewSet):
         # FINISH-C: Input Data's Date Received column -- a plain nullable DateField, same
         # ordering treatment as the other plain columns above, no annotation needed.
         "received_date",
+        # GED-WF.4.4-A: client due date / retained result (annotated only when asked, see get_queryset)
+        "client_due_at",
+        "client_result",
     ]
     ordering_text_fields = {
         "file_name",
@@ -649,6 +679,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
         serializer.context['include_linked_items'] = self.request.query_params.get('include_linked_items', 'true').lower() == 'true'
         serializer.context['include_control'] = True
         serializer.context['include_detail'] = self.action == 'retrieve'
+        # GED-WF.4.4-A: client result/due date of the listed page, preloaded (None = single-object fallback)
+        serializer.context['client_register_map'] = getattr(self, '_client_register_map', None)
         return serializer
 
     def get_permissions(self):
@@ -818,6 +850,10 @@ class DocumentViewSet(viewsets.ModelViewSet):
             # L3F: Internal/Supplier/Client Register control status -- same correlated-subquery,
             # no-N+1 pattern as annotate_current_workflow above (idempotent, safe to chain).
             queryset = annotate_register_control_status(queryset)
+            # GED-WF.4.4-A: sort keys of the client due date / result, only when the sort is requested
+            if any(key in self.request.query_params.get('ordering', '') for key in ('client_due_at', 'client_result')):
+                from project_management.services.client_register_results import annotate_client_sort_keys
+                queryset = annotate_client_sort_keys(queryset)
         return queryset.select_related(
             "control", "control__approver", "created_by", "folder__project", "external_issuer_company"
         ).annotate(
@@ -895,6 +931,8 @@ class DocumentViewSet(viewsets.ModelViewSet):
         # Check pagination
         page = self.paginate_queryset(queryset)
         if page is not None:
+            from project_management.services.client_register_results import build_client_register_map
+            self._client_register_map = build_client_register_map(page)
             print(f'[DEBUG] DocumentViewSet: list: paginated count: {len(page)}')
             serializer = self.get_serializer(page, many=True)
             print(f'[DEBUG] DocumentViewSet: list: serializer data length: {len(serializer.data)}')

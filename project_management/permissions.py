@@ -1281,6 +1281,11 @@ class TransmittalPermission(DocumentaryOwnerPermissionMixin, BaseModulePermissio
         ) or self._check_permission(user, self.module, 'full_access', scope, context)
 
     def has_permission(self, request, view):
+        # SEC-07: TransmittalViewSet.get_permissions() replaces the default IsAuthenticated, so an
+        # anonymous request used to reach get_queryset() and fail with an AttributeError (HTTP 500).
+        # Refusing here yields the standard 401 (NotAuthenticated) for every Transmittal endpoint.
+        if not getattr(request.user, 'is_authenticated', False):
+            return False
         if request.method == 'POST' and getattr(view, 'action', None) == 'create':
             project = None
             project_id = request.data.get('project')
@@ -1914,7 +1919,13 @@ class ObjectAssessmentPermission(BaseModulePermission):
     def can_update_object(self, user, obj):
         context = {"project": obj.project}
         return self._check_update_permission_project(user, obj, context)
-    
+
+    def can_view_object(self, user, obj):
+        # GED-SEC.08.2-A2.3a: the exact object-level read rule of `has_object_permission`, but independent of the
+        # HTTP verb (HEAD included), so the file download can answer one uniform 404 to every refusal.
+        context = {"project": obj.project}
+        return self._check_view_permission_project(user, obj, context)
+
     def _get_context(self, request, view, scope, obj=None):
         """
         Get context for permission checking.

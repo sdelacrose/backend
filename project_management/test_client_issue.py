@@ -25,6 +25,24 @@ class CreationOnFinalizationTests(TransmittalTestBase):
         self.assertIsNone(item.client_issue.client_revision_label)
         self.assertEqual(ClientIssue.objects.count(), 1)
 
+    def test_distribution_freezes_planned_client_revision_and_resend_keeps_it(self):
+        revision = self.make_approved_internal_revision()
+        revision.document.planned_client_revision = 'C1'
+        revision.document.save(update_fields=['planned_client_revision'])
+        first = self.create_transmittal()
+        add_transmittal_item(first, revision, 'FOR_REVIEW', self.owner)
+        finalize_transmittal(first, self.owner)
+        issue = first.items.get().client_issue
+        self.assertEqual(issue.client_revision_label, 'C1')
+        revision.document.planned_client_revision = 'C2'
+        revision.document.save(update_fields=['planned_client_revision'])
+        second = self.create_transmittal()
+        add_transmittal_item(second, revision, 'FOR_REVIEW', self.owner)
+        finalize_transmittal(second, self.owner)
+        issue.refresh_from_db()
+        self.assertEqual(second.items.get().client_issue_id, issue.pk)
+        self.assertEqual(issue.client_revision_label, 'C1')
+
     def test_failed_finalization_creates_no_orphan_client_issue(self):
         transmittal = self.create_transmittal()
         # No items at all -> finalize_transmittal raises before any ClientIssue work.

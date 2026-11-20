@@ -25,9 +25,29 @@ from project_management.views.correspondence_workflow import (
 )
 from project_management.views.correspondence_send import CorrespondenceSendViewSet
 from project_management.views.correspondence_template import CorrespondenceTemplateViewSet
+from project_management.views.action_template import (
+    ActionItemWeightedProgressView,
+    ActionTemplateDetailView,
+    ActionTemplateListView,
+    ActionTemplateLookupView,
+)
+from project_management.views.intervention import (
+    InterventionImportBatchView,
+    InterventionImportConfirmView,
+    InterventionImportPreviewView,
+    InterventionImportRowView,
+    InterventionImportTemplatesView,
+    InterventionRequestDetailView,
+    InterventionRequestListView,
+    InterventionSubActionsView,
+)
 from project_management.views.transmittal import (
+    TransmittalConfirmReceiptView,
+    TransmittalDocumentMatchView,
     TransmittalEventViewSet,
     TransmittalIssueView,
+    TransmittalReceiptCheckView,
+    TransmittalReceiptLineViewSet,
     TransmittalItemViewSet,
     TransmittalViewSet,
 )
@@ -36,10 +56,14 @@ from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.client_distribution_history import ClientDistributionHistoryView
 from project_management.views.document_history_events import DocumentHistoryEventsView
 from project_management.views.document_workflow import DocumentWorkflowViewSet
-from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet
+from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet, InternalSupplierEvidenceDownload
+from project_management.views.supplier_portal import (SupplierPortalDocuments, SupplierPortalDocument,
+    SupplierPortalDownload, SupplierPortalAccess, SupplierPortalPublish)
 from project_management.views.supplier_surveillance_template import SupplierSurveillanceTemplateViewSet
 from project_management.views.document_type_review_duration import DocumentReviewDurationViewSet
+from project_management.views.client_surveillance_code import ClientSurveillanceCodeViewSet
 from project_management.views.supplier_surveillance_review import SupplierSurveillanceReviewViewSet
+from project_management.views.supplier_review_annotations import SupplierReviewAnnotationViewSet
 from project_management.views.document_search import (
     DocumentContentSearchAPIView,
     DocumentIndexBackfillAPIView,
@@ -61,6 +85,7 @@ from project_management.views.catalog_recommendation import CatalogRecommendatio
 from project_management.views import GlobalConfigListView
 
 from project_management.views.crm import CrmInteractionViewSet
+from project_management.views.secure_upload import UploadFinalizeView, UploadPrepareView, UploadReadView
 
 router = OptionalSlashRouter()
 router.register('catalog-recommendations', CatalogRecommendationRunViewSet, basename='catalog-recommendations')
@@ -126,7 +151,33 @@ router.register(
     basename='process-attribute-extractions',
 )
 
+from project_management.views.transmittal_client_return import (
+    TransmittalClientReturnFileView, TransmittalClientReturnLineViewSet, TransmittalClientReturnMatchView, TransmittalClientReturnQualifyView,
+)
+from project_management.views.correspondence_client_returns import CorrespondenceClientReturnCandidatesView, CorrespondenceClientReturnsView
+from project_management.views.client_surveillance import ClientSurveillanceView, ClientSurveillanceDueDateView, ClientSurveillanceReturnView, ClientSurveillanceReturnFileView, ClientSurveillanceFollowUpFileView, ClientSurveillanceRetainedReturnView, DocumentTimelineTargetsView
+
 urlpatterns = [
+    path("uploads/prepare", UploadPrepareView.as_view(), name="secure-upload-prepare"),
+    path("uploads/finalize", UploadFinalizeView.as_view(), name="secure-upload-finalize"),
+    path("uploads/read", UploadReadView.as_view(), name="secure-upload-read"),
+    path("supplier-surveillance/<int:surveillance_id>/evidence/download", InternalSupplierEvidenceDownload.as_view(), name="supplier-internal-evidence-download"),
+    path("supplier-surveillance/<int:surveillance_id>/annotations", SupplierReviewAnnotationViewSet.as_view({"get":"annotations","post":"add_annotation"}), name="supplier-review-annotations"),
+    path("supplier-surveillance/<int:surveillance_id>/annotations/<int:annotation_id>", SupplierReviewAnnotationViewSet.as_view({"delete":"retract_annotation"}), name="supplier-review-annotation-detail"),
+    path("document/<int:document_id>/timeline-targets", DocumentTimelineTargetsView.as_view(), name="document-timeline-targets"),
+    path('document/<int:document_id>/client-surveillance', ClientSurveillanceView.as_view(), name='document-client-surveillance'),
+    path('document/<int:document_id>/client-surveillance/<int:issue_id>', ClientSurveillanceView.as_view(), name='document-client-surveillance-detail'),
+    path('document/<int:document_id>/client-surveillance/<int:issue_id>/due-date', ClientSurveillanceDueDateView.as_view(), name='document-client-surveillance-due-date'),
+    path('document/<int:document_id>/client-surveillance/<int:issue_id>/returns', ClientSurveillanceReturnView.as_view(), name='document-client-surveillance-returns'),
+    path('document/<int:document_id>/client-surveillance/<int:issue_id>/retained-return', ClientSurveillanceRetainedReturnView.as_view(), name='document-client-surveillance-retained-return'),
+    path('document/<int:document_id>/client-surveillance/<int:issue_id>/followups/<int:followup_id>/file', ClientSurveillanceFollowUpFileView.as_view(), name='document-client-surveillance-followup-file'),
+    path('document/<int:document_id>/client-surveillance/<int:issue_id>/returns/<int:return_id>/files/<int:file_id>', ClientSurveillanceReturnFileView.as_view(), name='document-client-surveillance-return-file'),
+    path('supplier-register/', include('supplier_portal.urls')),
+    path('supplier-portal/documents', SupplierPortalDocuments.as_view()),
+    path('supplier-portal/documents/<int:document_id>', SupplierPortalDocument.as_view()),
+    path('supplier-portal/documents/<int:document_id>/revisions/<int:revision_id>/download', SupplierPortalDownload.as_view()),
+    path('document/<int:document_id>/supplier-portal-access', SupplierPortalAccess.as_view()),
+    path('document/<int:document_id>/supplier-surveillance/<int:surveillance_id>/publish', SupplierPortalPublish.as_view()),
     path('', include(router.urls)),
     re_path(r'^advanced-search/query/?$', AdvancedSearchQueryAPIView.as_view(), name='advanced-search-query'),
     re_path(r'^advanced-search/config/?$', AdvancedSearchConfigAPIView.as_view(), name='advanced-search-config'),
@@ -578,6 +629,8 @@ urlpatterns = [
     }), name='document-register-detail'),
     path('document/<int:document_id>/revisions', DocumentRevisionViewSet.as_view({'get': 'list', 'post': 'create'}), name='document-revisions'),
     path('document/<int:document_id>/revisions/<int:revision_id>/download', DocumentRevisionViewSet.as_view({'get': 'download'}), name='document-revision-download'),
+    # GED-SEC.08.2-A2.2: the main file of the Document itself, same access as the Document (register resolver).
+    path('document/<int:document_id>/download', DocumentRevisionViewSet.as_view({'get': 'download_current'}), name='document-download'),
     # HISTORY-2: a tiny, read-only Client Distribution History -- section 12/13 (never a
     # replacement for the Transmittal API itself).
     path('document/<int:document_id>/client-distribution-history', ClientDistributionHistoryView.as_view(), name='document-client-distribution-history'),
@@ -592,6 +645,8 @@ urlpatterns = [
     path('correspondence/<int:pk>', CorrespondenceViewSet.as_view({
         'get': 'retrieve', 'put': 'update', 'patch': 'partial_update', 'delete': 'destroy',
     }), name='correspondence-detail'),
+    path('correspondence/<int:correspondence_id>/client-returns/candidates', CorrespondenceClientReturnCandidatesView.as_view(), name='correspondence-client-return-candidates'),
+    path('correspondence/<int:correspondence_id>/client-returns', CorrespondenceClientReturnsView.as_view(), name='correspondence-client-returns'),
     path('correspondence/<int:correspondence_id>/attachments', CorrespondenceAttachmentViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-attachments'),
     path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>', CorrespondenceAttachmentViewSet.as_view({'delete': 'destroy'}), name='correspondence-attachment-detail'),
     path('correspondence/<int:correspondence_id>/attachments/<int:attachment_id>/download', CorrespondenceAttachmentViewSet.as_view({'get': 'download'}), name='correspondence-attachment-download'),
@@ -607,6 +662,20 @@ urlpatterns = [
     path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/files/<int:file_id>/download', CorrespondenceSendViewSet.as_view({'get': 'proof_file_download'}), name='correspondence-send-proof-file-download'),
     path('correspondence/<int:correspondence_id>/send/<int:event_id>/proof/retry', CorrespondenceSendViewSet.as_view({'post': 'proof_retry'}), name='correspondence-send-proof-retry'),
     # MAIL-1.5-B: the company's library of e-mail templates (no delete: a template is deactivated).
+    # DEMO-01: intervention requests + reviewed CSV import (preview, then confirm).
+    # PROSEVIEW MOD-01: action templates (project configuration) and weighted progress.
+    path('action-templates', ActionTemplateListView.as_view(), name='action-templates'),
+    path('action-templates/lookup', ActionTemplateLookupView.as_view(), name='action-template-lookup'),
+    path('action-templates/<int:pk>', ActionTemplateDetailView.as_view(), name='action-template-detail'),
+    path('action_items/<int:pk>/weighted-progress', ActionItemWeightedProgressView.as_view(), name='action-item-weighted-progress'),
+    path('intervention-requests', InterventionRequestListView.as_view(), name='intervention-requests'),
+    path('intervention-actions/<int:pk>/sub-actions', InterventionSubActionsView.as_view(), name='intervention-sub-actions'),
+    path('intervention-requests/<int:pk>', InterventionRequestDetailView.as_view(), name='intervention-request-detail'),
+    path('intervention-requests/import/preview', InterventionImportPreviewView.as_view(), name='intervention-import-preview'),
+    path('intervention-requests/import/<uuid:batch_id>', InterventionImportBatchView.as_view(), name='intervention-import-batch'),
+    path('intervention-requests/import/<uuid:batch_id>/templates', InterventionImportTemplatesView.as_view(), name='intervention-import-templates'),
+    path('intervention-requests/import/<uuid:batch_id>/rows/<int:line_number>', InterventionImportRowView.as_view(), name='intervention-import-row'),
+    path('intervention-requests/import/<uuid:batch_id>/confirm', InterventionImportConfirmView.as_view(), name='intervention-import-confirm'),
     path('correspondence-templates', CorrespondenceTemplateViewSet.as_view({'get': 'list', 'post': 'create'}), name='correspondence-templates'),
     path('correspondence-templates/<int:pk>', CorrespondenceTemplateViewSet.as_view({'get': 'retrieve', 'patch': 'partial_update'}), name='correspondence-template-detail'),
     path('correspondence-templates/<int:pk>/apply', CorrespondenceTemplateViewSet.as_view({'post': 'apply'}), name='correspondence-template-apply'),
@@ -623,6 +692,16 @@ urlpatterns = [
     path('transmittal/<int:transmittal_id>/proofs/<int:proof_id>/files/<int:file_id>/download', TransmittalProofView.as_view({'get': 'download'}), name='transmittal-proof-download'),
     path('transmittal/<int:transmittal_id>/send', TransmittalSendView.as_view({'post': 'create'}), name='transmittal-send'),
     path('transmittal/<int:transmittal_id>/issue', TransmittalIssueView.as_view({'post': 'create'}), name='transmittal-issue'),
+    path('transmittal/<int:transmittal_id>/confirm-receipt', TransmittalConfirmReceiptView.as_view({'post': 'create'}), name='transmittal-confirm-receipt'),
+    path('transmittal/<int:transmittal_id>/receipt-check', TransmittalReceiptCheckView.as_view({'get': 'list'}), name='transmittal-receipt-check'),
+    path('transmittal/<int:transmittal_id>/receipt-lines', TransmittalReceiptLineViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittal-receipt-lines'),
+    path('transmittal/<int:transmittal_id>/receipt-lines/<int:line_id>', TransmittalReceiptLineViewSet.as_view({'delete': 'destroy'}), name='transmittal-receipt-line-detail'),
+    path('transmittal/<int:transmittal_id>/client-return-lines', TransmittalClientReturnLineViewSet.as_view({'get': 'list', 'post': 'create'}), name='transmittal-client-return-lines'),
+    path('transmittal/<int:transmittal_id>/client-return-lines/<int:line_id>', TransmittalClientReturnLineViewSet.as_view({'delete': 'destroy'}), name='transmittal-client-return-line-detail'),
+    path('transmittal/<int:transmittal_id>/client-return-lines/<int:line_id>/qualify', TransmittalClientReturnQualifyView.as_view({'post': 'create'}), name='transmittal-client-return-line-qualify'),
+    path('transmittal/<int:transmittal_id>/client-return-lines/<int:line_id>/files/<int:file_id>', TransmittalClientReturnFileView.as_view({'get': 'retrieve'}), name='transmittal-client-return-line-file'),
+    path('transmittal/<int:transmittal_id>/client-return-matches', TransmittalClientReturnMatchView.as_view({'get': 'list'}), name='transmittal-client-return-matches'),
+    path('transmittal/<int:transmittal_id>/document-matches', TransmittalDocumentMatchView.as_view({'get': 'list'}), name='transmittal-document-matches'),
     path('transmittal/<int:transmittal_id>/events', TransmittalEventViewSet.as_view({'get': 'list'}), name='transmittal-events'),
 
     # LOT 3D-2: unified read-only Correspondances register (Correspondence + Transmittal
@@ -642,6 +721,10 @@ urlpatterns = [
     # L3H-1: Review Durations configuration (Project + Document Type scoped) -- configuration
     # only, no due date/overdue (those remain L3H-2/L3H-3/future lots).
     path('document-review-durations', DocumentReviewDurationViewSet.as_view({'get': 'list', 'post': 'upsert'}), name='document-review-durations'),
+    # GED-WF.4.1: client surveillance codes per project (no delete route: the four categories are fixed).
+    path('client-surveillance-codes', ClientSurveillanceCodeViewSet.as_view({'get': 'list', 'put': 'save'}), name='client-surveillance-codes'),
+    path('client-surveillance-codes/<str:category>', ClientSurveillanceCodeViewSet.as_view({'patch': 'update_one'}), name='client-surveillance-code-detail'),
+    path('client-surveillance-codes/<str:category>/reset', ClientSurveillanceCodeViewSet.as_view({'post': 'reset'}), name='client-surveillance-code-reset'),
     # FINISH-B: one Save action persists every dirty row (bulk-table UX) -- same ViewSet,
     # narrow additive action, no second configuration model.
     path('document-review-durations/bulk-upsert', DocumentReviewDurationViewSet.as_view({'post': 'bulk_upsert'}), name='document-review-durations-bulk-upsert'),

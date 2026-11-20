@@ -108,12 +108,12 @@ def _can(user, action, project):
     return permission._check_action_or_full_access(user, f"correspondence_{action}", scope, context)
 
 
-def _lock_import(project, meta):
+def _lock_import(project, meta, company_id=None):
     """Serialise concurrent imports of the same Internet message into the same project, even from
     two different mailboxes (transaction-scoped advisory lock; PostgreSQL only)."""
     if connection.vendor != "postgresql":
         return
-    key = f"mailbox-import:{project.pk}:{meta.internet_message_id or meta.graph_id}"
+    key = f"mailbox-import:{project.pk if project else f'company-{company_id}'}:{meta.internet_message_id or meta.graph_id}"
     number = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big", signed=True)
     with connection.cursor() as cursor:
         cursor.execute("SELECT pg_advisory_xact_lock(%s)", [number])
@@ -132,7 +132,7 @@ def _existing(row, project):
     """Retrying an import that already succeeded: the existing result for the same project, an
     explicit conflict for anything else -- never a second correspondence."""
     corr = row.imported_correspondence
-    if corr.project_id == project.pk:
+    if corr.project_id == (project.pk if project else None):
         return ImportResult("already_imported", corr, row, _documents_summary(row))
     raise MailboxImportError("already_imported", "This message has already been imported elsewhere.", 409)
 
@@ -141,7 +141,7 @@ def _create_in(request, project, meta, fields, text):
     from project_management.serializers.correspondence import CorrespondenceSerializer
 
     data = {
-        "direction": "IN", "status": "ISSUED", "project": project.pk,
+        "direction": "IN", "status": "ISSUED", "project": project.pk if project else None,
         "subject": meta.subject or NO_SUBJECT,
     }
     if text:
@@ -313,7 +313,13 @@ def import_message(
         if company_id else None
     )
     project = Project.objects.filter(pk=project_id, company_profile_id=company_id).first() if company_id else None
-    if mailbox is None or project is None:
+    company_parent = None
+    if project_id is None and mode == MODE_CREATE and fields.get("parent_correspondence"):
+        company_parent = correspondence_queryset_for_user(user).filter(
+            pk=fields["parent_correspondence"], project__isnull=True,
+            company_profile_id=company_id, direction="OUT", status="ISSUED"
+        ).first()
+    if mailbox is None or (project is None and company_parent is None):
         raise MailboxReadError("not_authorized")
     authorize_mailbox_read(user, mailbox, project=project)       # READ right + project assignment
 
@@ -335,14 +341,14 @@ def import_message(
         if not _can(user, "create", project):
             raise MailboxImportError("correspondence_permission_denied", "You may not create correspondences in this project.", 403)
         parent_id = fields.get("parent_correspondence")
-        if parent_id and not scoped.filter(pk=parent_id, project_id=project.pk).exists():
+        if parent_id and not scoped.filter(pk=parent_id, project_id=project.pk if project else None).exists():
             raise MailboxImportError("invalid_target", "The correspondence to answer was not found in this project.", 400)
     else:
         if mode == MODE_COMPLETE:
             if existing_row is None or not existing_row.imported_correspondence_id:
                 raise MailboxImportError("not_imported", "This message has not been imported yet.", 409)
             target_id = existing_row.imported_correspondence_id
-        target = scoped.filter(pk=target_id, project_id=project.pk).first() if target_id else None
+        target = scoped.filter(pk=target_id, project_id=project.pk if project else None).first() if target_id else None
         if target is None:
             raise MailboxImportError("invalid_target", "The target correspondence was not found in this project.", 400)
         expected = Correspondence.Direction.IN if folder == "inbox" else Correspondence.Direction.OUT
@@ -410,7 +416,7 @@ def import_message(
         stored, text_written = [], False
         try:
             with transaction.atomic():
-                _lock_import(project, meta)
+                _lock_import(project, meta, company_id)
                 row, _ = store_message_metadata(mailbox, meta)
                 row = MailboxMessage.objects.select_for_update().get(pk=row.pk)
                 if mode != MODE_COMPLETE:
@@ -420,6 +426,7 @@ def import_message(
                     if row.internet_message_id:
                         twin = MailboxMessage.objects.filter(
                             company_profile_id=company_id, internet_message_id=row.internet_message_id,
+                            imported_correspondence__isnull=False,
                             imported_correspondence__project=project,
                         ).exclude(pk=row.pk).first()
                         if twin is not None:

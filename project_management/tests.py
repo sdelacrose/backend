@@ -3125,6 +3125,16 @@ class InvoiceCreditNoteReplacementTests(TestCase):
 
 class TimesheetWeekSaveSerializerTests(TestCase):
     def setUp(self):
+        # Notifications (and the user-solution lookup behind them) are outside the timesheet scope. That
+        # lookup reads the license tables owned by the admin service (package_license_*), which are not
+        # installed in this app's test DB: on a fresh DB the query aborts the fixture transaction. The
+        # decision is isolated here, only for this class; the real license control is covered separately
+        # (ecpmpapp.test_license_control).
+        notification_patcher = patch(
+            "ecpmpapp.utils.should_notify_user_comprehensive", return_value=False
+        )
+        notification_patcher.start()
+        self.addCleanup(notification_patcher.stop)
         post_save.disconnect(action_item_post_save_operations, sender=ActionItem)
         post_save.disconnect(create_default_folders, sender=Project)
         post_save.disconnect(notify_on_project_save, sender=Project)
@@ -6936,6 +6946,18 @@ class MonthlyTimesheetStrictMonthPreviewTests(TestCase):
 
 class MonthlyTimesheetBillingIntegrationTests(TestCase):
     def setUp(self):
+        # Same isolation as TimesheetWeekSaveSerializerTests: notifications (hence the admin-owned license
+        # tables) are outside the billing scope; the real license control is covered separately.
+        notification_patcher = patch(
+            "ecpmpapp.utils.should_notify_user_comprehensive", return_value=False
+        )
+        notification_patcher.start()
+        self.addCleanup(notification_patcher.stop)
+        # notify_on_project_save (disconnected below) is what creates the project chat room that
+        # create_related_objects expects: without the room, adding a team member raises ChatRoom.DoesNotExist.
+        # Same isolation as the other project-team fixtures of this module.
+        post_save.disconnect(create_related_objects, sender=ProjectTeamMembers)
+        self.addCleanup(post_save.connect, create_related_objects, sender=ProjectTeamMembers)
         post_save.disconnect(create_default_folders, sender=Project)
         post_save.disconnect(notify_on_project_save, sender=Project)
         post_save.disconnect(milestone_post_save_operations, sender=Milestone)
@@ -7799,7 +7821,7 @@ class MonthlyTimesheetBillingIntegrationTests(TestCase):
         """
         root_folder = Folder.objects.create(
             company_profile=self.company,
-            name=f"{self.company.id}_company_root_folder_vat",
+            name=f"{self.company.id}_company_root_folder",
         )
         Folder.objects.create(
             company_profile=self.company,

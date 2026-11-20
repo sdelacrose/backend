@@ -38,6 +38,12 @@
 	handle /media/private/* {
 		respond "Not found" 404
 	}
+	# Internal surveillance originals can remain after their private copy is made.
+	# Match the directory even inside an unnormalised media path.
+	@private_supplier_reports path_regexp (?i)^/media/(.*/)?supplier_surveillance_evidence(/|$)
+	handle @private_supplier_reports {
+		respond "Not found" 404
+	}
 	handle_path /media/* {
 		basic_auth {
 			{$RECETTE_MEDIA_USER} {$RECETTE_MEDIA_HASH}

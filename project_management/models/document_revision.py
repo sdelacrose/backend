@@ -2,7 +2,7 @@ import posixpath
 
 from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models import Max, Q
+from django.db.models import F, Max, Q
 from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 
@@ -86,6 +86,16 @@ class DocumentRevision(models.Model):
     # what the approved version represented at that moment. Never replaces live Document data.
     approval_snapshot = models.JSONField(null=True, blank=True)
     comment = models.TextField(blank=True, default="")
+    # LOT 1 (client surveillance): the issue state of THIS stored version (PREL / BPE), fixed at creation and
+    # never changed (the row is immutable; the bulk update only allows the approval evidence). Null = not
+    # qualified (every version created before this field). Independent from the distribution purpose of a send.
+    issue_state = models.CharField(max_length=4, null=True, blank=True, choices=[("PREL", "PREL"), ("BPE", "BPE")])
+    # LOT 1 (0257): a TECHNICAL version -- the BPE file of an index the client accepted as is -- shares the documentary
+    # index of the approved revision it points to, without taking its label: revision_label stays unique and keeps its
+    # meaning "approved by the internal workflow". Null for every ordinary version.
+    index_revision = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.PROTECT, related_name="technical_versions",
+    )
     created_by = models.ForeignKey(
         User,
         related_name="created_document_revisions",
@@ -100,6 +110,18 @@ class DocumentRevision(models.Model):
     class Meta:
         ordering = ["-created_at", "-id"]
         constraints = [
+            models.CheckConstraint(
+                condition=Q(index_revision__isnull=True) | ~Q(index_revision=F("id")),
+                name="document_revision_index_not_self",
+            ),
+            models.CheckConstraint(
+                condition=Q(index_revision__isnull=True) | Q(revision_label__isnull=True),
+                name="document_revision_index_has_no_own_label",
+            ),
+            models.CheckConstraint(
+                condition=Q(index_revision__isnull=True) | Q(issue_state="BPE"),
+                name="document_revision_index_is_bpe",
+            ),
             models.UniqueConstraint(
                 fields=["document", "major_revision", "minor_revision"],
                 name="document_revision_unique_version",
@@ -123,6 +145,14 @@ class DocumentRevision(models.Model):
         # Stored versions are immutable: a correction is a new minor version.
         if not self._state.adding:
             raise ValidationError("A stored document revision cannot be modified.")
+        if self.index_revision_id:
+            # The database cannot compare two rows: the same document and an approved, non technical source.
+            source = DocumentRevision.objects.filter(pk=self.index_revision_id).values(
+                "document_id", "revision_label", "index_revision_id").first()
+            if source is None or source["document_id"] != self.document_id:
+                raise ValidationError("A technical version shares the index of a revision of the SAME document.")
+            if not source["revision_label"] or source["index_revision_id"]:
+                raise ValidationError("A technical version points to an approved, non technical revision.")
         if self.version_number is None:
             # Safety net: services set it explicitly under the document lock.
             self.version_number = (

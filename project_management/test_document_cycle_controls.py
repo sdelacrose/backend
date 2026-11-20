@@ -6,9 +6,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from models.models import Permission, Role, RolePermission, UserRole
 from project_management.models import DocumentWorkflow, DocumentWorkflowEvent
 from project_management.services.document_cycle import (
-    assert_can_manage_document_cycle, can_manage_cycle_identity,
+    assert_can_manage_document_cycle, can_manage_cycle_identity, can_validate_document,
     document_cycle_permissions, has_document_control_right,
 )
+from project_management.services.document_register import can_update_document
 from project_management.services.document_workflow import perform_action, stop_workflow
 from project_management.test_document_workflow import WorkflowTestBase, THREE
 from project_management.views.document_workflow import DocumentWorkflowViewSet
@@ -33,6 +34,11 @@ class DocumentCycleControlsTests(WorkflowTestBase):
             RolePermission.objects.create(role=role, permission=permission)
         UserRole.objects.create(user=user, role=role, company=self.company)
         return role
+
+    def regrant(self, user, *keys):
+        # DocumentPermission evaluates one role per user: replace the previous test role.
+        UserRole.objects.filter(user=user).delete()
+        return self.grant(user, *keys)
 
     def post_workflow(self, user, data=None, action=False):
         request = APIRequestFactory().post("/x/", data or {
@@ -74,6 +80,74 @@ class DocumentCycleControlsTests(WorkflowTestBase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.data["status"], "VERIFY")
         self.assertEqual(response.data["events"][1]["actor"]["id"], self.alice.pk)
+
+    def test_validation_needs_the_validate_right_and_the_assignment_not_the_update_right(self):
+        # GED-WF.1.1: real roles, no mocked permission. Matrix cases 1-3 of the mission.
+        workflow = self.start(THREE, revision=self.revision2)
+        for user, action, expected in (
+            (self.alice, "SIGN", "VERIFY"),
+            (self.bob, "VALIDATE", "APPROVE"),
+            (self.carol, "APPROVE", "APPROVED"),
+        ):
+            self.regrant(user, "documents.view", "documents.update")  # update alone: refused
+            denied = self.post_workflow(user, {"action": action, "comment": "c"}, True)
+            self.assertEqual(denied.status_code, 403, f"{action} with update only")
+            workflow.refresh_from_db()
+            self.assertNotEqual(workflow.status, expected)
+            self.regrant(user, "documents.view")  # read only: refused
+            self.assertEqual(self.post_workflow(user, {"action": action, "comment": "c"}, True).status_code, 403)
+            self.regrant(user, "documents.view", "documents.validate")  # validate, NO update: allowed
+            self.assertFalse(can_update_document(user, self.document))
+            allowed = self.post_workflow(user, {"action": action, "comment": "c"}, True)
+            self.assertEqual(allowed.status_code, 200, action)
+            self.assertEqual(allowed.data["status"], expected)
+
+    def test_the_validate_right_never_allows_a_modification_or_a_non_assigned_validation(self):
+        self.start(THREE, revision=self.revision2)
+        self.grant(self.dave, "documents.view", "documents.validate")
+        self.assertFalse(can_update_document(self.dave, self.document))  # case 10
+        self.assertTrue(can_validate_document(self.dave, self.document))
+        refused = self.post_workflow(self.dave, {"action": "SIGN", "comment": "c"}, True)  # case 4: not assigned
+        self.assertEqual(refused.status_code, 403)
+        self.regrant(self.dave, "documents.full_access")  # case 9: full_access, not assigned
+        self.assertEqual(self.post_workflow(self.dave, {"action": "SIGN", "comment": "c"}, True).status_code, 403)
+
+    def test_full_access_satisfies_the_right_for_the_assigned_actor_only(self):
+        workflow = self.start(THREE, revision=self.revision2)
+        self.regrant(self.alice, "documents.full_access")
+        response = self.post_workflow(self.alice, {"action": "SIGN", "comment": "c"}, True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "VERIFY")
+
+    def test_wrong_step_actors_are_refused_even_with_the_validate_right(self):
+        # cases 7 and 8: the verifier cannot approve, the approver cannot verify.
+        self.start(THREE, revision=self.revision2)
+        for user in (self.alice, self.bob, self.carol):
+            self.grant(user, "documents.view", "documents.validate")
+        self.assertEqual(self.post_workflow(self.alice, {"action": "SIGN", "comment": "c"}, True).status_code, 200)
+        events = DocumentWorkflowEvent.objects.count()
+        # The assignment is checked first (403); a wrong action for the step is a 400. Either way nothing is recorded.
+        self.assertEqual(self.post_workflow(self.carol, {"action": "VALIDATE", "comment": "c"}, True).status_code, 403)
+        self.assertIn(self.post_workflow(self.bob, {"action": "APPROVE", "comment": "c"}, True).status_code, (400, 403))
+        self.assertEqual(DocumentWorkflowEvent.objects.count(), events)
+
+    def test_management_actions_keep_the_update_right_and_ignore_validate(self):
+        # case 11: replacing an actor and stopping are unchanged.
+        self.start(THREE, revision=self.revision2)
+        self.grant(self.alice, "documents.view", "documents.validate")
+        for data in ({"action": "CHANGE_VERIFIER", "new_actor": self.dave.pk, "comment": "c"}, {"action": "STOP", "comment": "c"}):
+            self.assertEqual(self.post_workflow(self.alice, data, True).status_code, 403, data["action"])
+        self.regrant(self.alice, "documents.view", "documents.update")
+        self.assertEqual(self.post_workflow(
+            self.alice, {"action": "CHANGE_VERIFIER", "new_actor": self.dave.pk, "comment": "c"}, True).status_code, 200)
+
+    def test_the_serialized_workflow_tells_the_ui_whether_the_user_may_validate(self):
+        from project_management.views.document_workflow import serialize_workflow
+        workflow = self.start(THREE, revision=self.revision2)
+        self.assertFalse(serialize_workflow(workflow, self.bob)["can_validate"])
+        self.grant(self.bob, "documents.view", "documents.validate")
+        self.assertTrue(serialize_workflow(workflow, self.bob)["can_validate"])
+        self.assertFalse(serialize_workflow(workflow, None)["can_validate"])
 
     def test_inactive_controller_role_is_denied(self):
         role = self.grant(self.dave, "documents.update", "documents.manage_cycle")

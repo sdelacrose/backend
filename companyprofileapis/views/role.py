@@ -74,7 +74,7 @@ class RoleViewSet(viewsets.ModelViewSet):
         # Use distinct to avoid duplicate permissions
         queryset = queryset.distinct()
         if permission_type == "solution" and scope in ("company", "project"):
-            queryset = queryset.union(Permission.objects.filter(key="documents.manage_cycle"))
+            queryset = queryset.union(Permission.objects.filter(key__in=("documents.manage_cycle", "documents.validate", "documents.client_surveillance_manage")))
         
         # Only select the fields we need
         permissions_data = queryset.values('module', 'key')

@@ -1779,15 +1779,24 @@ def create_pdf_invoice_by_site_report(site_report, request_user):
 
     observations = []
 
+    # GED-SEC.08.2-B0.3-FIX: a new photo is the PRIVATE reference of its upload, not a URL. The resolver authorises it,
+    # reads it through the server storage while the engine renders, and only lets the engine load what it has resolved
+    # (no other URL is downloaded). See services/site_report_pdf_photos.py.
+    from project_management.services.site_report_pdf_photos import SiteReportPhotoResolver
+
+    resolver = SiteReportPhotoResolver(site_report, request_user, allowed_urls=(company_logo,))
+
     allowed_extensions = ('.jpg', '.heic', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.tiff')
     for observation in site_report.observations.all():
         image_photos = []
         other_files = []
         for i, photo in enumerate(observation.photos):
             if photo.lower().endswith(allowed_extensions):
-                image_photos.append((i + 1, photo))
+                source = resolver.register(photo)
+                if source:  # None: left out of the PDF (not a Sharemundo file), logged by category
+                    image_photos.append((i + 1, source))
             else:
-                other_files.append((i + 1, photo))
+                other_files.append((i + 1, resolver.attachment_link(photo)))
 
         observations.append(
             {
@@ -1820,7 +1829,8 @@ def create_pdf_invoice_by_site_report(site_report, request_user):
 
     # Generate PDF using WeasyPrint
     pdf_file = BytesIO()
-    HTML(string=html_content).write_pdf(pdf_file)
+    HTML(string=html_content, url_fetcher=resolver.url_fetcher).write_pdf(pdf_file)
+    resolver.finish()  # a storage failure cancels the generation before anything is saved
     pdf_file.seek(0)
 
     root_folder_name = f"{site_report.project.id}_root_folder"

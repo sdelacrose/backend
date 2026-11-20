@@ -1,3 +1,4 @@
+from project_management.services.document_file_name import controlled_file_name
 from project_management.models.constants import COLLABORATIVE_SOLUTION
 from project_management.serializers.time_expense import get_valid_choices
 from rest_framework import serializers
@@ -87,6 +88,10 @@ class DocumentSerializer(serializers.ModelSerializer):
     workflow = serializers.SerializerMethodField()
     internal_status = serializers.SerializerMethodField()
     revision_label = serializers.SerializerMethodField()
+    # B1 / LOT 1: the CURRENT LOGICAL revision (newest ordinary row) and its logical number (technical BPE rows excluded)
+    logical_revision_id = serializers.SerializerMethodField()
+    logical_version_number = serializers.SerializerMethodField()
+    download_name = serializers.SerializerMethodField()
     # D13: the external issuer's own revision designation of the CURRENT version (Supplier,
     # potentially Client) -- distinct from revision_label (INTERNAL-origin, approval-only).
     current_external_revision = serializers.SerializerMethodField()
@@ -99,6 +104,8 @@ class DocumentSerializer(serializers.ModelSerializer):
     internal_control_status = serializers.SerializerMethodField()
     supplier_control_status = serializers.SerializerMethodField()
     client_control_status = serializers.SerializerMethodField()
+    # GED-WF.4.4-A: client result / due date summary per client company (summary data only, GED-SEC.2).
+    client_register = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -113,6 +120,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'document_origin',
             'external_issuer_company',
             'received_date',
+            'due_date',
             'origin_locked',
             'status',
             'internal_review_status',
@@ -123,6 +131,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             'updated_at',
             'identification_number',
             'client_reference',
+            'planned_client_revision',
             'category',
             'discipline',
             'discipline_group',
@@ -144,8 +153,12 @@ class DocumentSerializer(serializers.ModelSerializer):
             'internal_control_status',
             'supplier_control_status',
             'client_control_status',
+            'client_register',
             'revision_label',
+            'logical_revision_id',
+            'logical_version_number',
             'current_external_revision',
+            'download_name',
             'file_size',
             'description',
             'tags',
@@ -772,6 +785,29 @@ class DocumentSerializer(serializers.ModelSerializer):
         
         return config
 
+    def _assert_no_duplicate_supplier_reference(self, validated_data, origin):
+        """GED-WF.3: a Supplier document is never created twice for the same project, issuing
+        company and reference, formatting ignored ("DWG-001" == "dwg 001"). Creating one anyway is
+        an explicit user decision (allow_duplicate_reference), never a silent default."""
+        folder = validated_data.get('folder')
+        issuer = validated_data.get('external_issuer_company')
+        reference = validated_data.get('identification_number')
+        if origin != DocumentOrigin.SUPPLIER or not (folder and folder.project_id and issuer and reference):
+            return
+        raw = getattr(self, 'initial_data', None)
+        flag = raw.get('allow_duplicate_reference') if hasattr(raw, 'get') else None
+        if str(flag).lower() in ('1', 'true', 'yes'):
+            return
+        from project_management.services.transmittal_receipt import find_duplicate_supplier_documents
+        if find_duplicate_supplier_documents(folder.project_id, issuer.id, reference):
+            raise serializers.ValidationError({
+                'identification_number': (
+                    'A document with this reference already exists for this supplier in this project. '
+                    'Select it, or confirm that a new document must be created.'
+                ),
+                'code': 'duplicate_supplier_reference',
+            })
+
     def create(self, validated_data):
         # Ensure author is set to the current user if not provided
         request_user = self.context.get('user')
@@ -787,6 +823,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             # fields blank unless a future workflow explicitly assigns one. Permanent once
             # generated -- never recalculated afterwards.
             origin = validated_data.get('document_origin') or DocumentOrigin.INTERNAL
+            self._assert_no_duplicate_supplier_reference(validated_data, origin)
             if origin == DocumentOrigin.INTERNAL:
                 (
                     validated_data['sequence_number'],
@@ -947,6 +984,9 @@ class DocumentSerializer(serializers.ModelSerializer):
             'awaiting_me': bool(expected and user and expected == user.id),
         }
 
+    def get_download_name(self, obj):
+        return controlled_file_name(obj.full_document_number, self.get_revision_label(obj), obj.status, obj.file.name or obj.file_name) if obj.file else None
+
     def get_revision_label(self, obj):
         # Canonical official Revision of the CURRENT version (null until approved); never the
         # legacy Document.revision. Annotated by the list queryset, one lookup otherwise.
@@ -954,10 +994,27 @@ class DocumentSerializer(serializers.ModelSerializer):
             return None
         if hasattr(obj, 'current_revision_label'):
             return obj.current_revision_label
-        current = DocumentRevision.objects.filter(document=obj).order_by(
-            '-created_at', '-id'
-        ).first()
+        from project_management.services.document_logical_version import get_current_logical_revision
+        current = get_current_logical_revision(obj)  # B1: the logical revision (a technical BPE row has no label of its own)
         return current.revision_label if current else None
+
+    def get_logical_revision_id(self, obj):
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'logical_revision_id'):
+            return obj.logical_revision_id
+        from project_management.services.document_logical_version import get_current_logical_revision
+        current = get_current_logical_revision(obj)
+        return current.pk if current else None
+
+    def get_logical_version_number(self, obj):
+        if not self.context.get('include_control'):
+            return None
+        if hasattr(obj, 'logical_version_number'):
+            return obj.logical_version_number
+        from project_management.services.document_logical_version import get_current_logical_revision, logical_version_number
+        current = get_current_logical_revision(obj)
+        return logical_version_number(current) if current else None
 
     def get_current_external_revision(self, obj):
         # D13: the external issuer's own revision designation of the CURRENT version -- same
@@ -966,9 +1023,8 @@ class DocumentSerializer(serializers.ModelSerializer):
             return None
         if hasattr(obj, 'current_external_revision'):
             return obj.current_external_revision
-        current = DocumentRevision.objects.filter(document=obj).order_by(
-            '-created_at', '-id'
-        ).first()
+        from project_management.services.document_logical_version import get_current_logical_revision
+        current = get_current_logical_revision(obj)
         return current.external_revision if current else None
 
     def get_origin_locked(self, obj):
@@ -1006,6 +1062,18 @@ class DocumentSerializer(serializers.ModelSerializer):
         if not self.context.get('include_control'):
             return None
         return compute_client_control_status(obj)
+
+    def get_client_register(self, obj):
+        """Result / due date of the client surveillance of the CURRENT revision. The list view preloads the whole
+        page in a few queries (context client_register_map); a single object falls back to the same builder."""
+        if not self.context.get('include_control'):
+            return None
+        from project_management.services.client_register_results import client_register_for_document
+
+        preloaded = self.context.get('client_register_map')
+        if preloaded is not None:
+            return preloaded.get(obj.pk)
+        return client_register_for_document(obj)
 
     def get_file_size(self, obj):
         # Detail page only: may hit the storage backend.

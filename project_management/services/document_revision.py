@@ -169,6 +169,18 @@ def next_revision_label(existing_labels, start="A"):
     return increment_major(max(labels, key=lambda label: (len(label), label)))
 
 
+def expected_next_revision_label(document):
+    """The label the NEXT internally approved version of the document would receive right now (read only, never
+    reserved: the real label is only given at approval by assign_revision_label)."""
+    from project_management.services.document_control_settings import get_document_control_settings
+
+    settings = get_document_control_settings(document)["revision"]
+    return next_revision_label(
+        DocumentRevision.objects.filter(document_id=document.pk, revision_label__isnull=False).values_list("revision_label", flat=True),
+        start=settings["start"],
+    )
+
+
 def assign_revision_label(revision):
     """Give an internally approved version its official revision label, once.
 
@@ -224,6 +236,7 @@ def build_approval_snapshot(revision, workflow):
             "id": document.pk,
             "reference": document.full_document_number,
             "title": document.file_name,
+            "status": document.status,
             "document_type": document.document_type,
             "discipline": {
                 "group_id": document.discipline_group_id,
@@ -338,8 +351,14 @@ def add_document_revision(
     comment="",
     external_revision=None,
     change_context=None,
+    issue_state=None,
+    allow_identical=False,
+    index_revision=None,
 ):
     """Store a new immutable version of `document` and make it the current file.
+
+    `issue_state` (PREL / BPE) is fixed here for good; by default it is the document's business status at this
+    moment when that status is PREL or BPE, otherwise left empty.
 
     - `revision_type` minor: A-00 -> A-01; major: A-01 -> B-00. An explicit
       `major_revision` starts/continues that major instead.
@@ -362,7 +381,8 @@ def add_document_revision(
         # The current revision/file cannot change while its workflow is running.
         assert_document_file_unlocked(locked)
         from project_management.services.document_revision_duplicates import checked_revision_upload_hash
-        upload_hash = checked_revision_upload_hash(locked, uploaded_file, external_revision)
+        # LOT 1 (code A): the client may accept the file as is; the BPE technical version then carries the same bytes.
+        upload_hash = sha256_of_file(uploaded_file) if allow_identical else checked_revision_upload_hash(locked, uploaded_file, external_revision)
         revisions = DocumentRevision.objects.filter(document=locked)
 
         _materialize_first_revision(locked)
@@ -399,6 +419,8 @@ def add_document_revision(
             # D13: the external issuer's own revision designation (never revision_label -- that
             # stays exclusively the INTERNAL-approval-assigned value, untouched here).
             external_revision=(external_revision or "").strip() or None,
+            issue_state=issue_state or (locked.status if locked.status in ("PREL", "BPE") else None),
+            index_revision=index_revision,  # SURVEILLANCE LOT 2: technical BPE version of an approved index (code A)
             created_by=user,
         )
         revision.file = uploaded_file

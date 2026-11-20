@@ -61,6 +61,29 @@ class SiteReportSerializer(serializers.ModelSerializer):
     #         return value
     #     raise serializers.ValidationError("You do not have Read&Write permission of this project.")
     
+    def validate(self, attrs):
+        # GED-SEC.08.2-B0.3: a photo is a historical one of this report, or the finalised upload of this user for
+        # a site report photo of THIS project (see services/upload_reference.py); any other string is refused.
+        request = self.context.get("request")
+        observations = attrs.get("observations")
+        if request is None or not getattr(request.user, "is_authenticated", False) or not observations:
+            return attrs
+        project = attrs.get("project") or (self.instance.project if self.instance else None)
+        if project is None:
+            return attrs
+        from project_management.services.upload_reference import bind_private_references
+
+        existing = set()
+        if self.instance is not None:
+            for photos in self.instance.observations.values_list("photos", flat=True):
+                existing.update(photos or [])
+        for observation in observations:
+            if "photos" in observation:
+                observation["photos"] = bind_private_references(
+                    request.user, "site_report_photo", observation["photos"], existing=existing, project_id=project.pk
+                )
+        return attrs
+
     def validate_present(self, value):
         project = self.instance.project.id if self.instance else int(self.initial_data.get("project"))
         if not all(member.project_id == project for member in value):

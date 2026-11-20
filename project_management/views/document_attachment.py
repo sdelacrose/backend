@@ -1,7 +1,7 @@
 import posixpath
 
 from django.db import transaction
-from django.http import FileResponse, Http404
+from django.http import Http404
 from rest_framework import status, viewsets
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -13,6 +13,7 @@ from project_management.services.document_register import (
     assert_can_update_document,
     get_register_document_or_404,
 )
+from project_management.views.document_revision import stored_file_response
 
 
 def serialize_attachment(attachment, request, document):
@@ -88,11 +89,7 @@ class DocumentAttachmentViewSet(viewsets.GenericViewSet):
         attachment = self._attachment(document, attachment_id)
         if not attachment.file:
             raise Http404
-        return FileResponse(
-            attachment.file.open("rb"),
-            as_attachment=True,
-            filename=attachment.file_name,
-        )
+        return stored_file_response(attachment.file, attachment.file_name)
 
     def destroy(self, request, document_id=None, attachment_id=None, *args, **kwargs):
         document = get_register_document_or_404(request, document_id=document_id)

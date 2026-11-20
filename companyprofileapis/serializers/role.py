@@ -31,7 +31,7 @@ class RoleSerializer(serializers.ModelSerializer):
         expected_modules = {}
         permissions = Permission.objects.filter(role_permissions__role__scope=scope, role_permissions__role__type=type) 
         if type == "solution" and scope in ("company", "project"):
-            permissions = permissions.union(Permission.objects.filter(key="documents.manage_cycle"))
+            permissions = permissions.union(Permission.objects.filter(key__in=("documents.manage_cycle", "documents.validate", "documents.client_surveillance_manage")))
         for permission in permissions:
             module = permission.module
             if module not in expected_modules:

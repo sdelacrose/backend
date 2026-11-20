@@ -1,4 +1,9 @@
+import posixpath
+
+from django.http import Http404
+
 from project_management.models.constants import COLLABORATIVE_SOLUTION
+from project_management.views.document_revision import stored_file_response
 
 from rest_framework import viewsets
 from rest_framework.response import Response
@@ -42,6 +47,10 @@ class ObjectAssessmentViewSet(viewsets.ModelViewSet):
     parser_classes = [JSONParser, MultiPartParser]
 
     def get_permissions(self):
+        if self.action == 'download':
+            # GED-SEC.08.2-A2.3a: authentication and licence come from the default classes; the object-level right
+            # is checked inside `download` so that every refusal is the same 404 (no existence oracle).
+            return super().get_permissions()
         if self.action == 'bulk_update':
             return [ObjectAssessmentPermission(action='update', scope='project')]
         if self.action in ['list', 'retrieve', 'next_record_title']:
@@ -134,6 +143,32 @@ class ObjectAssessmentViewSet(viewsets.ModelViewSet):
         obj = get_object_or_404(ObjectAssessment, pk=self.kwargs['pk'])
         self.check_object_permissions(self.request, obj)
         return obj
+
+    @action(detail=True, methods=['get'], url_path='download')
+    def download(self, request, pk=None):
+        """GED-SEC.08.2-A2.3a: the stored file of one Object Assessment, read through the authenticated API.
+
+        Unlike `get_object`, the record is never answered with a 403: an unknown id, an id outside the caller's
+        scope and a record without file are all a 404, so the endpoint cannot be used to learn which ids exist.
+        The right is the existing Object Assessment read right (view, full access, or view-assigned/created on
+        the record); `documents.view` grants nothing here."""
+        try:
+            object_assessment_id = int(pk)
+        except (TypeError, ValueError):
+            raise Http404
+        object_assessment = (
+            ObjectAssessment.objects.select_related('project').filter(pk=object_assessment_id).first()
+        )
+        if object_assessment is None or not ObjectAssessmentPermission(
+            action='view', scope='project'
+        ).can_view_object(request.user, object_assessment):
+            raise Http404
+        if not object_assessment.file:
+            raise Http404
+        return stored_file_response(
+            object_assessment.file,
+            object_assessment.file_name or posixpath.basename(object_assessment.file.name),
+        )
 
     @action(detail=False, methods=['get'])
     def next_record_title(self, request):

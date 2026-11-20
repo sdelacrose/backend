@@ -5,12 +5,26 @@ from .document_control import DocumentControl
 from .document_revision import DocumentRevision
 from .client_issue import ClientIssue
 from .document_attachment import DocumentAttachment
+from .action_template import (
+    ActionItemProgressSetting,
+    ActionItemSubCounter,
+    ActionTemplate,
+    ActionTemplateSubAction,
+)
+from .intervention import (
+    InterventionImportBatch,
+    InterventionImportRow,
+    InterventionReferenceCounter,
+    InterventionRequest,
+)
 from .correspondence import Correspondence, CorrespondenceAttachment, CorrespondenceReferenceCounter
 from .correspondence_workflow import CorrespondenceValidationWorkflow, CorrespondenceValidationEvent
 from .correspondence_send import CorrespondenceSendEvent
 from .correspondence_send_proof import CorrespondenceSendProof, CorrespondenceSendProofFile, EvidenceBlob
 from .correspondence_template import CorrespondenceTemplate
-from .transmittal import Transmittal, TransmittalEvent, TransmittalItem, TransmittalReferenceCounter
+from .transmittal import (
+    Transmittal, TransmittalEvent, TransmittalItem, TransmittalReceiptLine, TransmittalReferenceCounter,
+)
 from .document_workflow import DocumentWorkflow, DocumentWorkflowEvent
 from .supplier_surveillance import SupplierSurveillance, SupplierSurveillanceReferenceCounter
 from .supplier_surveillance_template import (
@@ -81,3 +95,12 @@ from .funding_opportunity import FundingSourceConfig, FundingOpportunity, Fundin
 from .workstation_compliance import WorkstationComplianceRule, WorkstationComplianceEvaluation
 
 from .transmittal_send_proof import TransmittalSendProof, TransmittalSendProofFile
+from .supplier_portal import SupplierPortalGrant, SupplierPortalSubmission, SupplierPortalReturn
+
+from .client_surveillance import ClientSurveillance, ClientSurveillanceEvent
+from .client_surveillance_code import ClientSurveillanceCode
+from .client_surveillance_return import ClientSurveillanceReturn, ClientSurveillanceReturnFile
+from .client_surveillance_followup import ClientSurveillanceFollowUp
+from .transmittal_client_return_line import TransmittalClientReturnLine, TransmittalClientReturnLineFile
+
+from .supplier_review_annotation import SupplierReviewAnnotation

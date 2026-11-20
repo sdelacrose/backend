@@ -18,16 +18,27 @@ creation), by the same save() guard.
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
-from django.db.models.signals import m2m_changed, pre_delete
+from django.db.models.signals import m2m_changed, post_delete, pre_delete
+from django.db import transaction
 from django.dispatch import receiver
 from simple_history.models import HistoricalRecords
+import logging
+import posixpath
+import uuid
 
 from models.models import User
 
 from .client_issue import ClientIssue
 from .contact import ContactCompany, ContactUser
+from .document import Document
 from .document_revision import DocumentRevision
 from .project import Project
+
+logger = logging.getLogger(__name__)
+
+# GED-WF.3.1: every file waiting for a reception confirmation lives under this prefix, never next to
+# the controlled document files -- it is never served as a document and a cleanup can tell it apart.
+PENDING_RECEIPT_PREFIX = "transmittal_receipt_pending"
 
 
 class TransmittalQuerySet(models.QuerySet):
@@ -281,6 +292,74 @@ class TransmittalItem(models.Model):
         if self.transmittal.status == Transmittal.Status.ISSUED:
             raise ValidationError("An item of an issued transmittal cannot be removed.")
         super().delete(*args, **kwargs)
+
+
+def get_pending_receipt_upload_path(instance, filename):
+    """One unique folder per line: a pending file can never be shared with, or overwrite, another."""
+    transmittal = instance.transmittal
+    return posixpath.join(
+        PENDING_RECEIPT_PREFIX,
+        f"project_{transmittal.project_id}",
+        f"transmittal_{transmittal.pk}",
+        uuid.uuid4().hex,
+        posixpath.basename(filename),
+    )
+
+
+class TransmittalReceiptLine(models.Model):
+    """GED-WF.3.1: a received supplier document that is PREPARED on an incoming draft but not yet
+    recorded. Nothing canonical exists for it: no Document, no DocumentRevision, no TransmittalItem.
+    The reception confirmation re-validates it and only then creates the document / revision / item,
+    in the same atomic operation as the finalization. Deleting the draft (or the line) leaves nothing
+    behind but the pending file, which is cleaned up with it.
+
+    The issuing company is never stored here: it is the parent transmittal's external_company.
+    """
+
+    class Decision(models.TextChoices):
+        NEW_DOCUMENT = "NEW_DOCUMENT", "Create a new document"
+        NEW_REVISION = "NEW_REVISION", "New revision of an existing document"
+
+    transmittal = models.ForeignKey(Transmittal, related_name="receipt_lines", on_delete=models.CASCADE)
+    reference = models.CharField(max_length=255)
+    external_revision = models.CharField(max_length=100, blank=True, default="")
+    file = models.FileField(upload_to=get_pending_receipt_upload_path, max_length=500)
+    file_name = models.CharField(max_length=500)
+    matched_document = models.ForeignKey(
+        Document, related_name="+", on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    # The user explicitly confirmed a NEW document although a candidate exists (never a silent default).
+    allow_duplicate_reference = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, related_name="+", on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def save(self, *args, **kwargs):
+        parent = Transmittal.objects.filter(pk=self.transmittal_id).values("direction", "status").first()
+        if parent is None or parent["direction"] != Transmittal.Direction.IN or parent["status"] != Transmittal.Status.DRAFT:
+            raise ValidationError("A receipt line only belongs to an incoming draft transmittal.")
+        super().save(*args, **kwargs)
+
+
+@receiver(post_delete, sender=TransmittalReceiptLine)
+def delete_pending_receipt_file(sender, instance, **kwargs):
+    """The pending file goes away with its line (draft deleted, line removed, or receipt confirmed) --
+    only after the database change is really committed, and a failure is traced (the file stays under
+    the pending prefix, where `cleanup_receipt_pending_files` can retry) instead of being lost silently."""
+    name, storage = instance.file.name, instance.file.storage
+    if not name:
+        return
+
+    def _delete():
+        try:
+            storage.delete(name)
+        except Exception:  # pragma: no cover - traced, never blocks the business operation
+            logger.exception("Pending receipt file could not be deleted: %s", name)
+
+    transaction.on_commit(_delete)
 
 
 class TransmittalEvent(models.Model):

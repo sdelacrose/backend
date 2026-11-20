@@ -17,8 +17,12 @@ from project_management.services.correspondence_send import (
     validate_mailbox_for_send, _valid_email,
 )
 from project_management.services.correspondence_template import unresolved_marker_errors
+from project_management.services.transmittal_eligibility import (
+    transmittal_direction_requires_hash, validate_item_eligibility,
+)
 from userapis.mailbox_send import UNCERTAIN_DELIVERY_MARKER
 from userapis.models import MailboxConnection
+from userapis.recette_guard import RecetteMailBlocked, check_send_allowed
 
 SEND_TYPES = ('SEND_STARTED', 'SEND_SUCCEEDED', 'SEND_FAILED')
 
@@ -57,6 +61,9 @@ def send_transmittal(transmittal, actor, *, recipient_contact_id=None, mailbox_i
         assert_not_withdrawn(revision.document)
         if not item.evidence_snapshot:
             raise ValidationError('This transmittal has no frozen attachment evidence.')
+        from project_management.services.client_surveillance_followup import assert_followup_sendable
+        assert_followup_sendable(transmittal, revision, item.distribution_purpose)  # LOT 3: re-checked right before the send
+        validate_item_eligibility(transmittal, revision)
         frozen = item.evidence_snapshot.get('revision') or {}
         if frozen.get('id') != revision.pk or not frozen.get('file_sha256'):
             raise ValidationError('This transmittal has no matching frozen revision hash.')
@@ -66,9 +73,14 @@ def send_transmittal(transmittal, actor, *, recipient_contact_id=None, mailbox_i
         except (OSError, ValueError) as error:
             raise ValidationError('A stored document file could not be read. No message was sent.') from error
         digest = hashlib.sha256(verified_content).hexdigest()
-        if not revision.file_sha256 or digest != revision.file_sha256 or digest != frozen.get('file_sha256'):
+        requires_approved_hash = transmittal_direction_requires_hash(revision.document)
+        if (
+            digest != frozen.get('file_sha256')
+            or (requires_approved_hash and not revision.file_sha256)
+            or (revision.file_sha256 and digest != revision.file_sha256)
+        ):
             raise ValidationError('A stored attachment no longer matches its approved hash.')
-        filename = posixpath.basename(frozen.get('file_name') or revision.file_name or revision.file.name)
+        filename = posixpath.basename(frozen.get('download_name') or frozen.get('file_name') or revision.file_name or revision.file.name)
         attachments.append(SimpleNamespace(file=ContentFile(verified_content, name=filename), file_name=filename, file_size=len(verified_content)))
         evidence.append({'item': item.pk, 'document_revision': revision.pk, 'name': filename, 'sha256': digest})
     if not attachments: raise ValidationError('At least one document is required.')
@@ -83,6 +95,13 @@ def send_transmittal(transmittal, actor, *, recipient_contact_id=None, mailbox_i
                 'from': mailbox.email_address if mailbox else settings.DEFAULT_FROM_EMAIL,
                 'subject': subject, 'body': body, 'attachments': evidence,
                 'mailbox_id': mailbox_id, 'provider': 'graph' if mailbox else 'smtp'}
+    try:
+        check_send_allowed(
+            sender_address=metadata["from"], to=to_email, cc=cc,
+            provider=metadata["provider"],
+        )
+    except RecetteMailBlocked as error:
+        raise ValidationError({"recette": str(error)}) from error
     with transaction.atomic():
         Transmittal.objects.select_for_update().get(pk=transmittal.pk)
         latest = transmittal.events.filter(event_type__in=SEND_TYPES).order_by('-id').first()
@@ -111,5 +130,14 @@ def send_transmittal(transmittal, actor, *, recipient_contact_id=None, mailbox_i
         event = TransmittalEvent.objects.create(transmittal=transmittal, event_type=result_type,
                                                actor=actor, metadata=result)
     if event.event_type == "SEND_SUCCEEDED":
+        # GED-WF.4.2: SEND_SUCCEEDED is already committed above; opening the client surveillance is an
+        # independent atomic step that can never undo it (failures are logged, reconciliation is idempotent).
+        from project_management.services.client_surveillance_opening import open_client_surveillances_safely
+        open_client_surveillances_safely(event)
+        # LOT 1: the SAME verified send closes the follow-ups it covers (after the new PREL cycle is opened)
+        from project_management.services.client_surveillance_followup import process_send_event_safely
+        process_send_event_safely(event)
         prepare_send_proof_safely(event, attachments)
     return event
+
+
