@@ -17,14 +17,22 @@ QUALITY_MODULE = "quality"
 MAX_PAGE_SIZE = 200
 
 
-def user_can_view_quality(user):
+def _has_quality_right(user, actions):
     if not user or not getattr(user, "company_id", None):
         return False
     checker = BaseModulePermission(QUALITY_MODULE, "view", "company")
     return any(
         checker._check_permission(user, QUALITY_MODULE, action, "company", {})
-        for action in ("view", "full_access")
+        for action in actions
     )
+
+
+def user_can_view_quality(user):
+    return _has_quality_right(user, ("view", "full_access"))
+
+
+def user_can_manage_templates(user):
+    return _has_quality_right(user, ("template_manage", "full_access"))
 
 
 def evaluations_for_user(user):
@@ -40,7 +48,10 @@ class _QualityView(APIView):
 
 class QualityAccessView(_QualityView):
     def get(self, request):
-        return Response({"can_view": user_can_view_quality(request.user)})
+        return Response({
+            "can_view": user_can_view_quality(request.user),
+            "can_manage_templates": user_can_manage_templates(request.user),
+        })
 
 
 class QualityDashboardView(_QualityView):

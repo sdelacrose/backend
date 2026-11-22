@@ -13,6 +13,7 @@ from models.models import CompanyProfile, User
 
 from .contact import ContactCompany
 from .project import Project, PurchaseOrder
+from .supplier_evaluation_template import EvaluationTemplate
 
 
 class SupplierEvaluation(models.Model):
@@ -43,6 +44,15 @@ class SupplierEvaluation(models.Model):
         Project, on_delete=models.PROTECT, null=True, blank=True,
         related_name="supplier_evaluations",
     )
+
+    # Q2 prepares the snapshot structure; Q3 fills it. The FK is SET_NULL: deleting a template never
+    # touches an evaluation, which only ever reads its own frozen copy.
+    template = models.ForeignKey(
+        EvaluationTemplate, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="evaluations",
+    )
+    template_version = models.PositiveIntegerField(null=True, blank=True)
+    template_snapshot = models.JSONField(null=True, blank=True)
 
     reference = models.CharField(max_length=64, blank=True, default="")
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)

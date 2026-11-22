@@ -56,6 +56,9 @@ from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.client_distribution_history import ClientDistributionHistoryView
 from project_management.views.document_history_events import DocumentHistoryEventsView
 from project_management.views.document_workflow import DocumentWorkflowViewSet
+from project_management.views.quality_templates import (
+    EvaluationTemplateDetailView, EvaluationTemplateDuplicateView, EvaluationTemplateListView,
+)
 from project_management.views.quality import QualityAccessView, QualityDashboardView, SupplierEvaluationListView
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet, InternalSupplierEvidenceDownload
 from project_management.views.supplier_portal import (SupplierPortalDocuments, SupplierPortalDocument,
@@ -740,6 +743,9 @@ urlpatterns = [
     path('quality/access', QualityAccessView.as_view(), name='quality-access'),
     path('quality/dashboard', QualityDashboardView.as_view(), name='quality-dashboard'),
     path('quality/evaluations', SupplierEvaluationListView.as_view(), name='quality-evaluations'),
+    path('quality/templates', EvaluationTemplateListView.as_view(), name='quality-templates'),
+    path('quality/templates/<int:pk>', EvaluationTemplateDetailView.as_view(), name='quality-template-detail'),
+    path('quality/templates/<int:pk>/duplicate', EvaluationTemplateDuplicateView.as_view(), name='quality-template-duplicate'),
     path('supplier-surveillance/<int:surveillance_id>/close', SupplierSurveillanceReviewViewSet.as_view({'post': 'close_surveillance_action'}), name='supplier-surveillance-close'),
     # L3G-2: manual retry when automatic post-closure evidence generation failed (section 23) --
     # idempotent, same generation path as the automatic attempt.
