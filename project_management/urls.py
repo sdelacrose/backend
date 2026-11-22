@@ -56,6 +56,7 @@ from project_management.views.document_revision import DocumentRevisionViewSet
 from project_management.views.client_distribution_history import ClientDistributionHistoryView
 from project_management.views.document_history_events import DocumentHistoryEventsView
 from project_management.views.document_workflow import DocumentWorkflowViewSet
+from project_management.views.quality import QualityAccessView, QualityDashboardView, SupplierEvaluationListView
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet, InternalSupplierEvidenceDownload
 from project_management.views.supplier_portal import (SupplierPortalDocuments, SupplierPortalDocument,
     SupplierPortalDownload, SupplierPortalAccess, SupplierPortalPublish)
@@ -736,6 +737,9 @@ urlpatterns = [
     path('supplier-surveillance/<int:surveillance_id>/my-review/complete', SupplierSurveillanceReviewViewSet.as_view({'post': 'complete_my_review'}), name='supplier-surveillance-my-review-complete'),
     path('supplier-surveillance/<int:surveillance_id>/events', SupplierSurveillanceReviewViewSet.as_view({'get': 'events'}), name='supplier-surveillance-events'),
     # L3E: the one-way READY_FOR_CLOSURE -> CLOSED transition.
+    path('quality/access', QualityAccessView.as_view(), name='quality-access'),
+    path('quality/dashboard', QualityDashboardView.as_view(), name='quality-dashboard'),
+    path('quality/evaluations', SupplierEvaluationListView.as_view(), name='quality-evaluations'),
     path('supplier-surveillance/<int:surveillance_id>/close', SupplierSurveillanceReviewViewSet.as_view({'post': 'close_surveillance_action'}), name='supplier-surveillance-close'),
     # L3G-2: manual retry when automatic post-closure evidence generation failed (section 23) --
     # idempotent, same generation path as the automatic attempt.

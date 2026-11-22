@@ -26,6 +26,7 @@ from .transmittal import (
     Transmittal, TransmittalEvent, TransmittalItem, TransmittalReceiptLine, TransmittalReferenceCounter,
 )
 from .document_workflow import DocumentWorkflow, DocumentWorkflowEvent
+from .supplier_evaluation import SupplierEvaluation
 from .supplier_surveillance import SupplierSurveillance, SupplierSurveillanceReferenceCounter
 from .supplier_surveillance_template import (
     SupplierSurveillanceTemplate,
