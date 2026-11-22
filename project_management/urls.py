@@ -59,6 +59,9 @@ from project_management.views.document_workflow import DocumentWorkflowViewSet
 from project_management.views.quality_templates import (
     EvaluationTemplateDetailView, EvaluationTemplateDuplicateView, EvaluationTemplateListView,
 )
+from project_management.views.quality_evaluations import (
+    EvaluationsView, OrdersToEvaluateView, SupplierEvaluationDetailView, SupplierEvaluationResponsesView,
+)
 from project_management.views.quality import QualityAccessView, QualityDashboardView, SupplierEvaluationListView
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet, InternalSupplierEvidenceDownload
 from project_management.views.supplier_portal import (SupplierPortalDocuments, SupplierPortalDocument,
@@ -742,7 +745,10 @@ urlpatterns = [
     # L3E: the one-way READY_FOR_CLOSURE -> CLOSED transition.
     path('quality/access', QualityAccessView.as_view(), name='quality-access'),
     path('quality/dashboard', QualityDashboardView.as_view(), name='quality-dashboard'),
-    path('quality/evaluations', SupplierEvaluationListView.as_view(), name='quality-evaluations'),
+    path('quality/evaluations', EvaluationsView.as_view(), name='quality-evaluations'),
+    path('quality/orders-to-evaluate', OrdersToEvaluateView.as_view(), name='quality-orders-to-evaluate'),
+    path('quality/evaluations/<int:pk>', SupplierEvaluationDetailView.as_view(), name='quality-evaluation-detail'),
+    path('quality/evaluations/<int:pk>/responses', SupplierEvaluationResponsesView.as_view(), name='quality-evaluation-responses'),
     path('quality/templates', EvaluationTemplateListView.as_view(), name='quality-templates'),
     path('quality/templates/<int:pk>', EvaluationTemplateDetailView.as_view(), name='quality-template-detail'),
     path('quality/templates/<int:pk>/duplicate', EvaluationTemplateDuplicateView.as_view(), name='quality-template-duplicate'),

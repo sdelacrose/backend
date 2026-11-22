@@ -31,6 +31,10 @@ def user_can_view_quality(user):
     return _has_quality_right(user, ("view", "full_access"))
 
 
+def user_can_manage_evaluations(user):
+    return _has_quality_right(user, ("evaluation_manage", "full_access"))
+
+
 def user_can_manage_templates(user):
     return _has_quality_right(user, ("template_manage", "full_access"))
 
@@ -51,6 +55,7 @@ class QualityAccessView(_QualityView):
         return Response({
             "can_view": user_can_view_quality(request.user),
             "can_manage_templates": user_can_manage_templates(request.user),
+            "can_manage_evaluations": user_can_manage_evaluations(request.user),
         })
 
 
@@ -81,6 +86,8 @@ def _serialize(evaluation):
         "purchase_order": {"id": order.id, "reference": order.reference} if order else None,
         "project": {"id": project.id, "name": project.project_name} if project else None,
         "fnc_count": evaluation.fnc_count,
+        "follows_fnc": evaluation.follows_fnc,
+        "owner": ((evaluation.owner.full_name or "").strip() or evaluation.owner.email) if evaluation.owner else None,
         "created_at": evaluation.created_at,
         "updated_at": evaluation.updated_at,
         "closed_at": evaluation.closed_at,
@@ -103,7 +110,7 @@ class SupplierEvaluationListView(_QualityView):
             return self._forbidden()
         params = request.query_params
         queryset = evaluations_for_user(request.user).select_related(
-            "supplier", "purchase_order", "project"
+            "supplier", "purchase_order", "project", "owner"
         )
         status = params.get("status")
         if status in SupplierEvaluation.Status.values:

@@ -60,7 +60,18 @@ class SupplierEvaluation(models.Model):
         max_length=10, choices=EvaluationType.choices, default=EvaluationType.PARTIAL
     )
 
-    # FNC (non-conformity) information. Counted and commented only; the FNC process is a later lot.
+    # Q3: owner of the evaluation (the user who started it) and the explicitly typed evaluated period.
+    owner = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="owned_supplier_evaluations",
+    )
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+
+    # FNC (non-conformity). Q3: "follows an FNC" + its mandatory reference when yes. The counters below are
+    # kept for the later FNC lot.
+    follows_fnc = models.BooleanField(default=False)
+    fnc_reference = models.CharField(max_length=128, blank=True, default="")
     fnc_count = models.PositiveIntegerField(default=0)
     fnc_comment = models.TextField(blank=True, default="")
 
@@ -81,6 +92,62 @@ class SupplierEvaluation(models.Model):
     class Meta:
         ordering = ["-created_at", "-id"]
         indexes = [models.Index(fields=["company", "status"], name="supplier_eval_company_status")]
+        constraints = [
+            # References are generated, never typed; unique per company. Several evaluations of the same order
+            # are allowed on purpose (partial evaluations, re-evaluations): no constraint on purchase_order.
+            models.UniqueConstraint(
+                fields=["company", "reference"],
+                condition=~models.Q(reference=""),
+                name="supplier_eval_unique_reference_per_company",
+            ),
+        ]
 
     def __str__(self):
         return self.reference or f"SupplierEvaluation #{self.pk}"
+
+
+class EvaluationReferenceCounter(models.Model):
+    """One row per company: the sequence of EVAL-YYYYMM-NNNNN, locked with select_for_update (same approach as
+    POReferenceCounter). The sequence never resets when the month changes."""
+
+    company = models.OneToOneField(
+        CompanyProfile, on_delete=models.CASCADE, related_name="evaluation_reference_counter"
+    )
+    last_sequence = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class EvaluationResponse(models.Model):
+    """The answer to ONE criterion of the evaluation own snapshot. `criterion_id` is the id stored inside
+    `SupplierEvaluation.template_snapshot`, deliberately not a foreign key: the live template rows may be
+    edited or deleted without touching an evaluation."""
+
+    evaluation = models.ForeignKey(
+        SupplierEvaluation, on_delete=models.CASCADE, related_name="responses"
+    )
+    criterion_id = models.PositiveIntegerField()
+    score = models.PositiveSmallIntegerField(null=True, blank=True)
+    not_applicable = models.BooleanField(default=False)
+    comment = models.TextField(blank=True, default="")
+    answered_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["criterion_id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["evaluation", "criterion_id"], name="evaluation_response_unique_criterion"
+            ),
+            models.CheckConstraint(
+                check=models.Q(score__isnull=True) | (models.Q(score__gte=1) & models.Q(score__lte=5)),
+                name="evaluation_response_score_1_5",
+            ),
+            models.CheckConstraint(
+                check=~(models.Q(score__isnull=False) & models.Q(not_applicable=True)),
+                name="evaluation_response_score_xor_na",
+            ),
+        ]
