@@ -26,11 +26,19 @@
       .meta td.k { color: #475467; width: 28%; }
       .result { margin: 8px 0; }
       .score { font-size: 24px; font-weight: bold; }
-      .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; background: #e7f6ec; margin-left: 8px; }
+      /* Same palette as the Quality interface (views/Quality/ratingColors.ts): [background, text]. */
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; margin-left: 8px; background: #e7f6ec; color: #036b26; }
+      .badge.EXCELLENT { background: #e7f6ec; color: #036b26; }
+      .badge.GOOD { background: #bdefe0; color: #000; }
+      .badge.IMPROVEMENT_REQUIRED { background: #fef6e7; color: #865503; }
+      .badge.UNSATISFACTORY { background: #fbeae9; color: #9e0a05; }
       .tag { font-size: 8px; color: #475467; }
       .crit { color: #9e0a05; }
+      .keep { page-break-inside: avoid; }
       .muted { color: #667085; }
-      .item { margin-bottom: 2px; overflow-wrap: anywhere; }
+      ul.items { margin: 2px 0 0; padding-left: 16px; }
+      ul.items.crit { color: #9e0a05; }
+      ul.items li { margin: 0 0 4px; line-height: 1.35; overflow-wrap: anywhere; page-break-inside: avoid; }
     </style>
   </head>
   <body>
@@ -49,7 +57,7 @@
     <h2>{{ labels.result }}</h2>
     <div class="result">
       {% if score %}
-        <span class="score">{{ score }} / 100</span><span class="badge">{{ rating }}</span>
+        <span class="score">{{ score }} / 100</span><span class="badge {{ rating_code }}">{{ rating }}</span>
       {% else %}
         <span class="muted">{{ labels.not_scored }}</span>
       {% endif %}
@@ -88,17 +96,18 @@
     {% endfor %}
 
     <h2>{{ labels.strengths }}</h2>
-    {% for item in strengths %}<div class="item">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    {% if strengths %}<ul class="items">{% for item in strengths %}<li>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</li>{% endfor %}</ul>{% else %}<div class="muted">{{ labels.no_items }}</div>{% endif %}
     <h2>{{ labels.improvements }}</h2>
-    {% for item in improvements %}<div class="item">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    {% if improvements %}<ul class="items">{% for item in improvements %}<li>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</li>{% endfor %}</ul>{% else %}<div class="muted">{{ labels.no_items }}</div>{% endif %}
     <h2>{{ labels.critical_points }}</h2>
-    {% for item in critical_points %}<div class="item crit">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    {% if critical_points %}<ul class="items crit">{% for item in critical_points %}<li>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</li>{% endfor %}</ul>{% else %}<div class="muted">{{ labels.no_items }}</div>{% endif %}
 
     <h2>{{ labels.conclusion }}</h2>
     {% if conclusion %}<div>{{ conclusion }}</div>{% endif %}
     <div>{{ counts }}</div>
     {% if reviewer_comment %}<div><b>{{ labels.reviewer_comment }}:</b> {{ reviewer_comment|linebreaksbr }}</div>{% endif %}
 
+    <div class="keep">
     <h2>{{ labels.workflow }}</h2>
     <table class="meta">
       <tr><td class="k">{{ labels.owner }}</td><td>{{ owner|default:labels.none }}</td></tr>
@@ -116,5 +125,6 @@
     <table class="meta" style="margin-top:6px">
       <tr><td class="k">{{ labels.generated }}</td><td>{{ generated_at }}</td></tr>
     </table>
+    </div>
   </body>
 </html>

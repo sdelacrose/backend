@@ -378,3 +378,18 @@ class QualityQ6Tests(NoNotificationsMixin, TestCase):
         pages = len(HTML(string=self.html(pk, "fr", "Europe/Paris")).render().pages)
         self.assertGreaterEqual(pages, 3)
         self.assertIn("<thead>", self.html(pk))  # table headers repeat on every page
+
+    # ------------------------------------------------------------------------------ Q6.3
+    def test_rating_badge_follows_the_interface_palette_and_lists_are_bulleted(self):
+        pk = self.approved()
+        page = self.html(pk)
+        code = self.context(pk)["rating_code"]
+        self.assertIn(f'class="badge {code}"', page)
+        for rating, colors in (("EXCELLENT", "#e7f6ec"), ("GOOD", "#bdefe0"),
+                               ("IMPROVEMENT_REQUIRED", "#fef6e7"), ("UNSATISFACTORY", "#fbeae9")):
+            self.assertIn(f".badge.{rating} {{ background: {colors};", page)
+        self.assertIn("#865503", page)  # amber text of IMPROVEMENT_REQUIRED, as in ratingColors.ts
+        self.assertIn('<ul class="items">', page)  # strengths / improvements are real bulleted lists
+        self.assertIn("<li>", page)
+        # thresholds and rating values are untouched by the template
+        self.assertEqual(self.context(pk)["rating_code"], self.api().get(f"{EVALS}/{pk}").json()["scoring"]["rating"])
