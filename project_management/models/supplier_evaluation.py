@@ -240,3 +240,17 @@ class SupplierEvaluationEvent(models.Model):
 
     def __str__(self):
         return f"{self.event_type} on {self.evaluation_id}"
+
+
+class SupplierEvaluationReport(models.Model):
+    """Stable link between an evaluation and its logical LINKS Document (Q6). Regenerating the report never
+    creates another row: it adds a new DocumentRevision to the same Document. Both sides are unique."""
+
+    evaluation = models.OneToOneField(
+        SupplierEvaluation, related_name="report", on_delete=models.CASCADE,
+    )
+    document = models.OneToOneField(
+        "project_management.Document", related_name="quality_evaluation_report", on_delete=models.PROTECT,
+    )
+    created_by = models.ForeignKey(User, related_name="+", null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)

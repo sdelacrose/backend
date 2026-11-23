@@ -27,6 +27,7 @@ from project_management.services.supplier_evaluation_workflow import (
     submission_check,
 )
 from project_management.views.quality import SupplierEvaluationListView
+from project_management.views.quality_report import report_payload
 from project_management.views.quality import (
     MAX_PAGE_SIZE,
     _positive_int,
@@ -108,6 +109,7 @@ def serialize_detail(evaluation, user):
         "reviewer": None if not evaluation.reviewer else {
             "id": evaluation.reviewer_id, "name": _name(evaluation.reviewer)},
         "is_owner": is_owner(evaluation, user),
+        "report": report_payload(evaluation, user),
         "allowed_actions": allowed_actions(evaluation, user),
         "submission": submission_check(evaluation),
         "workflow": {
@@ -131,7 +133,7 @@ def serialize_detail(evaluation, user):
 def _detail_queryset(user):
     return evaluations_for_user(user).select_related(
         "supplier", "purchase_order", "project", "owner", "reviewer", "submitted_by", "reviewed_by",
-        "rejected_by", "approved_by", "closed_by",
+        "rejected_by", "approved_by", "closed_by", "report__document",
     ).prefetch_related("responses")
 
 

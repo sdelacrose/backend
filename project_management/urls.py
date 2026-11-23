@@ -62,6 +62,7 @@ from project_management.views.quality_templates import (
 from project_management.views.quality_evaluations import (
     EvaluationsView, OrdersToEvaluateView, SupplierEvaluationDetailView, SupplierEvaluationResponsesView,
 )
+from project_management.views.quality_report import EvaluationReportDownloadView, EvaluationReportView
 from project_management.views.quality_workflow import (
     EvaluationHistoryView,
     EvaluationReviewerView,
@@ -756,6 +757,8 @@ urlpatterns = [
     path('quality/evaluations/<int:pk>/responses', SupplierEvaluationResponsesView.as_view(), name='quality-evaluation-responses'),
     path('quality/evaluations/<int:pk>/reviewer', EvaluationReviewerView.as_view(), name='quality-evaluation-reviewer'),
     path('quality/evaluations/<int:pk>/history', EvaluationHistoryView.as_view(), name='quality-evaluation-history'),
+    path('quality/evaluations/<int:pk>/report', EvaluationReportView.as_view(), name='quality-evaluation-report'),
+    path('quality/evaluations/<int:pk>/report/download', EvaluationReportDownloadView.as_view(), name='quality-evaluation-report-download'),
     path('quality/evaluations/<int:pk>/<str:action>', EvaluationTransitionView.as_view(), name='quality-evaluation-transition'),
     path('quality/templates', EvaluationTemplateListView.as_view(), name='quality-templates'),
     path('quality/templates/<int:pk>', EvaluationTemplateDetailView.as_view(), name='quality-template-detail'),

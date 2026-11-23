@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="{{ language }}">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{{ labels.title }} {{ reference }}</title>
+    <style>
+      @page {
+        size: A4 portrait;
+        margin: 16mm 14mm 18mm 14mm;
+        @bottom-center {
+          content: "{{ reference }}  |  LINKS  |  {{ labels.page }} " counter(page) " {{ labels.of }} " counter(pages);
+          font-size: 8px;
+          color: #667085;
+        }
+      }
+      body { margin: 0; font-family: "Helvetica", "Arial", sans-serif; font-size: 10px; color: #101828; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      h2 { font-size: 13px; margin: 16px 0 6px; border-bottom: 1px solid #101828; padding-bottom: 3px; }
+      h3 { font-size: 11px; margin: 10px 0 4px; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; vertical-align: top; padding: 3px 5px; border: 1px solid #d0d5dd; }
+      th { background: #f2f4f7; font-size: 9px; }
+      .meta td { border: none; padding: 1px 4px 1px 0; }
+      .meta td.k { color: #475467; width: 28%; }
+      .result { margin: 8px 0; }
+      .score { font-size: 24px; font-weight: bold; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; background: #e7f6ec; margin-left: 8px; }
+      .tag { font-size: 8px; color: #475467; }
+      .crit { color: #9e0a05; }
+      .muted { color: #667085; }
+      tr { page-break-inside: avoid; }
+    </style>
+  </head>
+  <body>
+    <h1>{{ labels.title }}</h1>
+    <table class="meta">
+      <tr><td class="k">{{ labels.reference }}</td><td>{{ reference }}</td></tr>
+      <tr><td class="k">{{ labels.supplier }}</td><td>{{ supplier }}</td></tr>
+      <tr><td class="k">{{ labels.order }}</td><td>{{ order|default:labels.none }}</td></tr>
+      {% if project %}<tr><td class="k">{{ labels.project }}</td><td>{{ project }}</td></tr>{% endif %}
+      <tr><td class="k">{{ labels.period }}</td><td>{{ period|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.type }}</td><td>{{ type }}</td></tr>
+      {% if fnc_reference %}<tr><td class="k">{{ labels.fnc }}</td><td>{{ fnc_reference }}</td></tr>{% endif %}
+      <tr><td class="k">{{ labels.template }}</td><td>{{ template }}</td></tr>
+    </table>
+
+    <h2>{{ labels.result }}</h2>
+    <div class="result">
+      {% if score %}
+        <span class="score">{{ score }} / 100</span><span class="badge">{{ rating }}</span>
+      {% else %}
+        <span class="muted">{{ labels.not_scored }}</span>
+      {% endif %}
+    </div>
+
+    <h2>{{ labels.sections }}</h2>
+    <table>
+      <tr><th>{{ labels.criterion }}</th><th>{{ labels.weight }}</th><th>{{ labels.score }}</th></tr>
+      {% for section in sections %}
+        <tr><td>{{ section.title }}</td><td>{{ section.weight|default:labels.none }}</td>
+            <td>{% if section.score %}{{ section.score }} / 100{% else %}{{ labels.not_scored }}{% endif %}</td></tr>
+      {% endfor %}
+    </table>
+
+    <h2>{{ labels.details }}</h2>
+    {% for section in sections %}
+      <h3>{{ section.title }}{% if section.weight %} ({{ section.weight }}){% endif %}</h3>
+      <table>
+        <tr><th style="width:38%">{{ labels.criterion }}</th><th style="width:9%">{{ labels.weight }}</th>
+            <th style="width:13%">{{ labels.answer }}</th><th>{{ labels.comment }}</th></tr>
+        {% for row in section.rows %}
+          <tr>
+            <td>{{ row.label }}
+              {% if row.required %}<span class="tag">[{{ labels.required }}]</span>{% endif %}
+              {% if row.critical %}<span class="tag crit">[{{ labels.critical }}]</span>{% endif %}</td>
+            <td>{{ row.weight|default:labels.none }}</td>
+            <td>{{ row.answer }}</td>
+            <td>{{ row.comment|default:labels.none|linebreaksbr }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% endfor %}
+
+    <h2>{{ labels.strengths }}</h2>
+    {% for item in strengths %}<div>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    <h2>{{ labels.improvements }}</h2>
+    {% for item in improvements %}<div>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    <h2>{{ labels.critical_points }}</h2>
+    {% for item in critical_points %}<div class="crit">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+
+    <h2>{{ labels.conclusion }}</h2>
+    {% if conclusion %}<div>{{ conclusion }}</div>{% endif %}
+    {% if reviewer_comment %}<div><b>{{ labels.reviewer_comment }}:</b> {{ reviewer_comment|linebreaksbr }}</div>{% endif %}
+
+    <h2>{{ labels.workflow }}</h2>
+    <table class="meta">
+      <tr><td class="k">{{ labels.owner }}</td><td>{{ owner|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.reviewer }}</td><td>{{ reviewer|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.submitted }}</td><td>{{ submitted|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.review_started }}</td><td>{{ review_started|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.approved }}</td><td>{{ approved|default:labels.none }}</td></tr>
+      {% if closed %}<tr><td class="k">{{ labels.closed }}</td><td>{{ closed }}</td></tr>{% endif %}
+      <tr><td class="k">{{ labels.generated }}</td><td>{{ generated_at }}</td></tr>
+    </table>
+  </body>
+</html>

@@ -36,6 +36,7 @@ from .supplier_evaluation import (
     EvaluationResponse,
     SupplierEvaluation,
     SupplierEvaluationEvent,
+    SupplierEvaluationReport,
 )
 from .supplier_surveillance import SupplierSurveillance, SupplierSurveillanceReferenceCounter
 from .supplier_surveillance_template import (
