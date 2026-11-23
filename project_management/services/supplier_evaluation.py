@@ -10,7 +10,7 @@ import copy
 from django.db import transaction
 from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from project_management.models import (
     EvaluationReferenceCounter,
@@ -18,6 +18,7 @@ from project_management.models import (
     EvaluationTemplate,
     PurchaseOrder,
     SupplierEvaluation,
+    SupplierEvaluationEvent,
 )
 from project_management.purchase_order_access import filter_purchase_orders_to_owner_scope
 from project_management.models.supplier_evaluation_template import SCALE_MAX, SCALE_MIN
@@ -132,7 +133,7 @@ def create_supplier_evaluation(
     if not follows_fnc:
         fnc_reference = ""
 
-    return SupplierEvaluation.objects.create(
+    evaluation = SupplierEvaluation.objects.create(
         company_id=user.company_id,
         supplier=order.receiving_company,  # always derived from the order, never chosen
         purchase_order=order,
@@ -151,6 +152,10 @@ def create_supplier_evaluation(
         follows_fnc=bool(follows_fnc),
         fnc_reference=fnc_reference,
     )
+    SupplierEvaluationEvent.objects.create(
+        evaluation=evaluation, event_type=SupplierEvaluationEvent.EventType.CREATED, actor=user,
+    )
+    return evaluation
 
 
 # ------------------------------------------------------------------------------------------- answers
@@ -192,6 +197,8 @@ def _validate_answer(snapshot, criterion, answer):
 def save_responses(*, evaluation, user, answers):
     """Save (create / update / clear) answers. All-or-nothing: one invalid answer saves nothing."""
     evaluation = SupplierEvaluation.objects.select_for_update().get(pk=evaluation.pk)
+    if evaluation.owner_id != user.id:  # Q5: only the owner prepares the answers
+        raise PermissionDenied("Only the owner of the evaluation can change its answers.")
     if evaluation.status not in EDITABLE_STATUSES:
         raise ValidationError({"detail": "This evaluation can no longer be changed."})
     if not isinstance(answers, list):
@@ -228,6 +235,9 @@ def save_responses(*, evaluation, user, answers):
     if evaluation.status == SupplierEvaluation.Status.DRAFT and evaluation.responses.exists():
         evaluation.status = SupplierEvaluation.Status.IN_PROGRESS
         evaluation.save(update_fields=["status", "updated_at"])
+        SupplierEvaluationEvent.objects.create(
+            evaluation=evaluation, event_type=SupplierEvaluationEvent.EventType.STARTED, actor=user,
+        )
     recalculate_evaluation_score(evaluation)
     return evaluation
 

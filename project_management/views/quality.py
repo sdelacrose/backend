@@ -67,7 +67,7 @@ class QualityDashboardView(_QualityView):
         counts = evaluations_for_user(request.user).aggregate(
             total=Count("id"),
             in_progress=Count("id", filter=Q(status__in=[S.DRAFT, S.IN_PROGRESS])),
-            pending_review=Count("id", filter=Q(status=S.PENDING_REVIEW)),
+            pending_review=Count("id", filter=Q(status__in=[S.SUBMITTED, S.UNDER_REVIEW])),
             approved_or_closed=Count("id", filter=Q(status__in=[S.APPROVED, S.CLOSED])),
         )
         return Response(counts)

@@ -62,6 +62,11 @@ from project_management.views.quality_templates import (
 from project_management.views.quality_evaluations import (
     EvaluationsView, OrdersToEvaluateView, SupplierEvaluationDetailView, SupplierEvaluationResponsesView,
 )
+from project_management.views.quality_workflow import (
+    EvaluationHistoryView,
+    EvaluationReviewerView,
+    EvaluationTransitionView,
+)
 from project_management.views.quality import QualityAccessView, QualityDashboardView, SupplierEvaluationListView
 from project_management.views.supplier_surveillance import SupplierSurveillanceViewSet, InternalSupplierEvidenceDownload
 from project_management.views.supplier_portal import (SupplierPortalDocuments, SupplierPortalDocument,
@@ -749,6 +754,9 @@ urlpatterns = [
     path('quality/orders-to-evaluate', OrdersToEvaluateView.as_view(), name='quality-orders-to-evaluate'),
     path('quality/evaluations/<int:pk>', SupplierEvaluationDetailView.as_view(), name='quality-evaluation-detail'),
     path('quality/evaluations/<int:pk>/responses', SupplierEvaluationResponsesView.as_view(), name='quality-evaluation-responses'),
+    path('quality/evaluations/<int:pk>/reviewer', EvaluationReviewerView.as_view(), name='quality-evaluation-reviewer'),
+    path('quality/evaluations/<int:pk>/history', EvaluationHistoryView.as_view(), name='quality-evaluation-history'),
+    path('quality/evaluations/<int:pk>/<str:action>', EvaluationTransitionView.as_view(), name='quality-evaluation-transition'),
     path('quality/templates', EvaluationTemplateListView.as_view(), name='quality-templates'),
     path('quality/templates/<int:pk>', EvaluationTemplateDetailView.as_view(), name='quality-template-detail'),
     path('quality/templates/<int:pk>/duplicate', EvaluationTemplateDuplicateView.as_view(), name='quality-template-duplicate'),

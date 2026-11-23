@@ -20,10 +20,11 @@ class SupplierEvaluation(models.Model):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         IN_PROGRESS = "IN_PROGRESS", "In progress"
-        PENDING_REVIEW = "PENDING_REVIEW", "Pending review"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        UNDER_REVIEW = "UNDER_REVIEW", "Under review"
+        REJECTED = "REJECTED", "Rejected"
         APPROVED = "APPROVED", "Approved"
         CLOSED = "CLOSED", "Closed"
-        CANCELLED = "CANCELLED", "Cancelled"
 
     class EvaluationType(models.TextChoices):
         PARTIAL = "PARTIAL", "Partial"
@@ -94,6 +95,29 @@ class SupplierEvaluation(models.Model):
         related_name="closed_supplier_evaluations",
     )
 
+    # Q5 workflow (services.supplier_evaluation_workflow is the only writer). `submitted_at` / `closed_*` above
+    # are reused; the reviewer is chosen by the owner and must be a different user.
+    reviewer = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="reviewed_supplier_evaluations",
+    )
+    submitted_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    reviewed_by = models.ForeignKey(  # who started the review
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    rejected_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    rejected_at = models.DateTimeField(null=True, blank=True)
+    rejection_reason = models.TextField(blank=True, default="")
+
     class Meta:
         ordering = ["-created_at", "-id"]
         indexes = [models.Index(fields=["company", "status"], name="supplier_eval_company_status")]
@@ -156,3 +180,63 @@ class EvaluationResponse(models.Model):
                 name="evaluation_response_score_xor_na",
             ),
         ]
+
+
+class EvaluationEventQuerySet(models.QuerySet):
+    """Workflow events are evidence: never bulk-edited or bulk-deleted (same pattern as
+    SupplierSurveillanceEvent)."""
+
+    def update(self, **kwargs):
+        from django.core.exceptions import ValidationError
+
+        raise ValidationError("Supplier evaluation events cannot be modified.")
+
+    def delete(self):
+        from django.core.exceptions import ValidationError
+
+        raise ValidationError("Supplier evaluation events cannot be deleted.")
+
+
+class SupplierEvaluationEvent(models.Model):
+    """One immutable record of a workflow step of a SupplierEvaluation (insert-only)."""
+
+    class EventType(models.TextChoices):
+        CREATED = "CREATED", "Evaluation created"
+        STARTED = "STARTED", "Evaluation started"
+        REVIEWER_ASSIGNED = "REVIEWER_ASSIGNED", "Reviewer assigned"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        REVIEW_STARTED = "REVIEW_STARTED", "Review started"
+        REJECTED = "REJECTED", "Rejected"
+        RESUMED = "RESUMED", "Resumed"
+        RESUBMITTED = "RESUBMITTED", "Resubmitted"
+        APPROVED = "APPROVED", "Approved"
+        CLOSED = "CLOSED", "Closed"
+
+    evaluation = models.ForeignKey(
+        SupplierEvaluation, related_name="events", on_delete=models.CASCADE,
+    )
+    event_type = models.CharField(max_length=24, choices=EventType.choices)
+    actor = models.ForeignKey(User, related_name="+", on_delete=models.PROTECT)
+    comment = models.TextField(blank=True, default="")
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = EvaluationEventQuerySet.as_manager()
+
+    class Meta:
+        ordering = ["created_at", "id"]
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            from django.core.exceptions import ValidationError
+
+            raise ValidationError("Supplier evaluation events cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+
+        raise ValidationError("Supplier evaluation events cannot be deleted.")
+
+    def __str__(self):
+        return f"{self.event_type} on {self.evaluation_id}"

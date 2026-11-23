@@ -31,7 +31,12 @@ from .supplier_evaluation_template import (
     EvaluationTemplateCriterion,
     EvaluationTemplateSection,
 )
-from .supplier_evaluation import EvaluationReferenceCounter, EvaluationResponse, SupplierEvaluation
+from .supplier_evaluation import (
+    EvaluationReferenceCounter,
+    EvaluationResponse,
+    SupplierEvaluation,
+    SupplierEvaluationEvent,
+)
 from .supplier_surveillance import SupplierSurveillance, SupplierSurveillanceReferenceCounter
 from .supplier_surveillance_template import (
     SupplierSurveillanceTemplate,

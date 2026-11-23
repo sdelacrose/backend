@@ -21,6 +21,11 @@ from project_management.services.supplier_evaluation import (
     orders_to_evaluate,
     save_responses,
 )
+from project_management.services.supplier_evaluation_workflow import (
+    allowed_actions,
+    is_owner,
+    submission_check,
+)
 from project_management.views.quality import SupplierEvaluationListView
 from project_management.views.quality import (
     MAX_PAGE_SIZE,
@@ -98,7 +103,26 @@ def serialize_detail(evaluation, user):
         },
         "progress": evaluation_progress(evaluation),
         "scoring": scoring_payload(evaluation),
-        "editable": evaluation.status in EDITABLE_STATUSES and user_can_manage_evaluations(user),
+        "editable": evaluation.status in EDITABLE_STATUSES and is_owner(evaluation, user)
+        and user_can_manage_evaluations(user),
+        "reviewer": None if not evaluation.reviewer else {
+            "id": evaluation.reviewer_id, "name": _name(evaluation.reviewer)},
+        "is_owner": is_owner(evaluation, user),
+        "allowed_actions": allowed_actions(evaluation, user),
+        "submission": submission_check(evaluation),
+        "workflow": {
+            "submitted_at": evaluation.submitted_at,
+            "submitted_by": _name(evaluation.submitted_by),
+            "reviewed_at": evaluation.reviewed_at,
+            "reviewed_by": _name(evaluation.reviewed_by),
+            "rejected_at": evaluation.rejected_at,
+            "rejected_by": _name(evaluation.rejected_by),
+            "rejection_reason": evaluation.rejection_reason,
+            "approved_at": evaluation.approved_at,
+            "approved_by": _name(evaluation.approved_by),
+            "closed_at": evaluation.closed_at,
+            "closed_by": _name(evaluation.closed_by),
+        },
         "created_at": evaluation.created_at,
         "updated_at": evaluation.updated_at,
     }
@@ -106,7 +130,8 @@ def serialize_detail(evaluation, user):
 
 def _detail_queryset(user):
     return evaluations_for_user(user).select_related(
-        "supplier", "purchase_order", "project", "owner"
+        "supplier", "purchase_order", "project", "owner", "reviewer", "submitted_by", "reviewed_by",
+        "rejected_by", "approved_by", "closed_by",
     ).prefetch_related("responses")
 
 

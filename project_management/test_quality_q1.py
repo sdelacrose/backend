@@ -67,12 +67,12 @@ class QualityQ1Tests(NoNotificationsMixin, TestCase):
             company_profile=self.company_b, company_name="Supplier B", contact_email="s@b.invalid"
         )
         S = SupplierEvaluation.Status
-        for status in (S.DRAFT, S.IN_PROGRESS, S.PENDING_REVIEW, S.APPROVED, S.CLOSED, S.CANCELLED):
+        for status in (S.DRAFT, S.IN_PROGRESS, S.SUBMITTED, S.APPROVED, S.CLOSED, S.REJECTED):
             SupplierEvaluation.objects.create(
                 company=self.company_a, supplier=self.supplier_a, status=status
             )
         self.foreign = SupplierEvaluation.objects.create(
-            company=self.company_b, supplier=self.supplier_b, status=S.PENDING_REVIEW,
+            company=self.company_b, supplier=self.supplier_b, status=S.SUBMITTED,
             reference="B-ONLY",
         )
 

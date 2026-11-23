@@ -332,7 +332,7 @@ class QualityQ3Tests(NoNotificationsMixin, TestCase):
     def test_answers_are_locked_after_the_editable_statuses(self):
         pk = self.start().json()["id"]
         c1 = self.ids(pk)[0]
-        for status in ("PENDING_REVIEW", "APPROVED", "CLOSED", "CANCELLED"):
+        for status in ("SUBMITTED", "UNDER_REVIEW", "REJECTED", "APPROVED", "CLOSED"):
             SupplierEvaluation.objects.filter(pk=pk).update(status=status)
             self.assertEqual(self.answer(pk, {"criterion_id": c1, "score": 4}).status_code, 400, status)
             self.assertFalse(self.api(self.w.manager).get(detail(pk)).json()["editable"])
