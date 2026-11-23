@@ -85,7 +85,10 @@ class EvaluationReportView(_ReportView):
         evaluation = self._get(request, pk)
         assert_reportable(evaluation)
         try:
-            generate_report(evaluation=evaluation, user=request.user, language=request.data.get("language") or "en")
+            generate_report(
+                evaluation=evaluation, user=request.user, language=request.data.get("language") or "en",
+                timezone_name=request.data.get("timezone"),
+            )
         except APIException:
             raise
         except Exception:

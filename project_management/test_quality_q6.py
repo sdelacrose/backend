@@ -211,7 +211,7 @@ class QualityQ6Tests(NoNotificationsMixin, TestCase):
     def test_workflow_people_dates_conclusion_and_languages(self):
         pk = self.approved()
         context = self.context(pk)
-        self.assertTrue(context["owner"] and context["reviewer"] and context["approved"] and context["submitted"])
+        self.assertTrue(context["owner"] and context["reviewer"] and len(context["steps"]) >= 3)
         self.assertEqual(context["reviewer_comment"], "Solid supplier")
         self.assertIn("/ 100", context["conclusion"])
         self.assertTrue(context["strengths"] and context["labels"]["title"])
@@ -276,3 +276,105 @@ class QualityQ6Tests(NoNotificationsMixin, TestCase):
             self.assertEqual(self.generate(pk).status_code, 503)
         self.assertEqual(DocumentRevision.objects.filter(document_id=first["document_id"]).count(), 1)
         self.assertEqual(self.api().get(report_url(pk)).json()["revision_count"], 1)
+
+    # ------------------------------------------------------------------------------ Q6.2
+    def html(self, pk, language="en", tz=None):
+        from django.template.loader import render_to_string
+
+        evaluation = SupplierEvaluation.objects.get(pk=pk)
+        context = report_service.build_report_context(evaluation, language, evaluation.updated_at, tz)
+        return render_to_string("supplier_evaluation_report.html", context)
+
+    def test_section_table_has_its_own_headers(self):
+        pk = self.approved()
+        for language, section, score in (("en", "Section", "Score"), ("fr", "Section", "Score"), ("de", "Abschnitt", "Punktzahl")):
+            page = self.html(pk, language)
+            heading = self.context(pk, language)["labels"]["sections"]
+            block = next(b for b in page.split("<h2>") if b.startswith(heading))
+            self.assertIn(f">{section}</th>", block)
+            self.assertIn(f">{score}</th>", block)
+            self.assertNotIn(self.context(pk, language)["labels"]["criterion"], block.split("</thead>")[0])
+            self.assertNotIn(self.context(pk, language)["labels"]["score"] + "</th>", block.split("</thead>")[0])
+
+    def test_dates_are_localized_and_always_carry_their_time_zone(self):
+        pk = self.approved()
+        tokyo = self.context_tz(pk, "fr", "Asia/Tokyo")
+        paris = self.context_tz(pk, "fr", "Europe/Paris")
+        self.assertIn("UTC+09:00", tokyo["steps"][0]["when"])
+        self.assertRegex(paris["steps"][0]["when"], r"UTC\+0[12]:00")
+        self.assertNotEqual(tokyo["steps"][0]["when"], paris["steps"][0]["when"])
+        self.assertEqual(tokyo["timezone"], "Asia/Tokyo")
+        self.assertIn("novembre", tokyo["steps"][0]["when"])
+        self.assertIn("November", self.context_tz(pk, "de", "UTC")["steps"][0]["when"])
+        self.assertIn("November", self.context_tz(pk, "en", "UTC")["steps"][0]["when"])
+        for bad in (None, "", "Not/AZone", "../../etc"):  # nothing is guessed: UTC, and it says so
+            context = self.context_tz(pk, "en", bad)
+            self.assertEqual(context["timezone"], "UTC")
+            self.assertIn("UTC+00:00", context["steps"][0]["when"])
+            self.assertIn("UTC+00:00", context["generated_at"])
+
+    def context_tz(self, pk, language, tz):
+        evaluation = SupplierEvaluation.objects.get(pk=pk)
+        return report_service.build_report_context(evaluation, language, evaluation.updated_at, tz)
+
+    def test_validation_steps_never_concatenate_actor_and_date(self):
+        pk = self.approved()
+        steps = self.context(pk)["steps"]
+        self.assertEqual([s["step"] for s in steps], ["Submitted", "Review started", "Approved"])
+        for step in steps:
+            self.assertEqual(set(step), {"step", "actor", "when"})
+            self.assertNotIn(step["actor"], step["when"])
+        page = self.html(pk)
+        self.assertIn("<th", page.split("Step</th>")[1] if "Step</th>" in page else "")
+        self.assertIn(">Actor</th>", page)
+        self.assertIn(">Date and time</th>", page)
+
+    def test_numbers_are_localized_without_changing_the_engine_values(self):
+        pk = self.approved()
+        screen = self.api().get(f"{EVALS}/{pk}").json()["scoring"]
+        en, fr, de = (self.context(pk, lang) for lang in ("en", "fr", "de"))
+        self.assertEqual(en["score"], f"{screen['overall_score']:.1f}")
+        self.assertEqual(fr["score"], en["score"].replace(".", ","))
+        self.assertEqual(de["score"], fr["score"])
+        self.assertIn(",", fr["score"])
+        self.assertEqual(fr["sections"][0]["score"], f"{screen['sections'][0]['score']:.1f}".replace(".", ","))
+
+    def test_conclusion_separates_scored_na_and_unanswered(self):
+        pk = self.approved()  # c1 scored, c2 N/A, c3 scored
+        self.assertIn("3 criteria: 2 scored, 1 N/A, 0 not answered", self.context(pk)["counts"])
+        self.assertIn("Sur 3 critères : 2 noté(s), 1 N/A, 0 sans réponse", self.context(pk, "fr")["counts"])
+        self.assertIn("Von 3 Kriterien: 2 bewertet, 1 N/A, 0 nicht beantwortet", self.context(pk, "de")["counts"])
+        from project_management.models import EvaluationResponse
+
+        EvaluationResponse.objects.filter(evaluation_id=pk, not_applicable=True).delete()
+        self.assertIn("2 scored, 0 N/A, 1 not answered", self.context(pk)["counts"])
+
+    def test_report_is_multipage_with_long_content_and_repeated_headers(self):
+        pk = self.approved()
+        evaluation = SupplierEvaluation.objects.get(pk=pk)
+        sections = []
+        for s in range(1, 5):
+            sections.append({
+                "id": s, "title": f"Section {s} - évaluation très détaillée des capacités", "weight": "25",
+                "criteria": [{"id": s * 100 + c, "label": f"Critère {s}.{c} " + "libellé long " * 6, "weight": "10",
+                              "required": c % 2 == 0, "critical": c == 4, "allow_na": True,
+                              "comment_required_below": None, "description": ""} for c in range(1, 11)],
+            })
+        snapshot = {**evaluation.template_snapshot, "sections": sections}
+        SupplierEvaluation.objects.filter(pk=pk).update(template_snapshot=snapshot)
+        from project_management.models import EvaluationResponse
+
+        EvaluationResponse.objects.filter(evaluation_id=pk).delete()
+        for section in sections:
+            for criterion in section["criteria"]:
+                EvaluationResponse.objects.create(
+                    evaluation_id=pk, criterion_id=criterion["id"], score=3 + criterion["id"] % 3,
+                    comment="Commentaire accentué très long : " + "écarts constatés, qualité à surveiller. " * 12)
+        evaluation = SupplierEvaluation.objects.get(pk=pk)
+        pdf = report_service.render_report_pdf(evaluation, "fr", evaluation.updated_at, "Europe/Paris")
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        from weasyprint import HTML
+
+        pages = len(HTML(string=self.html(pk, "fr", "Europe/Paris")).render().pages)
+        self.assertGreaterEqual(pages, 3)
+        self.assertIn("<thead>", self.html(pk))  # table headers repeat on every page

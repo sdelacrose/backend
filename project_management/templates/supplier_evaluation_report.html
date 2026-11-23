@@ -15,11 +15,13 @@
       }
       body { margin: 0; font-family: "Helvetica", "Arial", sans-serif; font-size: 10px; color: #101828; }
       h1 { font-size: 20px; margin: 0 0 4px; }
-      h2 { font-size: 13px; margin: 16px 0 6px; border-bottom: 1px solid #101828; padding-bottom: 3px; }
-      h3 { font-size: 11px; margin: 10px 0 4px; }
-      table { width: 100%; border-collapse: collapse; }
-      th, td { text-align: left; vertical-align: top; padding: 3px 5px; border: 1px solid #d0d5dd; }
+      h2 { font-size: 13px; margin: 16px 0 6px; border-bottom: 1px solid #101828; padding-bottom: 3px; page-break-after: avoid; }
+      h3 { font-size: 11px; margin: 10px 0 4px; page-break-after: avoid; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th, td { text-align: left; vertical-align: top; padding: 3px 5px; border: 1px solid #d0d5dd; overflow-wrap: anywhere; }
       th { background: #f2f4f7; font-size: 9px; }
+      thead { display: table-header-group; }
+      tr { page-break-inside: avoid; }
       .meta td { border: none; padding: 1px 4px 1px 0; }
       .meta td.k { color: #475467; width: 28%; }
       .result { margin: 8px 0; }
@@ -28,7 +30,7 @@
       .tag { font-size: 8px; color: #475467; }
       .crit { color: #9e0a05; }
       .muted { color: #667085; }
-      tr { page-break-inside: avoid; }
+      .item { margin-bottom: 2px; overflow-wrap: anywhere; }
     </style>
   </head>
   <body>
@@ -55,19 +57,22 @@
 
     <h2>{{ labels.sections }}</h2>
     <table>
-      <tr><th>{{ labels.criterion }}</th><th>{{ labels.weight }}</th><th>{{ labels.score }}</th></tr>
+      <thead><tr><th style="width:60%">{{ labels.section }}</th><th style="width:15%">{{ labels.weight }}</th><th>{{ labels.section_score }}</th></tr></thead>
+      <tbody>
       {% for section in sections %}
         <tr><td>{{ section.title }}</td><td>{{ section.weight|default:labels.none }}</td>
             <td>{% if section.score %}{{ section.score }} / 100{% else %}{{ labels.not_scored }}{% endif %}</td></tr>
       {% endfor %}
+      </tbody>
     </table>
 
     <h2>{{ labels.details }}</h2>
     {% for section in sections %}
       <h3>{{ section.title }}{% if section.weight %} ({{ section.weight }}){% endif %}</h3>
       <table>
-        <tr><th style="width:38%">{{ labels.criterion }}</th><th style="width:9%">{{ labels.weight }}</th>
-            <th style="width:13%">{{ labels.answer }}</th><th>{{ labels.comment }}</th></tr>
+        <thead><tr><th style="width:38%">{{ labels.criterion }}</th><th style="width:9%">{{ labels.weight }}</th>
+            <th style="width:13%">{{ labels.answer }}</th><th>{{ labels.comment }}</th></tr></thead>
+        <tbody>
         {% for row in section.rows %}
           <tr>
             <td>{{ row.label }}
@@ -78,28 +83,37 @@
             <td>{{ row.comment|default:labels.none|linebreaksbr }}</td>
           </tr>
         {% endfor %}
+        </tbody>
       </table>
     {% endfor %}
 
     <h2>{{ labels.strengths }}</h2>
-    {% for item in strengths %}<div>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    {% for item in strengths %}<div class="item">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
     <h2>{{ labels.improvements }}</h2>
-    {% for item in improvements %}<div>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    {% for item in improvements %}<div class="item">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
     <h2>{{ labels.critical_points }}</h2>
-    {% for item in critical_points %}<div class="crit">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
+    {% for item in critical_points %}<div class="item crit">{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</div>{% empty %}<div class="muted">{{ labels.no_items }}</div>{% endfor %}
 
     <h2>{{ labels.conclusion }}</h2>
     {% if conclusion %}<div>{{ conclusion }}</div>{% endif %}
+    <div>{{ counts }}</div>
     {% if reviewer_comment %}<div><b>{{ labels.reviewer_comment }}:</b> {{ reviewer_comment|linebreaksbr }}</div>{% endif %}
 
     <h2>{{ labels.workflow }}</h2>
     <table class="meta">
       <tr><td class="k">{{ labels.owner }}</td><td>{{ owner|default:labels.none }}</td></tr>
       <tr><td class="k">{{ labels.reviewer }}</td><td>{{ reviewer|default:labels.none }}</td></tr>
-      <tr><td class="k">{{ labels.submitted }}</td><td>{{ submitted|default:labels.none }}</td></tr>
-      <tr><td class="k">{{ labels.review_started }}</td><td>{{ review_started|default:labels.none }}</td></tr>
-      <tr><td class="k">{{ labels.approved }}</td><td>{{ approved|default:labels.none }}</td></tr>
-      {% if closed %}<tr><td class="k">{{ labels.closed }}</td><td>{{ closed }}</td></tr>{% endif %}
+      <tr><td class="k">{{ labels.timezone }}</td><td>{{ timezone }}</td></tr>
+    </table>
+    <table style="margin-top:6px">
+      <thead><tr><th style="width:26%">{{ labels.step }}</th><th style="width:30%">{{ labels.actor }}</th><th>{{ labels.datetime }}</th></tr></thead>
+      <tbody>
+      {% for step in steps %}
+        <tr><td>{{ step.step }}</td><td>{{ step.actor|default:labels.none }}</td><td>{{ step.when }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <table class="meta" style="margin-top:6px">
       <tr><td class="k">{{ labels.generated }}</td><td>{{ generated_at }}</td></tr>
     </table>
   </body>

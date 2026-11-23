@@ -11,10 +11,13 @@
   never create two Documents.
 """
 
+from datetime import timezone as dt_timezone
+from zoneinfo import ZoneInfo
+
 from django.core.files.base import ContentFile
 from django.db import transaction
 from django.template.loader import render_to_string
-from django.utils import timezone
+from django.utils import dateformat, timezone, translation
 from rest_framework.exceptions import ValidationError
 from weasyprint import HTML
 
@@ -44,7 +47,10 @@ LABELS = {
         "owner": "Owner", "reviewer": "Reviewer", "submitted": "Submitted", "review_started": "Review started",
         "approved": "Approved", "closed": "Closed", "generated": "Generated", "page": "Page", "of": "of",
         "template": "Questionnaire", "reviewer_comment": "Reviewer comment",
-        "conclusion_text": "The supplier obtained {score} / 100, rated {rating}. {answered} of {total} criteria were scored.",
+        "conclusion_text": "The supplier obtained {score} / 100, rated {rating}.",
+        "conclusion_counts": "Out of {total} criteria: {scored} scored, {na} N/A, {unanswered} not answered.",
+        "section": "Section", "section_score": "Score", "step": "Step", "actor": "Actor", "datetime": "Date and time",
+        "timezone": "Time zone",
         "EXCELLENT": "Excellent", "GOOD": "Good", "IMPROVEMENT_REQUIRED": "Improvement required",
         "UNSATISFACTORY": "Unsatisfactory", "yes": "Yes",
     },
@@ -60,7 +66,10 @@ LABELS = {
         "submitted": "Soumise", "review_started": "Revue démarrée", "approved": "Approuvée", "closed": "Clôturée",
         "generated": "Généré", "page": "Page", "of": "sur", "template": "Questionnaire",
         "reviewer_comment": "Commentaire du relecteur",
-        "conclusion_text": "Le fournisseur obtient {score} / 100, apprécié {rating}. {answered} critères sur {total} ont été notés.",
+        "conclusion_text": "Le fournisseur obtient {score} / 100, apprécié {rating}.",
+        "conclusion_counts": "Sur {total} critères : {scored} noté(s), {na} N/A, {unanswered} sans réponse.",
+        "section": "Section", "section_score": "Score", "step": "Étape", "actor": "Acteur", "datetime": "Date et heure",
+        "timezone": "Fuseau horaire",
         "EXCELLENT": "Excellent", "GOOD": "Bon", "IMPROVEMENT_REQUIRED": "À améliorer",
         "UNSATISFACTORY": "Insatisfaisant", "yes": "Oui",
     },
@@ -76,7 +85,10 @@ LABELS = {
         "owner": "Verantwortlicher", "reviewer": "Prüfer", "submitted": "Eingereicht", "review_started": "Prüfung gestartet",
         "approved": "Genehmigt", "closed": "Abgeschlossen", "generated": "Erstellt", "page": "Seite", "of": "von",
         "template": "Fragebogen", "reviewer_comment": "Kommentar des Prüfers",
-        "conclusion_text": "Der Lieferant erreicht {score} / 100, eingestuft als {rating}. {answered} von {total} Kriterien wurden bewertet.",
+        "conclusion_text": "Der Lieferant erreicht {score} / 100, eingestuft als {rating}.",
+        "conclusion_counts": "Von {total} Kriterien: {scored} bewertet, {na} N/A, {unanswered} nicht beantwortet.",
+        "section": "Abschnitt", "section_score": "Punktzahl", "step": "Schritt", "actor": "Akteur", "datetime": "Datum und Uhrzeit",
+        "timezone": "Zeitzone",
         "EXCELLENT": "Ausgezeichnet", "GOOD": "Gut", "IMPROVEMENT_REQUIRED": "Verbesserung erforderlich",
         "UNSATISFACTORY": "Ungenügend", "yes": "Ja",
     },
@@ -87,20 +99,44 @@ def _name(user):
     return None if not user else ((user.full_name or "").strip() or user.email)
 
 
-def _fmt_score(value):
-    return None if value is None else f"{float(value):.1f}"
+def _localized(text, language):
+    """Decimal comma for French and German; the digits themselves are the engine's, untouched."""
+    return text.replace(".", ",") if language in ("fr", "de") else text
 
 
-def _fmt_weight(value):
-    return None if value in (None, "") else f"{float(value):g} %"
+def _fmt_score(value, language="en"):
+    return None if value is None else _localized(f"{float(value):.1f}", language)
 
 
-def _fmt_date(value):
-    return value.strftime("%Y-%m-%d") if value else None
+def _fmt_weight(value, language="en"):
+    return None if value in (None, "") else f"{_localized(f'{float(value):g}', language)} %"
 
 
-def _fmt_dt(value):
-    return value.strftime("%Y-%m-%d %H:%M") if value else None
+def _fmt_date(value, language="en"):
+    if not value:
+        return None
+    with translation.override(language):
+        return dateformat.format(value, "j F Y")
+
+
+def report_timezone(name):
+    """The zone the reader asked for (their browser's IANA zone, sent with the request). LINKS stores no per-user
+    time zone and its only company zone (`accrual_timezone`) belongs to leave accrual, so nothing is guessed: an
+    absent or unknown name prints in UTC, and the zone is always written next to the time."""
+    try:
+        return ZoneInfo(name), name
+    except Exception:  # noqa: BLE001 - unknown / empty / malformed names all fall back the same way
+        return dt_timezone.utc, "UTC"
+
+
+def _fmt_dt(value, language, tz):
+    if not value:
+        return None
+    local = value.astimezone(tz)
+    offset = local.strftime("%z")
+    with translation.override(language):
+        text = dateformat.format(local, "j F Y, H:i")
+    return f"{text} (UTC{offset[:3]}:{offset[3:]})"
 
 
 def report_filename(evaluation):
@@ -112,9 +148,10 @@ def assert_reportable(evaluation):
         raise ValidationError({"detail": "The report is only available once the evaluation is approved or closed."})
 
 
-def build_report_context(evaluation, language, generated_at):
+def build_report_context(evaluation, language, generated_at, timezone_name=None):
     """Everything printed in the PDF, from the snapshot, the saved answers and the stored result only."""
     labels = LABELS[language]
+    tz, tz_name = report_timezone(timezone_name)
     snapshot = evaluation.template_snapshot or {}
     answers = {r.criterion_id: r for r in evaluation.responses.all()}
     result = evaluation_scoring(evaluation)  # sections / synthesis from the frozen snapshot
@@ -123,7 +160,7 @@ def build_report_context(evaluation, language, generated_at):
     overall = evaluation.overall_score if evaluation.overall_score is not None else result["overall_score"]
     rating = evaluation.rating or result["rating"]
 
-    sections, answered_total, criteria_total = [], 0, 0
+    sections, scored_total, na_total, criteria_total = [], 0, 0, 0
     for section in snapshot.get("sections", []):
         rows = []
         for criterion in section.get("criteria", []):
@@ -133,14 +170,14 @@ def build_report_context(evaluation, language, generated_at):
                 shown = labels["unanswered"]
             elif answer.not_applicable:
                 shown = labels["na"]
-                answered_total += 1
+                na_total += 1
             else:
                 shown = f"{answer.score} / 5"
-                answered_total += 1
+                scored_total += 1
             rows.append({
                 "label": criterion.get("label", ""),
                 "description": criterion.get("description", ""),
-                "weight": _fmt_weight(criterion.get("weight")),
+                "weight": _fmt_weight(criterion.get("weight"), language),
                 "required": bool(criterion.get("required")),
                 "critical": bool(criterion.get("critical")),
                 "answer": shown,
@@ -148,8 +185,8 @@ def build_report_context(evaluation, language, generated_at):
             })
         scored = section_scores.get(section["id"], {})
         sections.append({
-            "title": section.get("title", ""), "weight": _fmt_weight(section.get("weight")),
-            "score": _fmt_score(scored.get("score")), "rows": rows,
+            "title": section.get("title", ""), "weight": _fmt_weight(section.get("weight"), language),
+            "score": _fmt_score(scored.get("score"), language), "rows": rows,
         })
 
     approval = (
@@ -157,11 +194,22 @@ def build_report_context(evaluation, language, generated_at):
         .exclude(comment="").order_by("-created_at", "-id").first()
     )
     order, project = evaluation.purchase_order, evaluation.project
-    score_text = _fmt_score(overall)
+    score_text = _fmt_score(overall, language)
     conclusion = None
     if score_text is not None and rating:
-        conclusion = labels["conclusion_text"].format(
-            score=score_text, rating=labels[rating], answered=answered_total, total=criteria_total)
+        conclusion = labels["conclusion_text"].format(score=score_text, rating=labels[rating])
+    counts = labels["conclusion_counts"].format(
+        total=criteria_total, scored=scored_total, na=na_total, unanswered=criteria_total - scored_total - na_total)
+    steps = [
+        {"step": labels[key], "actor": _name(actor), "when": _fmt_dt(when, language, tz)}
+        for key, actor, when in (
+            ("submitted", evaluation.submitted_by, evaluation.submitted_at),
+            ("review_started", evaluation.reviewed_by, evaluation.reviewed_at),
+            ("approved", evaluation.approved_by, evaluation.approved_at),
+            ("closed", evaluation.closed_by, evaluation.closed_at),
+        )
+        if when
+    ]
     return {
         "labels": labels,
         "language": language,
@@ -170,7 +218,7 @@ def build_report_context(evaluation, language, generated_at):
         "order": order.reference if order else None,
         "project": project.project_name if project else None,
         "type": labels[evaluation.evaluation_type],
-        "period": (f"{_fmt_date(evaluation.period_start) or ''} → {_fmt_date(evaluation.period_end) or ''}"
+        "period": (f"{_fmt_date(evaluation.period_start, language) or ''} → {_fmt_date(evaluation.period_end, language) or ''}"
                    if evaluation.period_start or evaluation.period_end else None),
         "fnc_reference": evaluation.fnc_reference if evaluation.follows_fnc else None,
         "template": f"{snapshot.get('name', '')} v{evaluation.template_version or ''}".strip(),
@@ -185,16 +233,16 @@ def build_report_context(evaluation, language, generated_at):
         "reviewer_comment": approval.comment if approval else None,
         "owner": _name(evaluation.owner),
         "reviewer": _name(evaluation.reviewer),
-        "submitted": f"{_fmt_dt(evaluation.submitted_at) or ''} {_name(evaluation.submitted_by) or ''}".strip() or None,
-        "review_started": f"{_fmt_dt(evaluation.reviewed_at) or ''} {_name(evaluation.reviewed_by) or ''}".strip() or None,
-        "approved": f"{_fmt_dt(evaluation.approved_at) or ''} {_name(evaluation.approved_by) or ''}".strip() or None,
-        "closed": f"{_fmt_dt(evaluation.closed_at) or ''} {_name(evaluation.closed_by) or ''}".strip() or None,
-        "generated_at": _fmt_dt(generated_at),
+        "steps": steps,
+        "counts": counts,
+        "timezone": tz_name,
+        "generated_at": _fmt_dt(generated_at, language, tz),
     }
 
 
-def render_report_pdf(evaluation, language, generated_at):
-    html = render_to_string("supplier_evaluation_report.html", build_report_context(evaluation, language, generated_at))
+def render_report_pdf(evaluation, language, generated_at, timezone_name=None):
+    html = render_to_string(
+        "supplier_evaluation_report.html", build_report_context(evaluation, language, generated_at, timezone_name))
     return HTML(string=html).write_pdf()
 
 
@@ -212,7 +260,7 @@ def quality_reports_folder(company_id):
     return folder
 
 
-def generate_report(*, evaluation, user, language="en"):
+def generate_report(*, evaluation, user, language="en", timezone_name=None):
     """Create the evaluation report Document (first call) or add a revision to it (next calls).
     Returns (link, revision, created)."""
     language = language if language in LANGUAGES else "en"
@@ -224,7 +272,7 @@ def generate_report(*, evaluation, user, language="en"):
     assert_reportable(evaluation)
 
     generated_at = timezone.now()
-    pdf = render_report_pdf(evaluation, language, generated_at)  # nothing persisted yet: a failure leaves no trace
+    pdf = render_report_pdf(evaluation, language, generated_at, timezone_name)  # nothing persisted yet: a failure leaves no trace
     filename = report_filename(evaluation)
 
     with transaction.atomic():
