@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from project_management.models import SupplierEvaluation
+from project_management.services.supplier_evaluation_scoring import FINAL_STATUSES, evaluation_scoring
 from project_management.services.supplier_evaluation import (
     EDITABLE_STATUSES,
     create_supplier_evaluation,
@@ -44,6 +45,31 @@ def _date(value, field):
         raise ValidationError({field: "Enter a valid date (YYYY-MM-DD)."})
 
 
+def _float(value):
+    return None if value is None else float(value)
+
+
+def scoring_payload(evaluation):
+    """Everything the interface shows about results; all numbers come from the scoring service. Approved and
+    closed evaluations show their STORED result; open ones show the live provisional result (identical to the
+    stored one after any save)."""
+    result = evaluation_scoring(evaluation)
+    final = evaluation.status in FINAL_STATUSES
+    overall = evaluation.overall_score if final else result["overall_score"]
+    rating = evaluation.rating if final else result["rating"]
+    return {
+        "overall_score": _float(overall),
+        "rating": rating,
+        "provisional": not final,
+        "sections": [{**section, "score": _float(section["score"])} for section in result["sections"]],
+        "sections_weighted": result["sections_weighted"],
+        "strengths": result["strengths"],
+        "improvements": result["improvements"],
+        "critical_points": result["critical_points"],
+        "required_remaining": result["required_remaining"],
+    }
+
+
 def serialize_detail(evaluation, user):
     order = evaluation.purchase_order
     project = evaluation.project
@@ -71,6 +97,7 @@ def serialize_detail(evaluation, user):
             for r in evaluation.responses.all()
         },
         "progress": evaluation_progress(evaluation),
+        "scoring": scoring_payload(evaluation),
         "editable": evaluation.status in EDITABLE_STATUSES and user_can_manage_evaluations(user),
         "created_at": evaluation.created_at,
         "updated_at": evaluation.updated_at,

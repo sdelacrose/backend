@@ -21,7 +21,11 @@ from project_management.models import (
 )
 from project_management.purchase_order_access import filter_purchase_orders_to_owner_scope
 from project_management.models.supplier_evaluation_template import SCALE_MAX, SCALE_MIN
-from project_management.services.supplier_evaluation_template import build_template_snapshot
+from project_management.services.supplier_evaluation_scoring import recalculate_evaluation_score
+from project_management.services.supplier_evaluation_template import (
+    build_template_snapshot,
+    stored_template_weight_problem,
+)
 
 EDITABLE_STATUSES = (SupplierEvaluation.Status.DRAFT, SupplierEvaluation.Status.IN_PROGRESS)
 REFERENCE_WIDTH = 5
@@ -115,6 +119,9 @@ def create_supplier_evaluation(
         raise ValidationError({"template": "This evaluation template is inactive."})
     if not any(section.criteria.all() for section in template.sections.all()):
         raise ValidationError({"template": "This evaluation template has no criterion."})
+    weight_problem = stored_template_weight_problem(template)
+    if weight_problem:  # templates saved before the Q4 weight rule must be corrected first
+        raise ValidationError({"template": f"This evaluation template has invalid {weight_problem}"})
 
     if evaluation_type not in SupplierEvaluation.EvaluationType.values:
         raise ValidationError({"evaluation_type": "Choose a partial or a final evaluation."})
@@ -221,6 +228,7 @@ def save_responses(*, evaluation, user, answers):
     if evaluation.status == SupplierEvaluation.Status.DRAFT and evaluation.responses.exists():
         evaluation.status = SupplierEvaluation.Status.IN_PROGRESS
         evaluation.save(update_fields=["status", "updated_at"])
+    recalculate_evaluation_score(evaluation)
     return evaluation
 
 

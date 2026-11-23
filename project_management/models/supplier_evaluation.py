@@ -75,6 +75,11 @@ class SupplierEvaluation(models.Model):
     fnc_count = models.PositiveIntegerField(default=0)
     fnc_comment = models.TextField(blank=True, default="")
 
+    # Q4: result of the scoring engine (services.supplier_evaluation_scoring), refreshed on every authorised
+    # answers save and frozen once the evaluation is approved or closed. Null = nothing scored yet.
+    overall_score = models.DecimalField(max_digits=4, decimal_places=1, null=True, blank=True)
+    rating = models.CharField(max_length=24, null=True, blank=True)
+
     # History.
     created_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,

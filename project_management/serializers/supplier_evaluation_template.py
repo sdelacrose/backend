@@ -17,6 +17,7 @@ from project_management.models import (
     EvaluationTemplateSection,
 )
 from project_management.models.supplier_evaluation_template import SCALE_MAX, SCALE_MIN
+from project_management.services.supplier_evaluation_template import template_weight_problem
 
 MAX_WEIGHT = Decimal("100")
 
@@ -120,6 +121,12 @@ class EvaluationTemplateSerializer(serializers.ModelSerializer):
             for criterion in section.get("criteria", []):
                 if not (criterion.get("label") or "").strip():
                     raise serializers.ValidationError("Every criterion needs a label.")
+        problem = template_weight_problem(
+            (section.get("weight"), [c.get("weight") for c in section.get("criteria", [])])
+            for section in sections
+        )
+        if problem:
+            raise serializers.ValidationError(problem)
         return sections
 
     @transaction.atomic

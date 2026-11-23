@@ -87,6 +87,8 @@ def _serialize(evaluation):
         "project": {"id": project.id, "name": project.project_name} if project else None,
         "fnc_count": evaluation.fnc_count,
         "follows_fnc": evaluation.follows_fnc,
+        "overall_score": None if evaluation.overall_score is None else float(evaluation.overall_score),
+        "rating": evaluation.rating,
         "owner": ((evaluation.owner.full_name or "").strip() or evaluation.owner.email) if evaluation.owner else None,
         "created_at": evaluation.created_at,
         "updated_at": evaluation.updated_at,

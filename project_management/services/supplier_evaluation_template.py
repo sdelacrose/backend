@@ -1,5 +1,7 @@
 """QUALITY Q2: helpers shared by the template API and (from Q3) the evaluation snapshot."""
 
+from decimal import Decimal
+
 from django.db import transaction
 
 from project_management.models import (
@@ -79,3 +81,47 @@ def duplicate_template(template, *, user, name):
             for c in section.criteria.all()
         )
     return copy
+
+
+# ---------------------------------------------------------------------------------------------- weights
+WEIGHT_TOTAL = Decimal("100")
+
+
+def weight_set_problem(weights):
+    """Rule for one set of siblings (the sections of a template, or the criteria of a section):
+    either NO weight at all, or EVERY weight present and summing to exactly 100.
+    Returns None when valid, else "partial" or "sum"."""
+    if not weights:
+        return None
+    given = [w for w in weights if w is not None]
+    if not given:
+        return None
+    if len(given) != len(weights):
+        return "partial"
+    return None if sum(given) == WEIGHT_TOTAL else "sum"
+
+
+def template_weight_problem(sections):
+    """`sections`: iterable of (section_weight, [criterion_weight, ...]). Returns a readable message or None."""
+    sections = list(sections)
+    problem = weight_set_problem([weight for weight, _ in sections])
+    if problem:
+        return f"section weights: {_WEIGHT_MESSAGES[problem]}"
+    for position, (_, criteria) in enumerate(sections, start=1):
+        problem = weight_set_problem(list(criteria))
+        if problem:
+            return f"criterion weights of section {position}: {_WEIGHT_MESSAGES[problem]}"
+    return None
+
+
+_WEIGHT_MESSAGES = {
+    "partial": "either no weight at all or a weight on every item (partial weights are not allowed).",
+    "sum": "the weights must add up to exactly 100.",
+}
+
+
+def stored_template_weight_problem(template):
+    return template_weight_problem(
+        (section.weight, [criterion.weight for criterion in section.criteria.all()])
+        for section in template.sections.all()
+    )

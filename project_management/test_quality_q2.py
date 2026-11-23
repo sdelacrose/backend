@@ -38,8 +38,8 @@ def payload(name="Supplier audit", **extra):
         "description": "Yearly",
         "comment_required_below": 3,
         "sections": [
-            {"title": "Quality", "weight": "60", "criteria": [
-                {"label": "Traceability", "weight": "50", "critical": True},
+            {"title": "Quality", "criteria": [
+                {"label": "Traceability", "critical": True},
                 {"label": "Packaging", "required": False, "allow_na": True},
             ]},
             {"title": "Delivery", "criteria": [{"label": "On time", "allow_na": False}]},
@@ -145,10 +145,12 @@ class QualityQ2Tests(NoNotificationsMixin, TestCase):
         self.assertEqual(EvaluationTemplate.objects.count(), 0)
 
     def test_valid_and_missing_weights(self):
-        for weight in ("0.01", "100", None):
-            data = payload(name=f"w-{weight}")
-            data["sections"][0]["criteria"][0]["weight"] = weight
-            self.assertEqual(self.create(data=data).status_code, 201, weight)
+        for index, weights in enumerate((("50", "50"), ("100",), (None, None))):
+            data = payload(name=f"w-{index}")
+            data["sections"][0]["criteria"] = [
+                {"label": f"C{n}", "weight": weight} for n, weight in enumerate(weights)
+            ]
+            self.assertEqual(self.create(data=data).status_code, 201, weights)
 
     def test_invalid_comment_threshold(self):
         for threshold in (0, 1, 6):
