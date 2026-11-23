@@ -7,6 +7,7 @@ on the evaluation page. A supplier outside the user's company scope is a 404, wh
 from django.http import Http404
 from rest_framework.response import Response
 
+from project_management.services.supplier_evaluation_scoring import FINAL_STATUSES
 from project_management.services.supplier_quality import (
     current_performance,
     latest_finals,
@@ -82,7 +83,9 @@ class QualitySupplierProfileView(_QualityView):
                 {
                     "id": e.id, "reference": e.reference,
                     "purchase_order": e.purchase_order.reference if e.purchase_order else None,
-                    "date": reference_date(e),
+                    # Approved / closed: the reference date. Anything else: its creation date, the period is shown apart.
+                    "date": reference_date(e) if e.status in FINAL_STATUSES else e.created_at,
+                    "period_start": e.period_start, "period_end": e.period_end,
                     "evaluation_type": e.evaluation_type, "status": e.status,
                     "score": None if e.overall_score is None else float(e.overall_score),
                     "rating": e.rating, "follows_fnc": e.follows_fnc, "fnc_reference": e.fnc_reference,

@@ -55,7 +55,7 @@ def evaluable_orders(user):
     ).filter(_supplier_in_company(company_id))
 
 
-def orders_to_evaluate(user, search=""):
+def orders_to_evaluate(user, search="", supplier_id=None):
     queryset = (
         evaluable_orders(user)
         .select_related("receiving_company", "project")
@@ -67,6 +67,8 @@ def orders_to_evaluate(user, search=""):
             )
         )
     )
+    if supplier_id:
+        queryset = queryset.filter(receiving_company_id=supplier_id)
     search = (search or "").strip()
     if search:
         queryset = queryset.filter(

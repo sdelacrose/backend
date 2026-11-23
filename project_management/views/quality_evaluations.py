@@ -142,7 +142,10 @@ class OrdersToEvaluateView(_QualityView):
         if not user_can_view_quality(request.user):
             return self._forbidden()
         params = request.query_params
-        queryset = orders_to_evaluate(request.user, params.get("search"))
+        supplier = params.get("supplier")
+        queryset = orders_to_evaluate(
+            request.user, params.get("search"), int(supplier) if supplier and supplier.isdigit() else None
+        )
         page_size = _positive_int(params.get("page_size"), 25, MAX_PAGE_SIZE)
         page = _positive_int(params.get("page"), 1)
         start = (page - 1) * page_size

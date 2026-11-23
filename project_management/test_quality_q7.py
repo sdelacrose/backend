@@ -230,3 +230,40 @@ class QualityQ7Tests(NoNotificationsMixin, TestCase):
         self.profile()
         self.api().get(SUPPLIERS)
         self.assertEqual(list(SupplierEvaluation.objects.values()), before)
+
+    # ------------------------------------------------------------------------------ UX-01
+    def test_history_date_is_the_creation_date_for_unapproved_evaluations(self):
+        draft = self.evaluation(kind="PARTIAL", status=S.IN_PROGRESS, score=None, rating=None,
+                                period_start=date(2026, 1, 1), period_end=date(2026, 3, 31))
+        approved = self.evaluation(approved_at=at(12, 5), period_end=date(2026, 3, 31))
+        rows = {r["id"]: r for r in self.profile().json()["history"]}
+        self.assertTrue(rows[draft.id]["date"].startswith(draft.created_at.strftime("%Y-%m-%dT%H")))  # creation date
+        self.assertEqual((rows[draft.id]["period_start"], rows[draft.id]["period_end"]), ("2026-01-01", "2026-03-31"))
+        self.assertTrue(rows[approved.id]["date"].startswith("2026-01-12") or rows[approved.id]["date"].startswith("2026-05-12"))
+
+    def test_orders_can_be_filtered_by_supplier_inside_the_company(self):
+        other = self.make_supplier("Other supplier")
+        self.w.po(self.company, other, "PO-A-2")
+        url = "/api/project_management/quality/orders-to-evaluate"
+        both = self.api().get(url).json()
+        self.assertEqual(both["count"], 2)
+        only = self.api().get(url, {"supplier": other.id}).json()
+        self.assertEqual([o["reference"] for o in only["results"]], ["PO-A-2"])
+        self.assertEqual(self.api(self.other).get(url, {"supplier": other.id}).json()["count"], 0)  # never crosses companies
+
+    def test_home_counters_are_real_company_scoped_counts(self):
+        home = "/api/project_management/quality/home"
+        self.evaluation(kind="PARTIAL", status=S.DRAFT, score=None, rating=None)
+        self.evaluation(status=S.IN_PROGRESS, score=None, rating=None)
+        self.evaluation(status=S.UNDER_REVIEW, score=None, rating=None, reviewer=self.user)
+        self.evaluation(status=S.SUBMITTED, score=None, rating=None, reviewer=self.no_docs)
+        self.evaluation()  # approved
+        self.evaluation(status=S.CLOSED)
+        data = self.api().get(home).json()
+        self.assertEqual(data["evaluations"], {"to_start": 1, "in_progress": 1, "under_review": 2, "approved": 1, "closed": 1})
+        self.assertEqual(data["reviews_waiting"], 1)  # only the one assigned to me
+        self.assertEqual(data["orders"], {"total": 1, "not_evaluated": 1})  # PO-A-1 has no evaluation attached
+        self.assertEqual(data["suppliers"], 1)
+        self.assertEqual(self.api(self.other).get(home).json()["evaluations"]["approved"], 0)  # other company: nothing of A
+        self.assertEqual(self.api(self.nobody).get(home).status_code, 403)
+        self.assertEqual(self.api(False).get(home).status_code, 401)
