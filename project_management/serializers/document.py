@@ -624,9 +624,45 @@ class DocumentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"discipline": message})
         return attrs
 
+    @staticmethod
+    def _distribution_mode_key(value):
+        return str(value or "").strip().lower().replace("_", " ")
+
+    def _validate_client_due_date(self, attrs):
+        """CLIENT-DISTRIBUTION-DUE-DATE-FIX: every distribution mode except "Not sent" needs a due date
+        (project deliverables of internal or supplier origin). "Not sent" never keeps one. Applied only
+        when the request itself touches the mode or the date, so a historical document is never refused
+        because of an unrelated edit and its stored date is never rewritten here."""
+        if "transmittal_category" not in attrs and "due_date" not in attrs:
+            return attrs
+        instance = self.instance
+        folder = attrs.get("folder") or (instance.folder if instance else None)
+        if folder is None or folder.company_profile_id:
+            return attrs
+        origin = attrs.get("document_origin", instance.document_origin if instance else DocumentOrigin.INTERNAL)
+        if origin == DocumentOrigin.CLIENT:
+            return attrs
+        mode = self._distribution_mode_key(
+            attrs["transmittal_category"] if "transmittal_category" in attrs
+            else (instance.transmittal_category if instance else "")
+        )
+        if not mode:
+            return attrs
+        if mode == "not sent":
+            if attrs.get("due_date"):
+                attrs["due_date"] = None            # no residual date travels with a "Not sent" document
+            return attrs
+        due = attrs["due_date"] if "due_date" in attrs else (instance.due_date if instance else None)
+        if not due:
+            raise serializers.ValidationError(
+                {"due_date": "A due date is required for every distribution mode except Not sent."}
+            )
+        return attrs
+
     def _validate_attrs(self, attrs):
         attrs = super().validate(attrs)
         attrs = self._validate_origin(attrs)
+        attrs = self._validate_client_due_date(attrs)
 
         if (
             self.instance is None

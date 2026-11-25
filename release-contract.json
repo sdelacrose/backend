@@ -1,0 +1,9 @@
+{
+  "candidate_version": "1.4.69",
+  "reference_recette": "1.4.68",
+  "models_repository": "sdelacrose/admin-server-models",
+  "models_commit": "a168001dc9d10e577ddedd2e2a9eb305ba5659b0",
+  "python": "3.10.19",
+  "dependency_manifest": "requirements.txt",
+  "migration_leaf": "project_management.0269_action_template_is_active"
+}

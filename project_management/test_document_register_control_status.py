@@ -54,6 +54,9 @@ class ControlStatusBase(ReviewBase):
         return revision
 
     def supplier_revision(self, category="FOR_REVIEW", client_category=None, **extra):
+        # Filter tests compare distinct documents, not duplicate supplier references.
+        number = Document.objects.filter(document_origin="SUPPLIER", external_issuer_company=self.supplier_company).count() + 2
+        extra.setdefault("identification_number", f"VEN-4578-DWG-{number:03d}")
         revision = self.make_supplier_revision(category=category, **extra)
         if client_category is not None:
             revision.document.transmittal_category = client_category
@@ -494,6 +497,7 @@ class ClientControlStatusSupplierTests(ControlStatusBase):
             external_issuer_company=self.supplier_company.id,
             supplier_transmittal_category="FOR_INFORMATION",
             transmittal_category="For information",
+            due_date="2026-12-24",  # CLIENT-DISTRIBUTION-DUE-DATE-FIX: every mode but Not sent needs a date
         )
         self.assertEqual(
             compute_supplier_control_status(document), SupplierControlStatus.DRAFT

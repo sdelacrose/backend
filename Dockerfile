@@ -10,9 +10,6 @@ ENV PYTHONUNBUFFERED=1
 # Set working directory
 WORKDIR /app
 
-# Copy application files
-COPY . /app
-
 # Install system dependencies required for WeasyPrint
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
@@ -41,16 +38,14 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=bind,source=requirements.txt,target=requirements.txt \
     python -m pip install -r requirements.txt
 
-# The shared `models` package comes from the sdelacrose account only, pinned to an explicit commit
-# (PR #2, RH leave/entitlement models -- descendant of the previously-pinned doc-mail models commit)
-# so every build installs the exact same migrations. Re-pin when the models branch is published
-# under a different commit.
+# Public shared models, pinned to the revision validated with this source tree.
 ARG MODELS_REF=a168001dc9d10e577ddedd2e2a9eb305ba5659b0
-# The repository is public, so no credentials are needed. Only for a private fork, pass
-# --build-arg MODELS_GIT_AUTH="<user>:<token>@" (the value stays in the image history: use a throw-away
-# token). The GitHub workflows that used to replace <username>/<token> here are disabled.
-ARG MODELS_GIT_AUTH=""
-RUN pip install "git+https://${MODELS_GIT_AUTH}github.com/sdelacrose/admin-server-models.git@${MODELS_REF}"
+RUN pip install --no-deps "git+https://github.com/sdelacrose/admin-server-models.git@${MODELS_REF}"
+
+# Keep source changes from reinstalling the locked dependency layer.
+COPY . /app
+ARG REVISION=unknown
+LABEL org.opencontainers.image.revision=$REVISION org.opencontainers.image.version="1.4.69"
 
 # Make the entry point script executable (and force LF: a CRLF shebang makes exec fail with "no such file")
 RUN sed -i 's/\r$//' /app/scripts/entry_point.sh && chmod +x /app/scripts/entry_point.sh

@@ -1,0 +1,31 @@
+name: Consolidation checks
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-24.04
+    container: python:3.10.19-bookworm
+    services:
+      links-recette-db:
+        image: postgres:16
+        env:
+          POSTGRES_DB: links_recette_ci
+          POSTGRES_USER: links_ci
+          POSTGRES_PASSWORD: ci-only-disposable
+        options: >-
+          --health-cmd "pg_isready -U links_ci -d links_recette_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      links-recette-redis:
+        image: redis:7
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update && apt-get install -y --no-install-recommends libgdk-pixbuf2.0-0 libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libffi-dev libglib2.0-0 pkg-config git
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pip install --no-deps git+https://github.com/sdelacrose/admin-server-models.git@a168001dc9d10e577ddedd2e2a9eb305ba5659b0
+      - run: python scripts/ci_environment.py >> "$GITHUB_ENV"
+      - run: python scripts/test_consolidation.py
+      - run: python -m unittest discover -s scripts -p test_production_workflow.py -v
