@@ -372,7 +372,9 @@ class QualityQ3Tests(NoNotificationsMixin, TestCase):
 
 
 class QualityQ3ConcurrencyTests(NoNotificationsMixin, TransactionTestCase):
-    serialized_rollback = True
+    # World creates all fixtures. Serialized rollback re-inserts stale content types
+    # after other TransactionTestCases flush/post_migrate in the combined suite.
+    serialized_rollback = False
 
     def test_concurrent_creations_get_distinct_consecutive_references(self):
         self.silence_notifications()
