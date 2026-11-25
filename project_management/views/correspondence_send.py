@@ -32,6 +32,7 @@ from project_management.services.correspondence_send_proof_archive import (
 from project_management.services.correspondence_send_proof_runner import (
     SendProofRetryRefused,
     archiving_enabled,
+    auto_archiving_applies,
     check_send_proof_retry,
 )
 from project_management.services.correspondence_workflow import can_resend, ready_to_send
@@ -330,6 +331,9 @@ def serialize_send_proof(event, proof, request, correspondence, *, can_send, can
         "archived_at": proof.archived_at,
         "attempts": proof.attempts,
         "next_attempt_at": proof.next_attempt_at,
+        # MAIL-PROOF-FIX: whether the automatic archiving covers this send at all. False means nothing is scheduled, so a
+        # PENDING proof is not "being archived": it has simply not been started (see sendProofLogic.proofStateKey).
+        "automatic_archiving": bool(auto_archiving_applies(proof)),
         "files_archived": len(files),
         "expected_attachments": [{"file_name": e.get("file_name"), "file_size": e.get("file_size")} for e in expected],
         "missing_attachments": [{"file_name": e.get("file_name"), "file_size": e.get("file_size")} for e in missing],

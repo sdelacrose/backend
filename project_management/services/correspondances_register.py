@@ -24,7 +24,7 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Cast, Coalesce, Concat, NullIf
+from django.db.models.functions import Cast, Coalesce, Concat, NullIf, TruncDate
 from django.utils import timezone
 
 from project_management.models import Correspondence, CorrespondenceValidationWorkflow, Transmittal
@@ -120,7 +120,7 @@ def _transmittal_status_filter(qs, status):
 
 def _build_correspondence_queryset(
     user, *, project, company_scope, direction, company, contact, correspondence_type,
-    search, status,
+    search, status, response_status=None,
 ):
     qs = correspondence_queryset_for_user(user)
     if company_scope:
@@ -154,13 +154,20 @@ def _build_correspondence_queryset(
         )
     if status:
         qs = _correspondence_status_filter(qs, status)
+    if response_status:
+        if response_status not in (*Correspondence.ResponseStatus.values, PENDING_STATUS_ALIAS):
+            return qs.none()
+        qs = _correspondence_status_filter(qs, response_status)
     return qs
 
 
 def _build_transmittal_queryset(
     user, *, project, company_scope, direction, company, contact, correspondence_type,
-    search, status,
+    search, status, response_status=None,
 ):
+    if response_status:
+        # A response predicate cannot match a Transmittal, which has no response metadata.
+        return Transmittal.objects.none()
     if company_scope:
         # Transmittal is project-only (LOT 3C amendment): never present in company context.
         return Transmittal.objects.none()
@@ -335,23 +342,34 @@ def _transmittal_projection(qs):
     ).order_by().values(*PROJECTION_FIELDS)
 
 
+def _filter_register_dates(queryset, date_from=None, date_to=None):
+    # Match the same business date displayed in the register, including its created-at fallback.
+    if date_from or date_to:
+        queryset = queryset.alias(register_filter_date=TruncDate("business_date_"))
+    if date_from:
+        queryset = queryset.filter(register_filter_date__gte=date_from)
+    if date_to:
+        queryset = queryset.filter(register_filter_date__lte=date_to)
+    return queryset
+
+
 def build_register_queryset(
     user, *, project=None, company_scope=False, entity_types=("CORRESPONDENCE", "TRANSMITTAL"),
     direction=None, company=None, contact=None, correspondence_type=None, search=None,
-    status=None, ordering=None,
+    status=None, response_status=None, ordering=None, date_from=None, date_to=None,
 ):
     """The unified, correctly paginated/sortable QuerySet -- callers apply DRF pagination to
     this directly (it supports .count() and slicing like any other QuerySet)."""
     kwargs = dict(
         project=project, company_scope=company_scope, direction=direction,
         company=company, contact=contact, correspondence_type=correspondence_type,
-        search=search, status=status,
+        search=search, status=status, response_status=response_status,
     )
     parts = []
     if "CORRESPONDENCE" in entity_types:
-        parts.append(_correspondence_projection(_build_correspondence_queryset(user, **kwargs)))
+        parts.append(_filter_register_dates(_correspondence_projection(_build_correspondence_queryset(user, **kwargs)), date_from, date_to))
     if "TRANSMITTAL" in entity_types:
-        parts.append(_transmittal_projection(_build_transmittal_queryset(user, **kwargs)))
+        parts.append(_filter_register_dates(_transmittal_projection(_build_transmittal_queryset(user, **kwargs)), date_from, date_to))
     if not parts:
         return Correspondence.objects.none().values(*PROJECTION_FIELDS)
 
@@ -428,4 +446,12 @@ def annotate_ready_to_send(rows):
         row["ready_to_send"] = (
             row.get("entity_type") == "CORRESPONDENCE" and row["id"] in ready_ids
         )
+    from project_management.models import TransmittalEvent
+    transmittal_ids = [row['id'] for row in rows if row.get('entity_type') == 'TRANSMITTAL']
+    sent_ids = set(TransmittalEvent.objects.filter(
+        transmittal_id__in=transmittal_ids, event_type='SEND_SUCCEEDED'
+    ).values_list('transmittal_id', flat=True))
+    for row in rows:
+        if row.get('entity_type') == 'TRANSMITTAL':
+            row['delivery_status'] = 'SENT' if row['id'] in sent_ids else None
     return rows

@@ -18,16 +18,77 @@ creation), by the same save() guard.
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
-from django.db.models.signals import m2m_changed
+from django.db.models.signals import m2m_changed, post_delete, pre_delete
+from django.db import transaction
 from django.dispatch import receiver
 from simple_history.models import HistoricalRecords
+import logging
+import posixpath
+import uuid
 
 from models.models import User
 
 from .client_issue import ClientIssue
 from .contact import ContactCompany, ContactUser
+from .document import Document
 from .document_revision import DocumentRevision
 from .project import Project
+
+logger = logging.getLogger(__name__)
+
+# GED-WF.3.1: every file waiting for a reception confirmation lives under this prefix, never next to
+# the controlled document files -- it is never served as a document and a cleanup can tell it apart.
+PENDING_RECEIPT_PREFIX = "transmittal_receipt_pending"
+
+
+class TransmittalQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        if self.filter(status="ISSUED").exists():
+            raise ValidationError("An issued transmittal is immutable.")
+        return super().update(**kwargs)
+
+    def delete(self):
+        if self.filter(status="ISSUED").exists():
+            raise ValidationError("An issued transmittal cannot be deleted.")
+        return super().delete()
+
+
+class TransmittalItemQuerySet(models.QuerySet):
+    def bulk_create(self, objs, **kwargs):
+        objs = list(objs)
+        parent_ids = [obj.transmittal_id for obj in objs]
+        existing_ids = [obj.pk for obj in objs if obj.pk is not None]
+        if (
+            Transmittal.objects.filter(pk__in=parent_ids, status="ISSUED").exists()
+            or self.model.objects.filter(
+                pk__in=existing_ids, transmittal__status="ISSUED"
+            ).exists()
+        ):
+            raise ValidationError("An item of an issued transmittal is immutable.")
+        return super().bulk_create(objs, **kwargs)
+
+    def update(self, **kwargs):
+        if self.filter(transmittal__status="ISSUED").exists():
+            raise ValidationError("An item of an issued transmittal is immutable.")
+        target = kwargs.get("transmittal_id", kwargs.get("transmittal"))
+        if target is not None:
+            target = getattr(target, "pk", target)
+            if Transmittal.objects.filter(pk=target, status="ISSUED").exists():
+                raise ValidationError("An item of an issued transmittal is immutable.")
+        return super().update(**kwargs)
+
+    def delete(self):
+        if self.filter(transmittal__status="ISSUED").exists():
+            raise ValidationError("An item of an issued transmittal cannot be removed.")
+        return super().delete()
+
+
+class TransmittalEventQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Transmittal events cannot be modified.")
+
+    def delete(self):
+        raise ValidationError("Transmittal events cannot be deleted.")
 
 
 class Transmittal(models.Model):
@@ -86,6 +147,7 @@ class Transmittal(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     history = HistoricalRecords()
+    objects = TransmittalQuerySet.as_manager()
 
     class Meta:
         ordering = ["-created_at", "-id"]
@@ -135,7 +197,8 @@ class Transmittal(models.Model):
                 # Items/contacts are protected separately (FK/M2M below).
                 for field in (
                     "project_id", "external_company_id", "subject", "message",
-                    "issued_at", "received_at",
+                    "issued_at", "received_at", "evidence_snapshot",
+                    "created_by_id", "created_at", "transmittal_number",
                 ):
                     if getattr(self, field) != getattr(original, field):
                         raise ValidationError("An issued transmittal is immutable.")
@@ -212,10 +275,91 @@ class TransmittalItem(models.Model):
             ),
         ]
 
+    objects = TransmittalItemQuerySet.as_manager()
+
+    def save(self, *args, **kwargs):
+        parent_ids = [self.transmittal_id]
+        if self.pk:
+            stored_parent = TransmittalItem.objects.filter(pk=self.pk).values_list(
+                "transmittal_id", flat=True
+            ).first()
+            parent_ids.append(stored_parent)
+        if Transmittal.objects.filter(pk__in=parent_ids, status="ISSUED").exists():
+            raise ValidationError("An item of an issued transmittal is immutable.")
+        super().save(*args, **kwargs)
+
     def delete(self, *args, **kwargs):
         if self.transmittal.status == Transmittal.Status.ISSUED:
             raise ValidationError("An item of an issued transmittal cannot be removed.")
         super().delete(*args, **kwargs)
+
+
+def get_pending_receipt_upload_path(instance, filename):
+    """One unique folder per line: a pending file can never be shared with, or overwrite, another."""
+    transmittal = instance.transmittal
+    return posixpath.join(
+        PENDING_RECEIPT_PREFIX,
+        f"project_{transmittal.project_id}",
+        f"transmittal_{transmittal.pk}",
+        uuid.uuid4().hex,
+        posixpath.basename(filename),
+    )
+
+
+class TransmittalReceiptLine(models.Model):
+    """GED-WF.3.1: a received supplier document that is PREPARED on an incoming draft but not yet
+    recorded. Nothing canonical exists for it: no Document, no DocumentRevision, no TransmittalItem.
+    The reception confirmation re-validates it and only then creates the document / revision / item,
+    in the same atomic operation as the finalization. Deleting the draft (or the line) leaves nothing
+    behind but the pending file, which is cleaned up with it.
+
+    The issuing company is never stored here: it is the parent transmittal's external_company.
+    """
+
+    class Decision(models.TextChoices):
+        NEW_DOCUMENT = "NEW_DOCUMENT", "Create a new document"
+        NEW_REVISION = "NEW_REVISION", "New revision of an existing document"
+
+    transmittal = models.ForeignKey(Transmittal, related_name="receipt_lines", on_delete=models.CASCADE)
+    reference = models.CharField(max_length=255)
+    external_revision = models.CharField(max_length=100, blank=True, default="")
+    file = models.FileField(upload_to=get_pending_receipt_upload_path, max_length=500)
+    file_name = models.CharField(max_length=500)
+    matched_document = models.ForeignKey(
+        Document, related_name="+", on_delete=models.SET_NULL, null=True, blank=True,
+    )
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    # The user explicitly confirmed a NEW document although a candidate exists (never a silent default).
+    allow_duplicate_reference = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, related_name="+", on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def save(self, *args, **kwargs):
+        parent = Transmittal.objects.filter(pk=self.transmittal_id).values("direction", "status").first()
+        if parent is None or parent["direction"] != Transmittal.Direction.IN or parent["status"] != Transmittal.Status.DRAFT:
+            raise ValidationError("A receipt line only belongs to an incoming draft transmittal.")
+        super().save(*args, **kwargs)
+
+
+@receiver(post_delete, sender=TransmittalReceiptLine)
+def delete_pending_receipt_file(sender, instance, **kwargs):
+    """The pending file goes away with its line (draft deleted, line removed, or receipt confirmed) --
+    only after the database change is really committed, and a failure is traced (the file stays under
+    the pending prefix, where `cleanup_receipt_pending_files` can retry) instead of being lost silently."""
+    name, storage = instance.file.name, instance.file.storage
+    if not name:
+        return
+
+    def _delete():
+        try:
+            storage.delete(name)
+        except Exception:  # pragma: no cover - traced, never blocks the business operation
+            logger.exception("Pending receipt file could not be deleted: %s", name)
+
+    transaction.on_commit(_delete)
 
 
 class TransmittalEvent(models.Model):
@@ -228,6 +372,9 @@ class TransmittalEvent(models.Model):
         ITEM_REMOVED = "ITEM_REMOVED", "Item removed"
         ISSUED = "ISSUED", "Issued"
         RECEIVED = "RECEIVED", "Received"
+        SEND_STARTED = "SEND_STARTED", "Sending"
+        SEND_SUCCEEDED = "SEND_SUCCEEDED", "Sent"
+        SEND_FAILED = "SEND_FAILED", "Send failed"
 
     transmittal = models.ForeignKey(Transmittal, related_name="events", on_delete=models.CASCADE)
     event_type = models.CharField(max_length=20, choices=EventType.choices)
@@ -240,6 +387,8 @@ class TransmittalEvent(models.Model):
     class Meta:
         ordering = ["created_at", "id"]
 
+    objects = TransmittalEventQuerySet.as_manager()
+
     def save(self, *args, **kwargs):
         if not self._state.adding:
             raise ValidationError("Transmittal events cannot be modified.")
@@ -247,6 +396,16 @@ class TransmittalEvent(models.Model):
 
     def delete(self, *args, **kwargs):
         raise ValidationError("Transmittal events cannot be deleted.")
+
+
+@receiver(pre_delete, sender=Transmittal)
+@receiver(pre_delete, sender=TransmittalItem)
+@receiver(pre_delete, sender=TransmittalEvent)
+def protect_issued_transmittal_evidence(sender, instance, **kwargs):
+    # Collectors bypass model.delete(), including cascades from a Project or Folder.
+    parent_id = instance.pk if sender is Transmittal else instance.transmittal_id
+    if Transmittal.objects.filter(pk=parent_id, status="ISSUED").exists():
+        raise ValidationError("Issued transmittal evidence cannot be deleted.")
 
 
 class TransmittalReferenceCounter(models.Model):

@@ -91,6 +91,11 @@ class ContactUser(models.Model):
     bic = models.CharField(max_length=255, null=True, blank=True)
     bank_address = models.CharField(max_length=255, null=True, blank=True)
     salutation = models.CharField(max_length=50, null=True, blank=True)
+    # CRM-1B: optional account owner ("Responsable") -- a user of the same tenant.
+    owner = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="owned_contact_users",
+        null=True, blank=True,
+    )
     tracker = FieldTracker()
 
 class ContactCompany(models.Model):
@@ -128,4 +133,9 @@ class ContactCompany(models.Model):
     bic = models.CharField(max_length=255, null=True, blank=True)
     bank_address = models.CharField(max_length=255, null=True, blank=True)
     salutation = models.CharField(max_length=50, null=True, blank=True)
+    # CRM-1B: optional account owner ("Responsable") -- a user of the same tenant.
+    owner = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="owned_contact_companies",
+        null=True, blank=True,
+    )
     tracker = FieldTracker()

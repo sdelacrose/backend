@@ -10,6 +10,7 @@ from rest_framework.views import APIView
 from project_management.services.document_history_events import (
     list_document_history_events,
 )
+from project_management.services.client_surveillance_opening import can_open_transmittal, can_view_client_surveillance_detail
 from project_management.services.document_register import get_register_document_or_404
 
 
@@ -19,6 +20,10 @@ class DocumentHistoryEventsView(APIView):
         return Response(
             {
                 "document_origin": document.document_origin,
-                "results": list_document_history_events(document),
+                "results": list_document_history_events(
+                    document,
+                    detail=can_view_client_surveillance_detail(request.user, document),  # GED-SEC.2
+                    transmittal_links=can_open_transmittal(request.user, document),  # GED-WF.4.4-B
+                ),
             }
         )

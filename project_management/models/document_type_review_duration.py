@@ -18,6 +18,10 @@ DEFAULT_REVIEW_DURATION_DAYS = 15
 
 # The four independent duration fields, in the order the configuration UI/API presents them.
 DURATION_FIELD_NAMES = (
+    "author_preparation_days",
+    "internal_review_duration_days",
+    "internal_approval_duration_days",
+    "client_issue_duration_days",
     "supplier_review_duration_days",
     "client_review_duration_days",
     "internal_client_comment_integration_days",
@@ -41,6 +45,10 @@ class DocumentTypeReviewDuration(models.Model):
     # time (L3H-1 section 11) -- never a second, independent Document Type list.
     document_type = models.CharField(max_length=255)
 
+    author_preparation_days = models.PositiveIntegerField(null=True, blank=True)
+    internal_review_duration_days = models.PositiveIntegerField(null=True, blank=True)
+    internal_approval_duration_days = models.PositiveIntegerField(null=True, blank=True)
+    client_issue_duration_days = models.PositiveIntegerField(null=True, blank=True)
     supplier_review_duration_days = models.PositiveIntegerField(null=True, blank=True)
     client_review_duration_days = models.PositiveIntegerField(null=True, blank=True)
     internal_client_comment_integration_days = models.PositiveIntegerField(

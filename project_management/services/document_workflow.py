@@ -12,6 +12,8 @@ from project_management.models import (
     DocumentWorkflowEvent,
 )
 
+from project_management.services.document_workflow_notifications import schedule_workflow_notification
+
 Status = DocumentWorkflow.Status
 WorkflowType = DocumentWorkflow.WorkflowType
 Step = DocumentWorkflowEvent.Step
@@ -75,8 +77,13 @@ def annotate_current_workflow(queryset):
     current_revision = DocumentRevision.objects.filter(
         document=OuterRef("pk")
     ).order_by("-created_at", "-id")
+    # B1 / LOT 1: the approval status and the official label describe the CURRENT LOGICAL revision (the newest ordinary
+    # row): a technical BPE version has no workflow of its own and must not turn the document back into a draft.
+    # current_revision_id stays the latest PHYSICAL row (file, client cycle, supplier flags: unchanged).
+    from project_management.services.document_logical_version import logical_annotations
+    logical_revision, logical_count = logical_annotations(OuterRef("pk"))
     latest_workflow = DocumentWorkflow.objects.filter(
-        revision=OuterRef("current_revision_id")
+        revision=OuterRef("logical_revision_id")
     ).order_by("-created_at", "-id")
     expected = Case(
         When(status=Status.DRAFT, then=F("author_id")),
@@ -86,14 +93,16 @@ def annotate_current_workflow(queryset):
         output_field=IntegerField(),
     )
     return queryset.annotate(
-        current_revision_id=Subquery(current_revision.values("pk")[:1])
+        current_revision_id=Subquery(current_revision.values("pk")[:1]),
+        logical_revision_id=Subquery(logical_revision.values("pk")[:1]),
+        logical_version_number=logical_count,
     ).annotate(
-        # Official Revision of the CURRENT version (null until it is approved).
-        current_revision_label=Subquery(current_revision.values("revision_label")[:1]),
-        # D13: the external issuer's own revision designation of the CURRENT version
+        # Official Revision of the CURRENT LOGICAL version (null until it is approved).
+        current_revision_label=Subquery(logical_revision.values("revision_label")[:1]),
+        # D13: the external issuer's own revision designation of the CURRENT logical version
         # (Supplier/Client origin, primarily).
         current_external_revision=Subquery(
-            current_revision.values("external_revision")[:1]
+            logical_revision.values("external_revision")[:1]
         ),
         wf_status=Subquery(latest_workflow.values("status")[:1]),
         wf_expected_actor_id=Subquery(
@@ -147,12 +156,15 @@ def get_internal_status(document):
     current = get_current_revision(document)
     if current is None and not document.file:
         return INTERNAL_TO_CREATE
+    # B1 / LOT 1: the workflow of the CURRENT LOGICAL revision (a technical BPE version has none and is not a draft)
+    from project_management.services.document_logical_version import get_current_logical_revision
+    logical = get_current_logical_revision(document) if current else None
     latest = (
-        DocumentWorkflow.objects.filter(revision=current)
+        DocumentWorkflow.objects.filter(revision=logical)
         .order_by("-created_at", "-id")
         .values_list("status", flat=True)
         .first()
-        if current
+        if logical
         else None
     )
     return internal_status_from_workflow_status(latest)
@@ -235,6 +247,13 @@ def project_has_evidence(project):
     ).exists()
 
 
+def _assert_document_not_withdrawn(document):
+    # GED-L1.4: validation and signatures stop at the withdrawal (local import: no cycle)
+    from project_management.services.document_withdrawal import assert_not_withdrawn
+
+    assert_not_withdrawn(document)
+
+
 def assert_internal_origin(document):
     """Only INTERNAL documents can use the internal 2/3-signature workflow (server-side rule)."""
     if document.document_origin != DocumentOrigin.INTERNAL:
@@ -291,13 +310,20 @@ def start_workflow(
 
     A revision has one workflow: resubmission after a rejection is not implemented.
     """
+    _assert_document_not_withdrawn(revision.document)
     assert_internal_origin(revision.document)
+    if revision.index_revision_id:
+        # SURVEILLANCE LOT 2 (code A): the technical BPE version of an approved index is never validated again.
+        raise ValidationError("This BPE version belongs to an index that is already approved: it needs no new internal validation.")
     workflow_type = resolve_workflow_type(revision.document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
     if workflow_type == WorkflowType.TWO_STEP:
         verifier = None
     try:
         with transaction.atomic():
+            # Serialize workflow start with document withdrawal and version creation.
+            Document.objects.select_for_update().get(pk=revision.document_id)
+            _assert_document_not_withdrawn(revision.document)
             # Serialize concurrent starts for the same revision.
             locked = DocumentRevision.objects.select_for_update().get(pk=revision.pk)
             if DocumentWorkflow.objects.filter(revision=locked).exists():
@@ -319,6 +345,7 @@ def start_workflow(
                 actor=created_by,
                 action=Action.START,
             )
+            schedule_workflow_notification(workflow)
     except IntegrityError:
         raise ValidationError("This revision already has an active workflow.")
     return workflow
@@ -337,6 +364,7 @@ def start_workflow_for_document(
         ensure_current_revision,
     )
 
+    _assert_document_not_withdrawn(document)
     assert_internal_origin(document)
     workflow_type = resolve_workflow_type(document, workflow_type)
     _validate_actors(workflow_type, author, verifier, approver, allowed_users)
@@ -359,16 +387,19 @@ def perform_action(workflow, actor, action, comment):
     """Sign / validate / approve / reject the step the workflow is waiting for.
 
     Everything is enforced here: only the person assigned to the current step can act
-    (403), the action must match the current step (400), a comment is mandatory.
+    (403), the action must match the current step (400), and rejection requires a comment.
     """
     comment = (comment or "").strip()
     if action not in (*_DECISIONS, Action.REJECT):
         raise ValidationError({"action": "Unknown action."})
-    if not comment:
-        raise ValidationError({"comment": "A comment is required."})
+    if action == Action.REJECT and not comment:
+        raise ValidationError({"comment": "A comment is required to reject a document."})
 
     with transaction.atomic():
+        document_id = DocumentWorkflow.objects.values_list("revision__document_id", flat=True).get(pk=workflow.pk)
+        Document.objects.select_for_update().get(pk=document_id)
         locked = DocumentWorkflow.objects.select_for_update().get(pk=workflow.pk)
+        _assert_document_not_withdrawn(locked.revision.document)
         if not locked.is_active:
             raise ValidationError(
                 f"The workflow is already {locked.get_status_display().lower()}."
@@ -384,6 +415,8 @@ def perform_action(workflow, actor, action, comment):
         expected_actor = getattr(locked, actor_field)
         if expected_actor is None or expected_actor.pk != actor.pk:
             raise PermissionDenied("You are not the assigned actor for this step.")
+        if action == Action.REJECT and locked.status == Status.DRAFT:
+            raise ValidationError({"action": "The author signs this step; rejection is reserved for verification or approval."})
 
         DocumentWorkflowEvent.objects.create(
             workflow=locked, step=step, actor=actor, action=action, comment=comment
@@ -405,6 +438,10 @@ def perform_action(workflow, actor, action, comment):
 
             assign_revision_label(locked.revision)
             record_approval_evidence(locked.revision, locked)
+            # LOT 1: trace for a revision born from a client return (never blocks the approval)
+            from project_management.services.client_surveillance_followup import on_revision_approved_safely
+            on_revision_approved_safely(locked.revision)
+        schedule_workflow_notification(locked)
         return locked
 
 
@@ -434,9 +471,12 @@ def change_actor(workflow, changed_by, role, new_user, comment, allowed_users=No
         raise ValidationError({"comment": "A comment is required."})
 
     with transaction.atomic():
+        document_id = DocumentWorkflow.objects.values_list("revision__document_id", flat=True).get(pk=workflow.pk)
+        Document.objects.select_for_update().get(pk=document_id)
         locked = DocumentWorkflow.objects.select_for_update().get(pk=workflow.pk)
         if locked.author_id != changed_by.pk:
             raise PermissionDenied("Only the workflow author can replace an actor.")
+        _assert_document_not_withdrawn(locked.revision.document)
         if not locked.is_active:
             raise ValidationError(
                 f"The workflow is already {locked.get_status_display().lower()}."
@@ -467,4 +507,59 @@ def change_actor(workflow, changed_by, role, new_user, comment, allowed_users=No
         )
         setattr(locked, role, new_user)
         locked.save(update_fields=[role])
+        schedule_workflow_notification(locked, changed_role=role)
         return locked
+
+
+def assert_review_assignments_unlocked(document, assignments):
+    """Metadata preferences cannot diverge from a running validation circuit.
+
+    The caller holds the document row lock, shared with workflow start. Unchanged
+    values are accepted for full forms; controlled actor changes use change_actor.
+    """
+    fields = set(assignments) & {"author", "verifier", "approver"}
+    if not fields or not DocumentWorkflow.objects.filter(
+        revision__document=document, status__in=DocumentWorkflow.ACTIVE_STATUSES
+    ).exists():
+        return
+    from project_management.models import DocumentControl
+    from rest_framework.exceptions import ValidationError as ApiValidationError
+
+    control = DocumentControl.objects.filter(document=document).first()
+    current = {"author": document.author_id,
+               "verifier": control.verifier_id if control else None,
+               "approver": control.approver_id if control else None}
+    errors = {}
+    for field in fields:
+        value = assignments[field]
+        selected = getattr(value, "pk", value)
+        selected = None if selected in (None, "") else str(selected)
+        existing = None if current[field] is None else str(current[field])
+        if selected != existing:
+            errors[field] = "Review assignments cannot be edited in metadata during an active workflow. Use the workflow's controlled actor replacement."
+    if errors:
+        raise ApiValidationError(errors)
+
+
+@transaction.atomic
+def stop_workflow(workflow, actor, comment):
+    """Terminal, audited stop; never erase a prior signature or decision."""
+    from project_management.services.document_cycle import can_stop_workflow
+    # Match launch/version lock order: Document, then workflow.
+    Document.objects.select_for_update().get(pk=workflow.revision.document_id)
+    locked = DocumentWorkflow.objects.select_for_update().select_related("revision__document").get(pk=workflow.pk)
+    _assert_document_not_withdrawn(locked.revision.document)
+    if not locked.is_active:
+        raise ValidationError({"action": "Only an active workflow can be stopped."})
+    if not can_stop_workflow(actor, locked):
+        raise PermissionDenied("Only the workflow author or document creator can stop it.")
+    reason = (comment or "").strip()
+    if not reason:
+        raise ValidationError({"comment": "A reason is required to stop a workflow."})
+    DocumentWorkflowEvent.objects.create(workflow=locked, step=Step.STOP, actor=actor,
+                                         action=Action.STOP, comment=reason)
+    locked.status = Status.CANCELLED
+    locked.completed_at = timezone.now()
+    locked.save(update_fields=["status", "completed_at"])
+    schedule_workflow_notification(locked)
+    return locked

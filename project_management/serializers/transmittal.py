@@ -1,9 +1,31 @@
 from django.db import transaction
 from rest_framework import serializers
 
-from project_management.models import Transmittal, TransmittalItem
+from project_management.models import Transmittal, TransmittalItem, TransmittalReceiptLine
 from project_management.services.transmittal_finalize import is_review_overdue
 from project_management.services.transmittal_reference import generate_transmittal_number
+
+
+class TransmittalReceiptLineSerializer(serializers.ModelSerializer):
+    """What a prepared line shows -- never the pending file itself (no URL: it is not a document)."""
+
+    issuer_company = serializers.SerializerMethodField()
+    matched_document_reference = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TransmittalReceiptLine
+        fields = [
+            "id", "reference", "external_revision", "file_name", "decision", "matched_document",
+            "matched_document_reference", "allow_duplicate_reference", "issuer_company", "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_issuer_company(self, obj):
+        company = obj.transmittal.external_company
+        return {"id": company.pk, "name": company.company_name} if company else None
+
+    def get_matched_document_reference(self, obj):
+        return obj.matched_document.identification_number if obj.matched_document_id else None
 
 
 class TransmittalItemSerializer(serializers.ModelSerializer):
@@ -109,7 +131,7 @@ class TransmittalSerializer(serializers.ModelSerializer):
 
     def get_external_contacts_detail(self, obj):
         return [
-            {"id": contact.pk, "name": f"{contact.name} {contact.surname}".strip()}
+            {"id": contact.pk, "name": f"{contact.name} {contact.surname}".strip(), "email": contact.email, "is_deleted": contact.is_deleted}
             for contact in obj.external_contacts.all()
         ]
 
@@ -128,6 +150,13 @@ class TransmittalSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("An issued transmittal cannot be modified.")
 
         status = attrs.get("status", instance.status if instance else Transmittal.Status.DRAFT)
+        if instance is not None and status != instance.status:
+            # GED-WF.3.1: the status never changes through a plain update. An incoming transmittal is
+            # received through the receipt confirmation (transmittal_update), an outgoing one is issued
+            # through the issue action (transmittal_issue): no other route may flip a draft to ISSUED.
+            raise serializers.ValidationError(
+                {"status": "The status cannot be changed directly; use the receipt confirmation or the issue action."}
+            )
         if instance is None and status != Transmittal.Status.DRAFT:
             # The finalize action (issue/receive) is the ONLY path to ISSUED, for both
             # directions: it is what requires >=1 item, revalidates eligibility, and freezes

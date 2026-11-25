@@ -1,4 +1,8 @@
 from pathlib import Path
+from django.db import transaction
+from rest_framework import serializers
+from models.models import User
+from project_management.services.supplier_surveillance_review import assign_reviewer
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.http import Http404
@@ -33,7 +37,7 @@ def serialize_evidence_pdf(evidence, request=None):
     storage internals, server paths, the full evidence_metadata JSON, or the hash (section 24)."""
     if evidence is None:
         return None
-    url = evidence.file.url
+    url = f"/api/project_management/supplier-surveillance/{evidence.surveillance_id}/evidence/download"
     return {
         "url": _absolute_url(request, url) if request is not None else url,
         "generated_at": evidence.generated_at,
@@ -79,6 +83,7 @@ def serialize_supplier_surveillance(surveillance, request=None, include_events=F
         "supplier_reference": document.identification_number,
         "supplier_revision": surveillance.document_revision.external_revision,
         "supplier_transmittal_category": document.supplier_transmittal_category,
+        "template_snapshot": surveillance.template_snapshot,
         "template_name": snapshot.get("template_name"),
         "template_version": snapshot.get("template_version"),
         "created_by": user_reference(surveillance.created_by),
@@ -169,15 +174,24 @@ class SupplierSurveillanceViewSet(viewsets.GenericViewSet):
                 {"template": "A Surveillance Template is required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        reviewer_ids = serializers.ListField(child=serializers.IntegerField(min_value=1), max_length=50).run_validation(request.data.get("reviewers", []))
+        if len(set(reviewer_ids)) != len(reviewer_ids):
+            return Response({"reviewers": "Duplicate reviewers are not allowed."}, status=400)
+        reviewers = User.objects.in_bulk(reviewer_ids)
+        if len(reviewers) != len(reviewer_ids):
+            return Response({"reviewers": "Select valid reviewers."}, status=400)
         try:
-            surveillance = create_supplier_surveillance(
-                document_revision=revision, actor=request.user, template=template
-            )
+            with transaction.atomic():
+                surveillance = create_supplier_surveillance(
+                    document_revision=revision, actor=request.user, template=template
+                )
+                for reviewer_id in reviewer_ids:
+                    assign_reviewer(surveillance=surveillance, reviewer=reviewers[reviewer_id], actor=request.user)
         except DjangoValidationError as error:
             detail = error.message_dict if hasattr(error, "message_dict") else {"detail": error.messages}
             return Response(detail, status=status.HTTP_400_BAD_REQUEST)
         return Response(
-            serialize_supplier_surveillance(surveillance, request=request),
+            {**serialize_supplier_surveillance(surveillance, request=request), "can_review": request.user.pk in reviewer_ids},
             status=status.HTTP_201_CREATED,
         )
 
@@ -197,3 +211,23 @@ class SupplierSurveillanceViewSet(viewsets.GenericViewSet):
         return Response(
             {"templates": [serialize_available_template(t) for t in queryset]}
         )
+
+from rest_framework.views import APIView
+from rest_framework.permissions import IsAuthenticated
+from project_management.views.recette_document_file import DocumentCookieJWTAuthentication
+
+class InternalSupplierEvidenceDownload(APIView):
+    authentication_classes=[DocumentCookieJWTAuthentication]
+    permission_classes=[IsAuthenticated]
+
+    def get(self,request,surveillance_id):
+        from project_management.models import SupplierSurveillanceEvidence
+        from django.http import FileResponse
+        evidence=SupplierSurveillanceEvidence.objects.select_related('surveillance__document_revision').filter(surveillance_id=surveillance_id).first()
+        if not evidence: raise Http404
+        get_register_document_or_404(request,document_id=evidence.surveillance.document_revision.document_id)
+        try:
+            response=FileResponse(evidence.file.open('rb'),as_attachment=True,filename=Path(evidence.file.name).name,content_type='application/pdf')
+        except (OSError,ValueError): raise Http404
+        response['Cache-Control']='private, no-store';response['X-Content-Type-Options']='nosniff'
+        return response

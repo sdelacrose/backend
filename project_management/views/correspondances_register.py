@@ -6,7 +6,8 @@ documents.transmittal_view), exactly like the individual Correspondence/Transmit
 already do -- this endpoint never broadens what either already allows.
 """
 
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
+from django.utils.dateparse import parse_date
 from rest_framework.generics import GenericAPIView
 from rest_framework.response import Response
 
@@ -24,6 +25,22 @@ ENTITY_TYPES = ("CORRESPONDENCE", "TRANSMITTAL")
 
 def _truthy(value):
     return str(value).lower() in ("1", "true", "yes")
+
+
+def parse_register_dates(params):
+    dates = []
+    for key in ("date_from", "date_to"):
+        value = params.get(key)
+        try:
+            parsed = parse_date(value) if value else None
+        except (TypeError, ValueError):
+            parsed = None
+        if value and parsed is None:
+            raise ValidationError({key: "Use a valid date (YYYY-MM-DD)."})
+        dates.append(parsed)
+    if all(dates) and dates[0] > dates[1]:
+        raise ValidationError({"date_to": "Must be on or after date_from."})
+    return tuple(dates)
 
 
 class CorrespondancesRegisterView(GenericAPIView):
@@ -80,6 +97,7 @@ class CorrespondancesRegisterView(GenericAPIView):
 
         ordering = [o for o in (params.get("ordering") or "").split(",") if o]
 
+        date_from, date_to = parse_register_dates(params)
         queryset = build_register_queryset(
             user,
             project=project,
@@ -91,6 +109,9 @@ class CorrespondancesRegisterView(GenericAPIView):
             correspondence_type=params.get("correspondence_type") or None,
             search=params.get("search") or None,
             status=params.get("status") or None,
+            response_status=params.get("response_status") or None,
+            date_from=date_from,
+            date_to=date_to,
             ordering=ordering,
         )
 

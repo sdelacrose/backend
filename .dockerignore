@@ -33,3 +33,20 @@
 LICENSE
 README.md
 **/.backend-env
+
+# Private runtime state and developer/generated files never enter an image.
+.env*
+**/.env*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.dump
+**/*.tar
+**/*.tar.gz
+.claude
+media
+private_media
+.private_supplier_shared
+local-logs
+.pytest_cache

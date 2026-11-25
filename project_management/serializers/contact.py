@@ -107,7 +107,29 @@ class ProjectExternalUserNestedSerializer(serializers.Serializer):
     role = serializers.CharField(max_length=255, write_only=True, required=False)
 
 
-class ContactUserSerializer(serializers.ModelSerializer):
+class CrmOwnerFieldMixin:
+    """CRM-1B: the optional "Responsable" must be a user of the requester's own tenant."""
+
+    def validate_owner(self, value):
+        if value is None:
+            return value
+        from project_management.crm_tenancy import tenant_of_user, user_belongs_to_tenant
+
+        request = self.context.get("request")
+        tenant = tenant_of_user(getattr(request, "user", None)) if request else None
+        if tenant is None or not user_belongs_to_tenant(value, tenant):
+            raise serializers.ValidationError("The owner must belong to your company.")
+        return value
+
+    @staticmethod
+    def owner_summary(instance):
+        owner = instance.owner
+        if owner is None:
+            return None
+        return {"id": owner.id, "name": getattr(owner, "full_name", None) or owner.email}
+
+
+class ContactUserSerializer(CrmOwnerFieldMixin, serializers.ModelSerializer):
     projects = ProjectExternalUserNestedSerializer(
         many=True, write_only=True, required=False,
     )
@@ -271,10 +293,11 @@ class ContactUserSerializer(serializers.ModelSerializer):
             }
             for ext_id, role, proj_id, proj_name in projects_qs
         ]
+        representation["owner_detail"] = self.owner_summary(instance)
         return representation
 
 
-class ContactCompanySerializer(serializers.ModelSerializer):
+class ContactCompanySerializer(CrmOwnerFieldMixin, serializers.ModelSerializer):
     projects = ProjectExternalUserNestedSerializer(
         many=True, write_only=True, required=False,
     )
@@ -285,6 +308,17 @@ class ContactCompanySerializer(serializers.ModelSerializer):
     class Meta:
         model = ContactCompany
         fields = "__all__"
+
+    def validate_company_logo(self, value):
+        # GED-SEC.08.2-B0.3: nothing, the logo the company already holds, or the finalised upload of this user
+        # for this usage (see services/upload_reference.py); any other URL is refused.
+        request = self.context.get("request")
+        if request is None or not getattr(request.user, "is_authenticated", False):
+            return value  # internal use without a request (imports, seeds): not an upload from a browser
+        from project_management.services.upload_reference import bind_public_url
+
+        current = self.instance.company_logo if self.instance else None
+        return bind_public_url(request.user, "contact_company_logo", value, current=current)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -394,6 +428,7 @@ class ContactCompanySerializer(serializers.ModelSerializer):
             }
             for ext_id, role, proj_id, proj_name in projects_qs
         ]
+        representation["owner_detail"] = self.owner_summary(instance)
         return representation
 
 class ContactHistorySerializer(serializers.ModelSerializer):

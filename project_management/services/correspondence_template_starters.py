@@ -21,8 +21,8 @@ STARTER_TEMPLATES = (
             "\n"
             "Veuillez trouver ci-joint les documents relatifs au projet {{project_name}}.\n"
             "\n"
-            "Merci de bien vouloir nous accuser réception de cet envoi et de nous faire part "
-            "de vos éventuelles remarques.\n"
+            "Ce bordereau accompagne les documents transmis. Les éventuelles revues sont "
+            "rattachées individuellement aux documents.\n"
             "\n"
             "Cordialement,"
         ),
@@ -63,4 +63,11 @@ STARTER_TEMPLATES = (
             "Cordialement,"
         ),
     },
+    {
+        "name": "Relance de facture",
+        "description": "Relancer le paiement d’une facture échue non réglée.",
+        "language": "FR",
+        "subject_template": "Relance de paiement - facture {{invoice_reference}}",
+        "body_template": "Bonjour,\n\nSauf erreur de notre part, la facture {{invoice_reference}}, d’un montant de {{invoice_amount}}, arrivée à échéance le {{invoice_due_date}}, reste à ce jour non réglée.\n\nNous vous remercions de bien vouloir procéder à son règlement ou de nous indiquer la date de paiement prévue.\n\nSi votre règlement vient d’être effectué, merci de ne pas tenir compte de cette relance.\n\nCordialement,"
+},
 )

@@ -3,7 +3,10 @@ from rest_framework import serializers
 from models.document_control_configuration import get_document_control_configuration
 
 from project_management.models import Document
-from project_management.services.document_numbering import allocate_document_sequence
+from project_management.services.document_numbering import (
+    allocate_document_sequence,
+    lock_reference_perimeter,
+)
 from project_management.services.project_codes import propose_unique_project_code
 from project_management.utils import get_abbreviation
 
@@ -155,6 +158,7 @@ def generate_document_reference(
     resolved_settings = dict(settings)
     resolved_settings["segments"] = segments
 
+    lock_reference_perimeter(folder, settings["sequence_scope"])
     for _ in range(MAX_COLLISION_RETRIES):
         sequence = allocate_document_sequence(
             folder,

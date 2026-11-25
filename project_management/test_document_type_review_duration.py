@@ -449,6 +449,10 @@ class FieldNamesTests(ReviewDurationBase):
         self.assertEqual(
             DURATION_FIELD_NAMES,
             (
+                "author_preparation_days",
+                "internal_review_duration_days",
+                "internal_approval_duration_days",
+                "client_issue_duration_days",
                 "supplier_review_duration_days",
                 "client_review_duration_days",
                 "internal_client_comment_integration_days",

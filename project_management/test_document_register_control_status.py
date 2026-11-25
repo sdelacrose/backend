@@ -3,9 +3,12 @@ derived (never stored, L3F section 25/39). Targeted tests only: no PDF/notificat
 Review/applicability/supersession, deliberately not covered here.
 """
 
+from unittest.mock import patch
+
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from project_management.models import Document
+from project_management.models import TransmittalEvent
 from project_management.models.document_workflow import DocumentWorkflow
 from project_management.models.transmittal import Transmittal
 from project_management.serializers.document import DocumentSerializer
@@ -22,7 +25,7 @@ from project_management.services.document_register_status import (
     filter_by_supplier_control_status,
 )
 from project_management.services.document_revision import add_document_revision
-from project_management.services.document_workflow import perform_action, start_workflow
+from project_management.services.document_workflow import perform_action, start_workflow, stop_workflow
 from project_management.services.transmittal_finalize import finalize_transmittal
 from project_management.services.transmittal_items import add_transmittal_item
 from project_management.services.supplier_surveillance_review import (
@@ -51,6 +54,9 @@ class ControlStatusBase(ReviewBase):
         return revision
 
     def supplier_revision(self, category="FOR_REVIEW", client_category=None, **extra):
+        # Filter tests compare distinct documents, not duplicate supplier references.
+        number = Document.objects.filter(document_origin="SUPPLIER", external_issuer_company=self.supplier_company).count() + 2
+        extra.setdefault("identification_number", f"VEN-4578-DWG-{number:03d}")
         revision = self.make_supplier_revision(category=category, **extra)
         if client_category is not None:
             revision.document.transmittal_category = client_category
@@ -115,7 +121,7 @@ class ControlStatusBase(ReviewBase):
 
     # --- Client OUT-transmission evidence ------------------------------------------------
 
-    def issue_out_transmittal(self, revision, purpose="FOR_REVIEW"):
+    def issue_out_transmittal(self, revision, purpose="FOR_REVIEW", sent=True):
         """A real, properly-finalized OUT transmittal -- L3F.1 extended
         services.transmittal_eligibility.validate_item_eligibility to also accept an eligible
         SUPPLIER-origin revision (its own exact-revision SupplierSurveillance CLOSED+REVIEWED,
@@ -128,6 +134,9 @@ class ControlStatusBase(ReviewBase):
         )
         add_transmittal_item(transmittal, revision, purpose, self.creator)
         finalize_transmittal(transmittal, self.creator)
+        if sent:
+            # GED-WF.4.2: "sent" = a really successful send (SEND_SUCCEEDED), never the mere ISSUED status.
+            TransmittalEvent.objects.create(transmittal=transmittal, event_type="SEND_SUCCEEDED", actor=self.creator)
         return transmittal
 
     def control_statuses(self, document, *, annotated=False):
@@ -219,6 +228,46 @@ class InternalControlStatusTests(ControlStatusBase):
         perform_action(workflow, approver, "REJECT", "no")
         self.assertEqual(
             compute_internal_control_status(revision.document), InternalControlStatus.REJECTED
+        )
+
+    # GED-WF.2.1: a stopped workflow is derived as CANCELLED (displayed "Stopped"), no longer IN_PROGRESS
+    def test_internal_stopped_workflow_is_cancelled(self):
+        revision = self.make_internal_revision()
+        author, verifier, approver = make_user("a7"), make_user("v7"), make_user("p7")
+        workflow = start_workflow(revision, THREE, author, verifier, approver, self.creator)
+        perform_action(workflow, author, "SIGN", "s")
+        # real stop service; only the stop-right check is bypassed (covered by test_document_cycle_controls)
+        with patch("project_management.services.document_cycle.can_stop_workflow", return_value=True):
+            stop_workflow(workflow, author, "stop")
+        workflow.refresh_from_db()
+        self.assertEqual(workflow.status, DocumentWorkflow.Status.CANCELLED)  # stored state untouched
+        revision.document.refresh_from_db()
+        self.assertEqual(
+            compute_internal_control_status(revision.document), InternalControlStatus.CANCELLED
+        )
+        self.assertEqual(self.control_statuses(revision.document, annotated=True)[0], "CANCELLED")
+        self.assertEqual(self.control_statuses(revision.document)[0], "CANCELLED")
+        cancelled = filter_by_internal_control_status(
+            Document.objects.all(), InternalControlStatus.CANCELLED
+        )
+        in_progress = filter_by_internal_control_status(
+            Document.objects.all(), InternalControlStatus.IN_PROGRESS
+        )
+        self.assertIn(revision.document, list(cancelled))
+        self.assertNotIn(revision.document, list(in_progress))
+
+    def test_internal_stopped_workflow_does_not_change_rejected_or_no_workflow(self):
+        no_workflow = self.make_internal_revision()
+        rejected = self.make_internal_revision()
+        author, approver = make_user("a8"), make_user("p8")
+        workflow = start_workflow(rejected, TWO, author, None, approver, self.creator)
+        perform_action(workflow, author, "SIGN", "s")
+        perform_action(workflow, approver, "REJECT", "no")
+        self.assertEqual(
+            compute_internal_control_status(no_workflow.document), InternalControlStatus.IN_PROGRESS
+        )
+        self.assertEqual(
+            compute_internal_control_status(rejected.document), InternalControlStatus.REJECTED
         )
 
     # 8/9: current revision only, older approved revision never overrides
@@ -448,6 +497,7 @@ class ClientControlStatusSupplierTests(ControlStatusBase):
             external_issuer_company=self.supplier_company.id,
             supplier_transmittal_category="FOR_INFORMATION",
             transmittal_category="For information",
+            due_date="2026-12-24",  # CLIENT-DISTRIBUTION-DUE-DATE-FIX: every mode but Not sent needs a date
         )
         self.assertEqual(
             compute_supplier_control_status(document), SupplierControlStatus.DRAFT

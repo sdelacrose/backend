@@ -10,7 +10,8 @@ at a sandbox, so the isolation is enforced here, at the few places that can reac
   * mailbox_send.send_via_graph             -- second layer, BEFORE any token or Graph call;
   * mailbox_oauth / the mailbox views       -- only allow-listed mailboxes of the recette tenant;
   * the Calendar/Contacts OAuth callback and Outlook event creation (which invites attendees).
-Recipients are matched as FULL addresses (To, Cc and Bcc), never by domain.
+Recipients are matched as FULL addresses (To, Cc and Bcc), never by domain, unless
+RECETTE_ALLOW_ANY_RECIPIENT is explicitly enabled for client demonstrations.
 
 TENANT GUARANTEE (confirm_tenant_with_microsoft): the tenant is NOT read from the token. Microsoft
 Graph access tokens are meant for Graph, not for third parties, so decoding one locally (or even
@@ -23,12 +24,25 @@ Microsoft/Auth0 hosts by the recette egress proxy). Account identity (mail / use
 is confirmed separately by Graph /me for individual mailboxes.
 """
 
+import base64
+import json
+import logging
 import re
 
 import requests
 from django.conf import settings
 
+logger = logging.getLogger(__name__)
+
 MS_GRAPH_ORGANIZATION_URL = "https://graph.microsoft.com/v1.0/organization?$select=id"
+
+_TENANT_REFUSED = "This Microsoft account is not in the recette Microsoft 365 tenant."
+_GUID_RE = re.compile(r"^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$")
+_GRAPH_ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_.]{1,64}$")
+
+# MAIL-RECETTE-01N (temporary diagnostic): the public tenant Microsoft uses for personal accounts.
+MS_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
+_MAX_DIAGNOSTIC_TOKEN_CHARS = 16384
 
 _ADDRESS_RE = re.compile(r"^[a-z0-9._%+\-']+@[a-z0-9\-]+(\.[a-z0-9\-]+)+$")
 
@@ -79,7 +93,8 @@ def check_send_allowed(*, sender_address, to, cc=(), bcc=(), provider):
         raise RecetteMailBlocked("Sending is disabled in recette (RECETTE_MAIL_SEND_ENABLED is off).")
     senders = _allow_list("RECETTE_ALLOWED_SENDERS")
     recipients = _allow_list("RECETTE_ALLOWED_RECIPIENTS")
-    if not senders or not recipients:
+    any_recipient = getattr(settings, "RECETTE_ALLOW_ANY_RECIPIENT", False) is True
+    if not senders or (not any_recipient and not recipients):
         raise RecetteMailBlocked("Sending is disabled in recette: the sender/recipient allow-lists are empty.")
     sender = normalize_address(sender_address)
     if sender is None or sender not in senders:
@@ -89,7 +104,9 @@ def check_send_allowed(*, sender_address, to, cc=(), bcc=(), provider):
         raise RecetteMailBlocked("A recipient is required.")
     for raw in [*to_list, *_as_list(cc), *_as_list(bcc)]:
         address = normalize_address(raw)
-        if address is None or address not in recipients:
+        if address is None:
+            raise RecetteMailBlocked("A recipient email address is invalid.")
+        if not any_recipient and address not in recipients:
             raise RecetteMailBlocked(f'Recipient "{raw}" is not on the recette allow-list.')
 
 
@@ -109,23 +126,116 @@ def confirm_tenant_with_microsoft(access_token):
     if not recette_mode():
         return
     expected = str(getattr(settings, "RECETTE_M365_TENANT_ID", "") or "").strip().lower()
-    if not expected or not access_token:
-        raise RecetteMailBlocked("This Microsoft account is not in the recette Microsoft 365 tenant.")
-    tenant = ""
+    if not expected:
+        _refuse_tenant("tenant_not_configured")
+    if not access_token:
+        _refuse_tenant("no_token")
     try:
         response = requests.get(
             MS_GRAPH_ORGANIZATION_URL,
             headers={"Authorization": f"Bearer {access_token}", "Accept": "application/json"},
             timeout=10,
         )
-        if response.status_code == 200:
-            organizations = response.json().get("value") or []
-            if len(organizations) == 1:
-                tenant = str(organizations[0].get("id") or "").strip().lower()
-    except (requests.RequestException, ValueError, AttributeError, TypeError):
-        tenant = ""
+    except requests.Timeout:
+        _refuse_tenant("graph_timeout")
+    except requests.RequestException as error:
+        _refuse_tenant("graph_network_error", error=type(error).__name__)
+    status = getattr(response, "status_code", None)
+    if status != 200:
+        details = {"status": status, "graph_error": _graph_error_code(response)}
+        if status == 400:
+            details.update(_bad_request_diagnostic(access_token, expected))
+        _refuse_tenant("graph_http_status", **details)
+    try:
+        payload = response.json()
+    except ValueError:
+        _refuse_tenant("graph_invalid_json")
+    if not isinstance(payload, dict):
+        _refuse_tenant("graph_unexpected_payload")
+    organizations = payload.get("value") or []
+    if not isinstance(organizations, list) or not organizations:
+        _refuse_tenant("organization_absent")
+    if len(organizations) > 1:
+        _refuse_tenant("organization_multiple", count=len(organizations))
+    first = organizations[0]
+    tenant = str(first.get("id") or "").strip().lower() if isinstance(first, dict) else ""
+    if not tenant:
+        _refuse_tenant("organization_without_id")
     if tenant != expected:
-        raise RecetteMailBlocked("This Microsoft account is not in the recette Microsoft 365 tenant.")
+        # Only comparisons are logged -- never either identifier. `same_prefix` tells a different
+        # tenant (False) from a malformed or decorated setting (often True / expected not a GUID).
+        _refuse_tenant(
+            "tenant_mismatch",
+            returned_is_guid=bool(_GUID_RE.match(tenant)),
+            expected_is_guid=bool(_GUID_RE.match(expected)),
+            same_prefix=tenant[:8] == expected[:8],
+        )
+
+
+def _refuse_tenant(reason, **details):
+    """Log WHY the tenant check refused (technical, no personal or secret data) and refuse. The
+    refusal is always the same message: the log is the only place the reason is visible. Only
+    values built here are logged (reason codes, HTTP status, counts, booleans, a sanitized Graph
+    error code, an exception class name) -- never a token, address or full identifier."""
+    logger.warning(
+        "recette tenant check refused: reason=%s%s",
+        reason,
+        "".join(f" {name}={value}" for name, value in details.items()),
+    )
+    raise RecetteMailBlocked(_TENANT_REFUSED) from None
+
+
+def _unverified_jwt_claims(token):
+    """The payload of a JWT, decoded WITHOUT checking its signature -- for the diagnostic below
+    only. None for anything that is not a reasonably sized, well formed JWT (an opaque token, bad
+    base64 or JSON, a payload that is not an object). Never raises."""
+    if not isinstance(token, str) or not token or len(token) > _MAX_DIAGNOSTIC_TOKEN_CHARS:
+        return None
+    parts = token.split(".")
+    if len(parts) != 3 or not parts[0] or not parts[1]:
+        return None
+    try:
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+    except (ValueError, TypeError, RecursionError):  # bad base64/JSON/UTF-8 are all ValueErrors
+        return None
+    return claims if isinstance(claims, dict) else None
+
+
+def _bad_request_diagnostic(access_token, expected):
+    """MAIL-RECETTE-01N, TEMPORARY: what kind of token Graph answered 400 to, as four short
+    enumerations only (never a claim, identifier or address). Read from the UNVERIFIED payload, so
+    it is a hint for whoever reads the log: nothing ever authorizes or refuses on it -- the caller
+    refuses regardless. Never raises."""
+    context = {"tenant_match": "unknown", "consumer_account": "unknown",
+               "token_type": "unknown", "token_is_jwt": "false", "graph_error_category": "bad_request"}
+    try:
+        claims = _unverified_jwt_claims(access_token)
+        if claims is None:
+            return context
+        context["token_is_jwt"] = "true"
+        tid = claims.get("tid")
+        tid = tid.strip().lower() if isinstance(tid, str) else ""
+        if _GUID_RE.match(tid):
+            context["tenant_match"] = "true" if tid == expected else "false"
+            context["consumer_account"] = "true" if tid == MS_CONSUMER_TENANT_ID else "false"
+        if claims.get("idtyp") == "app" or (claims.get("roles") and not claims.get("scp")):
+            context["token_type"] = "application"
+        elif isinstance(claims.get("scp"), str) and claims["scp"].strip():
+            context["token_type"] = "delegated"
+    except Exception:  # noqa: BLE001 -- a diagnostic must never change the (refusing) outcome
+        pass
+    return context
+
+
+def _graph_error_code(response):
+    """Graph's short error code (e.g. 'Authorization_RequestDenied') of a failed answer, or
+    'none'. Only a short code-like string is ever returned."""
+    try:
+        code = response.json().get("error", {}).get("code")
+    except (ValueError, AttributeError, TypeError):
+        return "none"
+    return code if isinstance(code, str) and _GRAPH_ERROR_CODE_RE.match(code) else "none"
 
 
 def microsoft_app_configured():

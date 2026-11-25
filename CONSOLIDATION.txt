@@ -1,0 +1,13 @@
+LINKS consolidation candidate 1.4.69
+
+Reference: deployed recette1.4.68. This branch combines the reviewed recipe source with the current local client-distribution due-date validation, preserving Quality, private documents, account/licence controls and mailbox restrictions. The frontend already has the matching form rule. Shared models: a168001dc9d10e577ddedd2e2a9eb305ba5659b0 (existing models PR4); the active local models files were verified identical to this revision.
+
+Install/build from this repository: requirements.txt pins all validated Python runtime dependencies. Install shared models separately from the pinned Git revision, or use Dockerfile. There is no token build argument. Runtime/provider secrets remain in environment files outside Git/images. The Docker context excludes private data, credentials, logs and archives.
+
+Validation: python scripts/test_consolidation.py on a disposable PostgreSQL/Redis setup using the recette settings. scripts/ci_environment.py supplies only synthetic CI values for services named links-recette-db and links-recette-redis. The release gate rejects unmocked external HTTP and SMTP. Two generic transport fixtures run separately with their existing simulated-mail configuration. Existing production-workflow safety tests remain authoritative.
+
+Migration ledger: current main ends before the recette additions0229-0269. This branch preserves the exact already-applied recette migration identities; it does not rewrite migrations applied in recette or normalize historical document states. Local unintegrated0258/0259 PO/template changes correspond to recette0268/0269 after Quality0258-0267. Do not copy those alternative migration filenames over the integrated graph. Other deployed database histories require a separate compatibility review before applying this branch.
+
+Data/configuration are separate from code: existing recipe users, Auth0 identities, licences, five-demo-user grants, supplier grants and demo projects remain in the database. Feature flags and provider connection settings remain environment-specific. This source consolidation performs no data seed, migration, mailbox call or deployment.
+
+Review: incorporates backend PR21 and the later validated recipe/local fixes. Do not automatically merge or deploy. Existing production deployment remains manually dispatched with confirmation; the new consolidation workflow performs tests only. The frontend release-contract.json pins this backend commit after validation.

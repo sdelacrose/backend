@@ -33,12 +33,12 @@ from project_management.views.supplier_surveillance_template import (
 
 
 class SupplierSurveillanceBase(OriginBase):
-    def make_supplier_revision(self, category="FOR_REVIEW", external_revision="A", **extra):
+    def make_supplier_revision(self, category="FOR_REVIEW", external_revision="A", identification_number="VEN-4578-DWG-002", **extra):
         document = self.create(
             document_origin=SUPPLIER,
             external_issuer_company=self.supplier_company.id,
             supplier_transmittal_category=category,
-            identification_number="VEN-4578-DWG-002",
+            identification_number=identification_number,
             **extra,
         )
         self.upload_first_file(document, external_revision=external_revision)

@@ -3,6 +3,7 @@ from rest_framework import serializers
 from project_management.models import (
     Project
 )
+from project_management.services.action_item_queries import INTERVENTION_SCOPE_Q
 
 
 class LandingScreenSerializer(serializers.ModelSerializer):
@@ -25,7 +26,10 @@ class LandingScreenSerializer(serializers.ModelSerializer):
             
         open_action_items = 0
         for milestone in open_milestones:
-            open_action_items += milestone.action_items.exclude(status="closed").count()
+            # classic actions only: interventions are counted in their own space
+            open_action_items += (
+                milestone.action_items.exclude(INTERVENTION_SCOPE_Q).exclude(status="closed").count()
+            )
         representation["open_action_items"] = open_action_items
         representation["invoice_statuses"] = list(instance.project_bills.values_list("invoice_no", "invoice_status"))
         return representation

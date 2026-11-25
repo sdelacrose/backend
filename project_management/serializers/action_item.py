@@ -1,6 +1,13 @@
 from django.db import transaction
 from django.db.models import Sum, Q
 from project_management.models.constants import COLLABORATIVE_SOLUTION
+from project_management.services.action_progress import (
+    WeightedAdditionError,
+    apply_weighted_addition,
+    displayed_bpu,
+    uses_points_mechanism,
+    validate_weighted_addition,
+)
 from rest_framework import serializers
 import logging
 
@@ -33,9 +40,14 @@ logger = logging.getLogger(__name__)
 
 
 class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSerializer):
+    project = serializers.PrimaryKeyRelatedField(queryset=Project.objects.all(), required=False, write_only=True)
+    create_intervention = serializers.BooleanField(required=False, default=False, write_only=True)
     sub_action_items = serializers.SerializerMethodField()
     num_sub_action_items = serializers.IntegerField(read_only=True)
     parent_summary = serializers.SerializerMethodField()
+    # PROSEVIEW MOD-03: server-effective update right, detail window only (never on lists). Same check
+    # as the PATCH guard (ActionItemPermission.can_update_object): the UI only mirrors it, widens nothing.
+    can_update = serializers.SerializerMethodField()
     predecessors = serializers.SerializerMethodField()
     dependents = serializers.SerializerMethodField()
     predecessor_ids = serializers.PrimaryKeyRelatedField(
@@ -60,6 +72,12 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
         queryset=Requirement.objects.select_related("project").all(),
         required=False,
     )
+    # PROSEVIEW MOD-02: manual sub-action under a mother that uses the points mechanism. Explicit
+    # points/BPU of the new sub-action and explicit adjustments of OPEN siblings (total must stay 100).
+    # allow_null: the detail window echoes the whole representation back, and "progress_setting" is null
+    # for an action without points (MOD-03 recette: the save of such an action was refused with a 400).
+    progress_setting = serializers.DictField(required=False, write_only=True, allow_null=True)
+    sibling_progress = serializers.ListField(child=serializers.DictField(), required=False, write_only=True)
 
     class Meta:
         model = ActionItem
@@ -67,6 +85,9 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
 
     def get_fields(self):
         fields = super().get_fields()
+        # Preserve classic callers: project was historically resolved from the phase.
+        if not getattr(self, "initial_data", {}).get("create_intervention"):
+            fields.pop("project", None)
         if not self.context.get("serialize_sub_action_items", True):
             fields.pop("sub_action_items", None)
         return fields
@@ -96,6 +117,17 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                 context=child_context,
             ).data
         return []
+
+    def get_can_update(self, obj):
+        view = self.context.get("view")
+        if getattr(view, "action", None) != "retrieve":
+            return None
+        user = self.context.get("user") or getattr(self.context.get("request"), "user", None)
+        if user is None or not getattr(user, "is_authenticated", False):
+            return False
+        from project_management.permissions import ActionItemPermission
+
+        return bool(ActionItemPermission(action="update", scope="project").can_update_object(user, obj))
 
     def get_parent_summary(self, obj):
         parent = obj.parent_action_item
@@ -540,6 +572,42 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                     )
         return value
 
+    # CRM-1B: Network records linked to a follow-up must belong to the action item's own tenant
+    # (company or freelancer), resolved exactly like opportunities above (project -> its owner).
+    def _crm_effective_tenant(self):
+        project_id, company_profile_id, freelancer_id = self.get_related_project_id_or_company_id_or_freelancer()
+        if project_id:
+            project = Project.objects.filter(id=project_id).select_related("user").first()
+            if project is None:
+                raise serializers.ValidationError("Unable to get related project for validating contacts.")
+            if project.company_profile_id:
+                return ("company", project.company_profile_id)
+            if project.user and getattr(project.user, "is_freelancer", False):
+                return ("freelancer", project.user.id)
+            return None
+        if company_profile_id:
+            return ("company", company_profile_id)
+        if freelancer_id:
+            return ("freelancer", freelancer_id)
+        return None
+
+    def _validate_crm_links(self, value, label):
+        if not value:
+            return value
+        from project_management.crm_tenancy import tenant_of
+
+        tenant = self._crm_effective_tenant()
+        for record in value:
+            if tenant is None or tenant_of(record) != tenant or record.is_deleted:
+                raise serializers.ValidationError(f"{label} {record.pk} does not belong to the same company or freelancer.")
+        return value
+
+    def validate_contact_users(self, value):
+        return self._validate_crm_links(value, "Contact")
+
+    def validate_contact_companies(self, value):
+        return self._validate_crm_links(value, "Company")
+
     def get_company_id_or_project_id_or_freelancer_from_instance(self, instance):
         project_id = None
         company_profile_id = None
@@ -566,6 +634,11 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                 project_id, company_profile_id, freelancer_id = self.get_company_id_or_project_id_or_freelancer_from_instance(self.instance)
             if project_id is None and company_profile_id is None and freelancer_id is None:
                 raise serializers.ValidationError("Unable to get related Project/CompanyProfile/Freelancer id.")
+        elif self.initial_data.get('create_intervention') and self.initial_data.get('project'):
+            try:
+                project_id = int(self.initial_data['project'])
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({'project': 'A valid project is required.'})
         elif 'milestone' in self.initial_data:
             milestone_id = int(self.initial_data.get('milestone'))
             project_id = self.get_project_id_from_initial_data(milestone_id)
@@ -696,6 +769,11 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
             status_value = choice.split(":", 1)[0].strip()
             if status_value:
                 valid_statuses[status_value.lower()] = status_value
+
+        # "open" and "closed" drive the action-item lifecycle in code (closed_at/closed_by, the
+        # lock on closed items, every "open only" filter): always valid, whatever the company configured.
+        for lifecycle_status in (StatusType.OPEN.value, "closed"):
+            valid_statuses.setdefault(lifecycle_status, lifecycle_status)
 
         normalized_value = str(value).strip()
         normalized_key = normalized_value.lower()
@@ -850,6 +928,58 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                 }
             )
 
+        # MOD-02b: BPU is carried by the mother and inherited; a sub-action cannot carry its own.
+        if data.get("is_bpu") and (
+            parent_action_item is not None
+            or (self.instance is not None and self.instance.parent_action_item_id)
+        ):
+            raise serializers.ValidationError(
+                {"is_bpu": "BPU is set on the mother action and inherited by its sub-actions."}
+            )
+        # BPU is set at the import of an intervention. A classic action cannot be given BPU through the API;
+        # a value already stored (legacy data echoed back by the edit window) is left as it is.
+        if data.get("is_bpu") and not (
+            self.instance is not None and (self.instance.is_bpu or self.instance.intervention_request_id)
+        ):
+            raise serializers.ValidationError(
+                {"is_bpu": "BPU applies to interventions only (set when the request is imported)."}
+            )
+        # BPU correction (fiche intervention): the value of an existing action only changes on the MOTHER
+        # of an intervention, with the usual update rights of the action. Anything else keeps its value
+        # (an unchanged value echoed back by the edit window is not a change).
+        if (
+            self.instance is not None
+            and "is_bpu" in data
+            and bool(data["is_bpu"]) != bool(self.instance.is_bpu)
+            and not (
+                self.instance.intervention_request_id
+                and not self.instance.parent_action_item_id
+                and self.instance.intervention_action_key == "mother"
+            )
+        ):
+            raise serializers.ValidationError(
+                {"is_bpu": "BPU can only be changed on the mother action of an intervention."}
+            )
+        weighted_setting = data.get("progress_setting")
+        weighted_siblings = data.get("sibling_progress")
+        if self.instance is None and parent_action_item is not None and uses_points_mechanism(parent_action_item):
+            try:
+                data["progress_setting"], data["sibling_progress"] = validate_weighted_addition(
+                    parent_action_item, weighted_setting, weighted_siblings
+                )
+            except WeightedAdditionError as error:
+                raise serializers.ValidationError({"progress_setting": str(error)})
+        elif self.instance is not None:
+            # The detail window sends back the whole representation, including the read-only
+            # "progress_setting" it received: on an update it is an echo, never applied (points change
+            # only through the explicit addition of a sub-action).
+            data.pop("progress_setting", None)
+            data.pop("sibling_progress", None)
+        elif weighted_setting is not None or weighted_siblings is not None:
+            raise serializers.ValidationError(
+                {"progress_setting": "Points apply only to a new sub-action of an action that uses the points mechanism."}
+            )
+
         if assignees_provided:
             if not data.get("assignees") and not (
                 self.instance and not self.instance.assignees.exists()
@@ -935,14 +1065,32 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
         if start_date and target_date and start_date > target_date:
             raise serializers.ValidationError("Start date must be less than or equal to the target date.")
 
+        if data.get("create_intervention"):
+            if self.instance or data.get("parent_action_item") or not (data.get("milestone") or data.get("project")):
+                raise serializers.ValidationError({"create_intervention": "A new project mother action is required."})
+            if not data.get("target_date"):
+                raise serializers.ValidationError({"target_date": "An expected end date is required for an intervention."})
+        if data.get("project"):
+            if not data.get("create_intervention") or data.get("company_profile") or data.get("freelancer"):
+                raise serializers.ValidationError({"project": "Direct project selection is reserved for a new intervention."})
+            project = data["project"]
+            from project_management.project_access import accessible_projects
+            if not accessible_projects(request_user).filter(pk=project.pk).exists():
+                raise serializers.ValidationError({"project": "Project is not accessible."})
+            if data.get("milestone") and data["milestone"].project_id != project.pk:
+                raise serializers.ValidationError({"milestone": "The phase must belong to the selected project."})
         return data
 
     def create(self, validated_data):
         request_user = self.context.get('user')
+        create_intervention = validated_data.pop("create_intervention", False)
+        intervention_project = validated_data.pop("project", None)
         assignees = validated_data.pop("assignees", [])
         linked_folders = validated_data.pop("linked_folders", [])
         predecessors = validated_data.pop("predecessor_ids", None)
         dependents = validated_data.pop("dependent_ids", None)
+        progress_setting = validated_data.pop("progress_setting", None)
+        sibling_progress = validated_data.pop("sibling_progress", None)
         related_fields = ["milestone", "company_profile", "freelancer"]
         provided_fields = [field for field in related_fields if validated_data.get(field)]
 
@@ -982,8 +1130,35 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                         }
                     )
                 validated_data["parent_action_item"] = parent_action_item
+                if progress_setting is not None:
+                    # re-checked under the parent lock: two concurrent additions cannot both pass
+                    try:
+                        progress_setting, sibling_progress = validate_weighted_addition(
+                            parent_action_item, progress_setting, sibling_progress
+                        )
+                    except WeightedAdditionError as error:
+                        raise serializers.ValidationError({"progress_setting": str(error)})
 
+            if create_intervention:
+                from django.utils import timezone
+                from project_management.models import InterventionRequest
+                from project_management.services.intervention_import import _next_reference, _interventions_milestone, MOTHER_ACTION_KEY
+                from project_management.services.supplier_surveillance_template import resolve_company_for_project
+                project = intervention_project or validated_data["milestone"].project
+                if not validated_data.get("milestone"):
+                    validated_data["milestone"] = _interventions_milestone(project, validated_data["target_date"])
+                intervention = InterventionRequest.objects.create(
+                    project=project, company_profile_id=resolve_company_for_project(project),
+                    reference=_next_reference(project), title=validated_data["name"],
+                    received_date=timezone.localdate(), expected_end_date=validated_data["target_date"],
+                    budget=validated_data.get("allocated_budget"), description=validated_data.get("notes", ""),
+                    source="manual", created_by=request_user,
+                )
+                validated_data["intervention_request"] = intervention
+                validated_data["intervention_action_key"] = MOTHER_ACTION_KEY
             instance = super().create(validated_data)
+            if progress_setting is not None:
+                apply_weighted_addition(instance, progress_setting, sibling_progress or [])
             if assignees:
                 instance._assignee_notification_event = "create"
                 instance.assignees.set(assignees)
@@ -1004,6 +1179,7 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
         return instance
     
     def update(self, instance, validated_data):
+        validated_data.pop("create_intervention", None)
         if "created_by" in validated_data:
             raise serializers.ValidationError("You cannot update the creator of an action item.")
         assignees = validated_data.pop("assignees", None)
@@ -1047,6 +1223,31 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
     def to_representation(self, instance):
         representation = super().to_representation(instance)
         representation.pop("assignee", None)
+        setting = getattr(instance, "progress_setting", None)  # MOD-01/02: read-only, None when absent
+        # BPU belongs to interventions only: classic actions never show it (stored data is untouched)
+        representation["effective_bpu"], representation["bpu_source"] = displayed_bpu(instance)
+        representation["sub_reference"] = instance.sub_reference
+        # Interventions panel: customer request dates, read-only, mother / flat request only (null otherwise)
+        request = (
+            instance.intervention_request
+            if (instance.intervention_request_id and not instance.parent_action_item_id)
+            else None
+        )
+        # imported_on: same rule as the list "Import date" column (first confirmed import), never the received date
+        from project_management.services.intervention_import_date import import_date_of
+
+        imported = import_date_of(request) if request else None
+        representation["imported_on"] = imported.isoformat() if imported else None
+        representation["expected_end_date"] = request.expected_end_date if request else None
+        representation["progress_setting"] = (
+            {
+                "in_progress_points": setting.in_progress_points,
+                "closed_points": setting.closed_points,
+                "is_bpu": setting.is_bpu,
+            }
+            if setting is not None
+            else None
+        )
         assignees = list(instance.assignees.all())
         representation["assignees"] = [
             {
@@ -1155,6 +1356,14 @@ class ActionItemSerializer(LinkedFolderSerializerMixin, serializers.ModelSeriali
                 ),
             }
             for opportunity in instance.opportunities.all()
+        ]
+        representation["contact_users"] = [
+            {"id": contact.id, "name": f"{contact.name} {contact.surname}".strip()}
+            for contact in instance.contact_users.all()
+        ]
+        representation["contact_companies"] = [
+            {"id": company.id, "name": company.company_name}
+            for company in instance.contact_companies.all()
         ]
 
         if effective_milestone:

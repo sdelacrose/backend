@@ -81,9 +81,12 @@ MS_GRAPH_USER_CONTACTS_URL = "https://graph.microsoft.com/v1.0/me/contacts"
 # token needs to act on a shared mailbox (still subject to real Exchange-side Send As/Send on
 # Behalf/Full Access configuration this code can never grant or fully verify -- see
 # verify_shared_mailbox_access in userapis/mailbox_oauth.py).
+# MAIL-RECETTE-01J: User.Read is the least delegated permission Microsoft Graph documents for
+# GET /organization (the recette tenant check) and GET /me (the sender identity probe). Entra's
+# "API permissions" only lets the app ask for it: a v2 token carries just the scopes REQUESTED here.
 MS_MAIL_SCOPES = (
     MS_OUTLOOK_CALENDAR_SCOPES
-    + " Mail.Send Mail.ReadWrite Mail.Send.Shared Mail.ReadWrite.Shared"
+    + " Mail.Send Mail.ReadWrite Mail.Send.Shared Mail.ReadWrite.Shared User.Read"
 )
 # A deliberately minimal, read-only probe of actual mailbox access (never sends/moves/deletes
 # anything) -- used only to decide whether a SHARED mailbox connection may transition to

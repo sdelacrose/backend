@@ -97,7 +97,10 @@ class DescriptionAndTagsFieldTests(MetadataBase):
 
 class MetadataIsolationTests(MetadataBase):
     def test_changing_metadata_never_touches_the_reference_versions_file_or_statuses(self):
-        document = self.with_file(status="Issued")
+        document = self.with_file()
+        # An existing legacy status may be retained, but cannot be chosen on creation.
+        Document.objects.filter(pk=document.pk).update(status="Issued")
+        document.refresh_from_db()
         before = self.snapshot(document)
         self.patch_document(document, description="Context")
         self.assertEqual(self.snapshot(document), before)
@@ -138,7 +141,9 @@ class MetadataIsolationTests(MetadataBase):
         self.assertEqual(
             (self.fresh(document).description, self.fresh(document).tags), ("Kept", ["Keep"])
         )
-        perform_action(workflow, self.alice, "REJECT", "no")
+        # The author signs; rejection belongs to the verifier/approver stage.
+        perform_action(workflow, self.alice, "SIGN", "")
+        perform_action(workflow, self.carol, "REJECT", "no")
         self.assertEqual(self.fresh(document).tags, ["Keep"])
         self.assertEqual(self.internal_status(document), "DRAFT")
         # a new version, approved

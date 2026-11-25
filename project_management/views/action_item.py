@@ -55,6 +55,17 @@ from project_management.services.action_item_queries import (
     ActionItemOrderingService,
     ActionItemQueryService,
     ActionItemVisibilityService,
+    apply_action_scope,
+    SCOPE_INTERVENTIONS,
+)
+from project_management.services.intervention_import_date import apply_import_period
+from project_management.services.intervention_kpis import (
+    DEFAULT_WEEKS,
+    FLAGS as KPI_FLAGS,
+    navigation_only_count,
+    apply_unit_filter,
+    build_kpis,
+    build_units,
 )
 from project_management.services.action_item_gantt import (
     ActionItemGanttPayloadService,
@@ -67,7 +78,7 @@ from ecpmpapp.constants import StatusType
 from ecpmpapp.ordering import TableOrderingFilter
 from project_management.permissions import ActionItemPermission
 from ecpmpapp.utils import require_any_permission_multiple_modules
-from django.db.models import Count, Sum, F, FloatField, IntegerField
+from django.db.models import Count, Sum, F, FloatField, Func, IntegerField
 from django.db.models.functions import Coalesce, NullIf
 from django.db.models import Value
 from rest_framework.response import Response
@@ -146,11 +157,13 @@ class ActionItemViewSet(viewsets.ModelViewSet):
         "booked_hour",
         "booked_cost",
         "priority_level",
-        "allocated_budget"
+        "allocated_budget",
+        "margin_days",
     ]
     ordering_field_aliases = {
         "allocated_time": "allocated_time_sort",
         "allocated_budget": "allocated_budget_sort",
+        "margin_days": "margin_days_sort",
     }
     ordering_text_fields = {"name", "status", "priority_level"}
     ordering_natural_fields = {"name"}
@@ -172,6 +185,15 @@ class ActionItemViewSet(viewsets.ModelViewSet):
         return queryset.alias(
             allocated_time_sort=NullIf(F("allocated_time"), Value(0)),
             allocated_budget_sort=NullIf(F("allocated_budget"), Value(0.0)),
+            # margin = customer deadline - own forecast date, in days (date - date is an integer in PostgreSQL);
+            # a missing deadline or forecast gives NULL, sorted last in both directions by TableOrderingFilter
+            margin_days_sort=Func(
+                F("intervention_request__expected_end_date"),
+                F("forecast_date"),
+                template="(%(expressions)s)",
+                arg_joiner=" - ",
+                output_field=IntegerField(),
+            ),
         )
 
     def is_company_action_item(self, request):
@@ -196,6 +218,7 @@ class ActionItemViewSet(viewsets.ModelViewSet):
             'calendar',
             'gantt',
             'sub_action_items',
+            'intervention_kpis',
         }:
             if self.request.query_params.get('project'):
                 return [ActionItemPermission('view', 'project')]
@@ -251,6 +274,52 @@ class ActionItemViewSet(viewsets.ModelViewSet):
         )
         return context
 
+    def _apply_kpi_filter(self, queryset):
+        """`kpi=<flag>` (Interventions space only): keep the interventions carrying the flag of the dashboard
+        KPI / team shortcut, computed by the same units as the counters."""
+        flag = str(self.request.query_params.get("kpi") or "").strip().lower()
+        scope = str(self.request.query_params.get("scope") or "").strip().lower()
+        if not flag or scope != SCOPE_INTERVENTIONS:
+            return queryset
+        if flag not in KPI_FLAGS:
+            raise serializers.ValidationError({"kpi": f"Unknown filter. Allowed: {', '.join(KPI_FLAGS)}."})
+        units = build_units(queryset, limited_ids=self._limited_ids())
+        return apply_unit_filter(queryset, units, flag)
+
+    def _apply_import_period(self, queryset):
+        """`import_period` (+ `import_from` / `import_to`), Interventions space only: keep the interventions
+        imported in the period (reference zone and rules: services/intervention_import_date.py)."""
+        params = self.request.query_params
+        if str(params.get("scope") or "").strip().lower() != SCOPE_INTERVENTIONS:
+            return queryset
+        return apply_import_period(queryset, params)
+
+    def _limited_ids(self):
+        return self._visible_action_item_ids if self._limit_sub_action_items_to_visible else None
+
+    @action(detail=False, methods=["get"], url_path="intervention-kpis")
+    def intervention_kpis(self, request):
+        """Dashboard KPIs and Interventions-page shortcuts, computed only from the interventions the user is
+        allowed to see (permission visibility first, then the interventions scope)."""
+        visible = self.get_queryset()
+        if str(request.query_params.get("scope") or "").strip().lower() == SCOPE_INTERVENTIONS:
+            # Interventions page indicator cards: they follow the general filters (search, owner, status, priority,
+            # labels, dates; the import period is already applied by get_queryset) with the SAME predicates as the
+            # list. The closed toggle never reduces them (closed interventions are always counted) and the `kpi`
+            # pre-filter is ignored, so the cards stay stable when one of them is selected.
+            params = request.query_params.copy()
+            params["show_closed"] = "true"
+            params.pop("kpi", None)
+            visible = ActionItemFilterService(params).filter_tree(visible.filter(parent_action_item__isnull=True))
+        units = build_units(visible, limited_ids=self._limited_ids())
+        weeks = request.query_params.get("weeks") or DEFAULT_WEEKS
+        try:
+            weeks = int(weeks)
+        except (TypeError, ValueError):
+            raise serializers.ValidationError({"weeks": "Must be an integer."})
+        navigation_only = navigation_only_count(visible, units, limited_ids=self._limited_ids())
+        return Response(build_kpis(units, weeks=weeks, navigation_only=navigation_only))
+
     def get_queryset(self):
         user = self.request.user
         if isinstance(user, AnonymousUser):
@@ -266,8 +335,16 @@ class ActionItemViewSet(viewsets.ModelViewSet):
         )
         queryset = self._with_ordering_aliases(visibility.queryset)
 
+        if self.action == "intervention_kpis":
+            # the KPIs only ever see interventions; an import period (same parameters as the views) narrows the
+            # perimeter so the team shortcuts count exactly what the filtered views show. Without it: everything.
+            return apply_import_period(apply_action_scope(queryset, SCOPE_INTERVENTIONS), self.request.query_params)
+
         if self.action in {"list", "filter_options", "board", "time", "calendar", "gantt"}:
-            return queryset
+            # Actions / Interventions separation (opt-in `scope=classic|interventions`, see the service)
+            scoped = apply_action_scope(queryset, self.request.query_params.get("scope"))
+            scoped = self._apply_import_period(scoped)
+            return self._apply_kpi_filter(scoped).select_related("intervention_request__import_batch")
 
         approved_time_card_hours = (
             TimeCard.objects.filter(
@@ -483,7 +560,8 @@ class ActionItemViewSet(viewsets.ModelViewSet):
                     "A closed action item cannot be updated."
                 )
 
-            if requested_status == "closed":
+            # Close only when the status that will really be stored is "closed" (never closed_at with status "open").
+            if serializer.validated_data.get("status") == "closed":
                 updated_instance = serializer.save(
                     closed_at=datetime.now().date(),
                     closed_by=user,

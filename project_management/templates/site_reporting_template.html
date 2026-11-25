@@ -256,9 +256,13 @@
         <ul>
             {% for f_index, file_url in observation.other_files %}
                 <li>
+                    {% if file_url %}
                     <a href="{{ file_url }}" target="_blank" style="display:inline-block; padding:6px 12px; background:#2980B9; color:#fff; text-decoration:none; border-radius:4px;">
                         Download File {{ f_index }}
                     </a>
+                    {% else %}
+                    <span>File {{ f_index }} (available in LINKS)</span>
+                    {% endif %}
                 </li>
             {% endfor %}
         </ul>

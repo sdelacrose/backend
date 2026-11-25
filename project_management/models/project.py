@@ -416,14 +416,61 @@ class ActionItem(models.Model):
     linked_folders = models.ManyToManyField('Folder', related_name='action_item_linked_folders', blank=True)
     requirements = models.ManyToManyField('Requirement', related_name='action_items', blank=True)
     opportunities = models.ManyToManyField('companyprofileapis.Opportunity', related_name='action_items', blank=True)
+    # CRM-1B: follow-ups linked to Network records (same tenant only, enforced in the serializer).
+    contact_users = models.ManyToManyField('ContactUser', related_name='action_items', blank=True)
+    contact_companies = models.ManyToManyField('ContactCompany', related_name='action_items', blank=True)
+    # DEMO-01: optional link to the intervention request that generated this action. PROTECT: a
+    # request that still owns actions can never be deleted. The key makes the generation unique.
+    intervention_request = models.ForeignKey(
+        'InterventionRequest', related_name='action_items', on_delete=models.PROTECT, null=True, blank=True
+    )
+    intervention_action_key = models.CharField(max_length=32, blank=True, default="")
+    # PROSEVIEW MOD-02b: BPU (service outside the initial framework contract) is set on the MOTHER
+    # action; its sub-actions inherit it (see services.action_progress.effective_bpu).
+    is_bpu = models.BooleanField(default=False)
+    # PROSEVIEW MOD-02b: rank of a sub-action under its mother (1, 2, ...), allocated once under the
+    # mother's lock and never renumbered. Display reference: "<mother id>-<rank>". The technical keys
+    # (intervention_action_key) are untouched.
+    sub_sequence = models.PositiveIntegerField(null=True, blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     tracker = FieldTracker()
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['parent_action_item', 'sub_sequence'],
+                condition=Q(sub_sequence__isnull=False),
+                name='unique_sub_sequence_per_mother',
+            ),
+            models.UniqueConstraint(
+                fields=['intervention_request', 'intervention_action_key'],
+                condition=Q(intervention_request__isnull=False) & ~Q(intervention_action_key=''),
+                name='unique_action_per_intervention_key',
+            )
+        ]
+
     def __str__(self):
         return f"{self.name}"
 
+    @property
+    def sub_reference(self):
+        """"<mother id>-<rank>" for numbered sub-actions, None otherwise (existing ones keep None)."""
+        if self.parent_action_item_id and self.sub_sequence:
+            return f"{self.parent_action_item_id}-{self.sub_sequence}"
+        return None
+
     def save(self, *args, **kwargs):
+        if self.parent_action_item_id and self.sub_sequence is None and self._state.adding:
+            # MOD-02b: number every NEW sub-action (import, manual, concurrent) under the mother's lock.
+            from .action_template import allocate_sub_sequence
+
+            with transaction.atomic():
+                self.sub_sequence = allocate_sub_sequence(self.parent_action_item_id)
+                return self._save_checked(*args, **kwargs)
+        return self._save_checked(*args, **kwargs)
+
+    def _save_checked(self, *args, **kwargs):
         if self.pk:  # Check if it's an update
             try:
                 original = ActionItem.objects.get(pk=self.pk)
@@ -1980,6 +2027,7 @@ class PurchaseOrder(models.Model):
     reference = models.CharField(max_length=255, db_index=True)
     customer_reference = models.CharField(max_length=255, null=True, blank=True)
     po_date = models.DateField()
+    end_date = models.DateField(null=True, blank=True)
     currency = models.CharField(max_length=10)
     status = models.CharField(max_length=255)
     amount_excl_vat = models.DecimalField(max_digits=12, decimal_places=2)

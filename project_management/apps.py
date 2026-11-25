@@ -7,3 +7,4 @@ class ProjectManagementConfig(AppConfig):
 
     def ready(self):
         import project_management.signals
+        import project_management.action_progress_signals  # PROSEVIEW MOD-01

@@ -11,9 +11,8 @@ finalization (services.client_issue.get_or_create_client_issue, called from
 services.transmittal_finalize) -- never when a Document/DocumentRevision is created, never for
 a Transmittal draft, never for IN ("ready to send != sent", checkpoint section 18).
 
-client_revision_label stays NULL until explicitly recorded by a future lot (HISTORY-2/3):
-HISTORY-1 never fabricates it (no "A"/"0"/"Unspecified" default) and never derives it from
-revision_label, external_revision, a Transmittal number, a Document version or a count.
+client_revision_label freezes an explicitly planned customer index at first distribution.
+It stays NULL when none was entered and is never inferred from another revision.
 """
 
 from django.db import models
@@ -36,7 +35,7 @@ class ClientIssue(models.Model):
     client_company = models.ForeignKey(
         ContactCompany, related_name="client_issues", on_delete=models.PROTECT,
     )
-    # Nullable: a future lot assigns this explicitly. Never auto-generated, never derived.
+    # Explicit customer index frozen at first distribution; never inferred or auto-generated.
     client_revision_label = models.CharField(max_length=20, null=True, blank=True)
     # Same role/on_delete convention as SupplierSurveillance.created_by -- informational
     # provenance, never load-bearing for the Issue's own business meaning.

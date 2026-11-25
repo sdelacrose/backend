@@ -22,6 +22,7 @@ from project_management.models.constants import (
     INCOMING_PURCHASE_ORDER_STATUSES,
     OUTGOING_PURCHASE_ORDER_STATUSES,
 )
+from project_management.invoice_amounts import get_invoice_total_excl_vat
 from project_management.permissions import PurchaseOrderPermission
 from project_management.serializers.linked_folder import LinkedFolderSerializerMixin
 from project_management.utils import (
@@ -29,6 +30,7 @@ from project_management.utils import (
     create_pdf_purchase_order,
     get_stored_change_notice_pdf_document,
     get_stored_purchase_order_pdf_document,
+    get_currency_from_record,
 )
 
 # Stored on POReferenceCounter.period; sequence never resets when the calendar month changes.
@@ -190,6 +192,7 @@ class PurchaseOrderSerializer(LinkedFolderSerializerMixin, serializers.ModelSeri
             "reference",
             "customer_reference",
             "po_date",
+            "end_date",
             "currency",
             "status",
             "amount_excl_vat",
@@ -716,7 +719,7 @@ class PurchaseOrderSerializer(LinkedFolderSerializerMixin, serializers.ModelSeri
         return PurchaseOrderLineItemSerializer(items, many=True).data
 
     def get_linked_invoices(self, obj):
-        """Invoices and credit notes linked to this PO (billing.Invoice.purchase_order)."""
+        """Invoices and credit notes linked to this PO, with net, VAT and gross amounts."""
         if not getattr(obj, "pk", None):
             return []
         qs = obj.invoices.filter(
@@ -724,23 +727,25 @@ class PurchaseOrderSerializer(LinkedFolderSerializerMixin, serializers.ModelSeri
                 Invoice.DocumentType.INVOICE,
                 Invoice.DocumentType.CREDIT_NOTE,
             ],
-        ).order_by("-invoice_date", "-id")
-        return [
-            {
+        ).order_by("-invoice_date", "-id").select_related("project", "company_profile", "freelancer__freelancer_profile").prefetch_related("line_items")
+        rows = []
+        for inv in qs:
+            net_amount = get_invoice_total_excl_vat(inv) if inv.grand_total is not None else None
+            vat_amount = _quantize_money(inv.grand_total) - net_amount if net_amount is not None else None
+            rows.append({
                 "id": inv.id,
                 "reference_number": inv.reference_number or str(inv.id),
                 "document_type": inv.document_type,
                 "status": inv.status,
-                "grand_total": float(inv.grand_total)
-                if inv.grand_total is not None
-                else None,
-                "invoice_date": inv.invoice_date.isoformat()
-                if inv.invoice_date
-                else None,
+                "amount_excl_vat": float(net_amount) if net_amount is not None else None,
+                "vat_amount": float(vat_amount) if vat_amount is not None else None,
+                "grand_total": float(inv.grand_total) if inv.grand_total is not None else None,
+                "invoice_date": inv.invoice_date.isoformat() if inv.invoice_date else None,
+                "due_date": inv.due_date.isoformat() if getattr(inv, "due_date", None) else None,
+                "currency": get_currency_from_record(inv),
                 "relation_type": None,
-            }
-            for inv in qs
-        ]
+            })
+        return rows
 
     def get_linked_po_documents(self, obj):
         """Related PO / change notices (ancestors toward root + descendants), for outgoing docs only."""
@@ -873,6 +878,13 @@ class PurchaseOrderSerializer(LinkedFolderSerializerMixin, serializers.ModelSeri
             "document_type",
             instance.document_type if instance else PurchaseOrder.DocumentType.PURCHASE_ORDER,
         )
+        if document_type == PurchaseOrder.DocumentType.PURCHASE_ORDER:
+            end_date = attrs.get("end_date", instance.end_date if instance else None)
+            po_date = attrs.get("po_date", instance.po_date if instance else None)
+            if not end_date:
+                raise serializers.ValidationError({"end_date": "PO end date is required."})
+            if po_date and end_date < po_date:
+                raise serializers.ValidationError({"end_date": "End date cannot be before PO start date."})
         source_po = attrs.get("source_po")
         change_delta = attrs.get("change_amount_excl_vat")
 
@@ -1619,6 +1631,7 @@ class PurchaseOrderSerializer(LinkedFolderSerializerMixin, serializers.ModelSeri
                 "linked_payment_project_phases": [],
                 "reference": instance.reference,
                 "po_date": instance.po_date,
+                "end_date": instance.end_date,
                 "currency": instance.currency,
                 "status": instance.status,
                 "notes": getattr(instance, "notes", None),

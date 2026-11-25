@@ -1,4 +1,3 @@
-import mimetypes
 from datetime import datetime
 from project_management.models.constants import COLLABORATIVE_SOLUTION, SPECIAL_SOLUTION
 from django.db.models import Min
@@ -11,8 +10,11 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework import status, serializers
 from rest_framework.parsers import MultiPartParser
-import boto3
-from botocore.exceptions import BotoCoreError, ClientError
+from rest_framework.permissions import IsAuthenticated
+from ecpmpapp.permissions import LicensePermission
+from project_management.services.upload_s3 import StorageUnavailable
+from project_management.services.upload_policy import UploadRejected
+from project_management.views.secure_upload import store_legacy_multipart_upload
 from django.conf import settings
 
 from rest_framework import viewsets, filters
@@ -30,6 +32,7 @@ from project_management.models import (
     TimeCard, ExpenseCard, ProjectPhase, ProjectFunding, PurchaseOrder
 )
 from project_management.filters import MilestoneFilter, ActionItemFilter, ObjectAssessmentFilter, ProjectFilter
+from project_management.services.action_item_queries import INTERVENTION_SCOPE_Q
 from project_management.serializers import (
     MilestoneSerializer, ProjectSerializer, ECPMPCONFIGSerializer, 
     LandingScreenSerializer, ActionItemSerializer, ObjectAssessmentSerializer,
@@ -40,7 +43,7 @@ from chat.models import ChatRoom, MessageRead
 from project_management.serializers import GlobalConfigSerializer
 from project_management.utils import get_product_name_from_request, has_project_permission, calculate_project_progress
 from ecpmpapp.custom_exceptions import ProjectAccessException
-from ecpmpapp.constants import UserType, StatusType, S3_URL_TEMPLATE
+from ecpmpapp.constants import UserType, StatusType
 from project_management.currency_converter import ECBCurrencyConverter
 from project_management.utils import symbol_to_currency_code, get_currency_from_record
 from django.db.models import Sum, F, Q, CharField, Subquery, OuterRef
@@ -134,7 +137,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
         print(f'[DEBUG] ProjectViewSet: self.action={self.action}')
         if self.action in ['list']:
             return [ProjectsPermission(action='view', scope='company')]
-        elif self.action in ['create', 'upload_file_to_s3']:
+        elif self.action == 'upload_file_to_s3':
+            # B0.2: this override replaced the API defaults, so the endpoint was neither explicitly authenticated nor
+            # licence-checked. Both are back; the existing permission stays the minimum.
+            return [IsAuthenticated(), LicensePermission(), ProjectsPermission(action='create', scope='company')]
+        elif self.action in ['create']:
             return [ProjectsPermission(action='create', scope='company')]
         elif self.action in ['retrieve', 'stats', 'project_stats', 'funding_screen', 'evm_data', 'landing_screen', 'team_members']:
             return [ProjectPermission(action='view', scope='project')]
@@ -413,8 +420,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 })
 
             # Action Item Stats
-            total_action_items = action_items.count()
-            closed_action_items = action_items.filter(status='closed').count()
+            # Actions counters: classic actions only (interventions have their own space)
+            classic_action_items = action_items.exclude(INTERVENTION_SCOPE_Q)
+            total_action_items = classic_action_items.count()
+            closed_action_items = classic_action_items.filter(status='closed').count()
             open_action_items = total_action_items - closed_action_items
 
             total_open_action_items += open_action_items
@@ -548,7 +557,9 @@ class ProjectViewSet(viewsets.ModelViewSet):
             Q(action_item__in=project_action_items) | Q(milestone__in=project_milestones), status=StatusType.APPROVED.value
         ).aggregate(total_cost=Sum('total'))['total_cost'] or 0
 
-        open_action_items = project_action_items.exclude(status="closed").count()
+        open_action_items = (
+            project_action_items.exclude(INTERVENTION_SCOPE_Q).exclude(status="closed").count()
+        )  # classic actions only
 
         team_members = []
 
@@ -730,31 +741,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         file_obj = serializer.validated_data['file']
 
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-            region_name=settings.AWS_S3_REGION_NAME,
-        )
-
-        # Create a unique file name
-        file_name = f"uploads/{file_obj.name}"
-        content_type, _ = mimetypes.guess_type(file_obj.name)
+        # GED-SEC.08.2-B0.2: the server names and checks the object itself (views/secure_upload.py): the client name
+        # is never the object name, nothing is overwritten, format / size / real bytes are checked, the credentials
+        # come from the standard chain (none is read from the settings) and a storage error is never echoed back.
+        # The response keeps its historical shape.
         try:
-            # Upload the file to S3
-            s3_client.upload_fileobj(
-                file_obj,
-                settings.AWS_STORAGE_BUCKET_NAME,
-                file_name,
-                ExtraArgs={ "ContentType": content_type or "application/octet-stream", "ContentDisposition": "inline"},
+            _key, s3_url = store_legacy_multipart_upload(request.user, file_obj)
+        except UploadRejected as exc:
+            return Response({"detail": exc.public_message}, status=exc.status_code)
+        except StorageUnavailable:
+            return Response(
+                {"detail": "The file could not be stored. Please try again later."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-            # Construct the file URL
-            s3_url = S3_URL_TEMPLATE.format(bucket=settings.AWS_STORAGE_BUCKET_NAME, region=settings.AWS_S3_REGION_NAME, file_name=file_name)
-
-            return Response({"s3_url": s3_url}, status=status.HTTP_201_CREATED)
-
-        except (BotoCoreError, ClientError) as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # `s3_url` keeps its name for the existing page, which only uses it to preview the file it just chose: it is now a
+        # link valid a few minutes on a pending object, no longer a permanent public URL.
+        return Response({"s3_url": s3_url}, status=status.HTTP_201_CREATED)
     
 
     @action(detail=True, methods=['get'], url_path='evm-data')
