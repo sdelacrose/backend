@@ -132,7 +132,7 @@ class TemplateDataTests(TemplateBase):
 
     def test_the_three_starter_templates_are_valid_french_plain_text_and_not_inserted_anywhere(self):
         self.assertEqual(
-            [t["name"] for t in STARTER_TEMPLATES], ["Transmission documentaire", "Demande d'information", "Relance"],
+            [t["name"] for t in STARTER_TEMPLATES], ["Transmission documentaire", "Demande d'information", "Relance", "Relance de facture"],
         )
         for starter in STARTER_TEMPLATES:
             self.assertEqual(starter["language"], "FR")

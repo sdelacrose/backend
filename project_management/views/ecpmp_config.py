@@ -29,6 +29,7 @@ from project_management.serializers import ECPMPCONFIGSerializer
 from project_management.services.project_configuration_templates import (
     ensure_project_config_template,
 )
+from project_management.services.company_owner_document_access import documentary_owner_company_id
 from project_management.utils import get_product_name_from_request
 
 logger = logging.getLogger(__name__)
@@ -73,8 +74,12 @@ class ECPMPConfigViewSet(viewsets.ModelViewSet):
         else:
             products = [product_name]
 
+        visible = Q(project__team_members__team_member=user)
+        owner_company = documentary_owner_company_id(user)
+        if owner_company:
+            visible |= Q(project__company_profile_id=owner_company)
         return ECPMPConfig.objects.filter(
-            project__team_members__team_member=user,
+            visible,
             project__solution__in=products,
         ).distinct().order_by('-id')
 

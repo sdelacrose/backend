@@ -303,8 +303,8 @@ class LegacyMaterializationTests(WorkflowTestBase):
             request = APIRequestFactory().post("/x/", data, format="json")
             force_authenticate(request, user=user)
             with patch(self.ACCESS, return_value=self.document), patch(
-                self.ALLOWED, return_value=User.objects.all()
-            ):
+                self.CAN_UPDATE
+            ), patch(self.ALLOWED, return_value=User.objects.all()):
                 return view(
                     request,
                     document_id=self.document.id,

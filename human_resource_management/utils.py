@@ -1,4 +1,4 @@
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMultiAlternatives
 from django.conf import settings
 from datetime import timedelta
 import numpy as np
@@ -9,6 +9,7 @@ from models.models import User
 from ecpmpapp.alt_messages import (
     plain_messages_for_send_request_notification_email,
     plain_messages_for_send_request_status_email,
+    plain_message_leave_balance_reminder,
 )
 from human_resource_management.constants import full_approval_link
 from ecpmpapp.constants import LeaveType
@@ -129,3 +130,40 @@ def send_request_status_email(employee, reviewer, request, status):
             )
         except Exception as e:
             raise Exception(f'Failed to send leave request status email to {employee.email}, Reason: {repr(e)}')
+
+
+def send_leave_balance_reminder_email(staff, deadline_date, balances, *, to_user):
+    """AI-1685 follow-up: one independent email per RECIPIENT (`to_user` --
+    the subject's own user, or a single CC'd HR user) -- never a single
+    multi-recipient to/cc send, so a transport failure or retry for one
+    recipient can never affect another's own already-delivered message
+    (see services.leave_reminders._deliver_to_recipient, which calls this
+    once per recipient with its own independent claim/retry). Same gated-
+    send pattern as send_request_notification_email/send_request_status_
+    email above (get_user_email_preferences check is the CALLER's
+    responsibility -- services.leave_reminders already checks it per
+    recipient before calling this). `balances` never includes salary/
+    hourly_rate -- those fields are never read by services.leave_reminders
+    in the first place."""
+    context = {
+        "employee_name": staff.user.first_name,
+        "deadline_date": deadline_date.strftime('%d-%m-%Y'),
+        "balances": balances,
+    }
+    html_body = loader.render_to_string('leave_balance_reminder.html', context)
+    plain_message = plain_message_leave_balance_reminder(
+        employee_name=staff.user.first_name,
+        deadline_date=deadline_date.strftime('%d-%m-%Y'),
+        balances=balances,
+    )
+    try:
+        message = EmailMultiAlternatives(
+            subject="Reminder: review your leave balance",
+            body=plain_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[to_user.email],
+        )
+        message.attach_alternative(html_body, "text/html")
+        message.send(fail_silently=False)
+    except Exception as e:
+        raise Exception(f'Failed to send leave balance reminder email to {to_user.email}, Reason: {repr(e)}')

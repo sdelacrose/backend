@@ -57,6 +57,11 @@ def build_project_configuration_values(project):
         for field_name in PROJECT_CONFIGURATION_FIELDS
         if field_name not in NESTED_DERIVED_FIELDS.values()
     }
+    document_statuses = list(values["document_status"] or [])
+    document_statuses.extend(
+        status for status in ("PREL", "BPE") if status not in document_statuses
+    )
+    values["document_status"] = document_statuses
     nested = resolve_nested_configurations(values["nested_configurations"])
     nested = {DOCUMENT_DISCIPLINES_KEY: nested[DOCUMENT_DISCIPLINES_KEY]}
     flattened = flatten_nested_configurations(nested)

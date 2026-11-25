@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="{{ language }}">
+  <head>
+    <meta charset="UTF-8" />
+    <title>{{ labels.title }} {{ reference }}</title>
+    <style>
+      @page {
+        size: A4 portrait;
+        margin: 16mm 14mm 18mm 14mm;
+        @bottom-center {
+          content: "{{ reference }}  |  LINKS  |  {{ labels.page }} " counter(page) " {{ labels.of }} " counter(pages);
+          font-size: 8px;
+          color: #667085;
+        }
+      }
+      body { margin: 0; font-family: "Helvetica", "Arial", sans-serif; font-size: 10px; color: #101828; }
+      h1 { font-size: 20px; margin: 0 0 4px; }
+      h2 { font-size: 13px; margin: 16px 0 6px; border-bottom: 1px solid #101828; padding-bottom: 3px; page-break-after: avoid; }
+      h3 { font-size: 11px; margin: 10px 0 4px; page-break-after: avoid; }
+      table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+      th, td { text-align: left; vertical-align: top; padding: 3px 5px; border: 1px solid #d0d5dd; overflow-wrap: anywhere; }
+      th { background: #f2f4f7; font-size: 9px; }
+      thead { display: table-header-group; }
+      tr { page-break-inside: avoid; }
+      .meta td { border: none; padding: 1px 4px 1px 0; }
+      .meta td.k { color: #475467; width: 28%; }
+      .result { margin: 8px 0; }
+      .score { font-size: 24px; font-weight: bold; }
+      /* Same palette as the Quality interface (views/Quality/ratingColors.ts): [background, text]. */
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; margin-left: 8px; background: #e7f6ec; color: #036b26; }
+      .badge.EXCELLENT { background: #e7f6ec; color: #036b26; }
+      .badge.GOOD { background: #bdefe0; color: #000; }
+      .badge.IMPROVEMENT_REQUIRED { background: #fef6e7; color: #865503; }
+      .badge.UNSATISFACTORY { background: #fbeae9; color: #9e0a05; }
+      .tag { font-size: 8px; color: #475467; }
+      .crit { color: #9e0a05; }
+      .keep { page-break-inside: avoid; }
+      .muted { color: #667085; }
+      ul.items { margin: 2px 0 0; padding-left: 16px; }
+      ul.items.crit { color: #9e0a05; }
+      ul.items li { margin: 0 0 4px; line-height: 1.35; overflow-wrap: anywhere; page-break-inside: avoid; }
+    </style>
+  </head>
+  <body>
+    <h1>{{ labels.title }}</h1>
+    <table class="meta">
+      <tr><td class="k">{{ labels.reference }}</td><td>{{ reference }}</td></tr>
+      <tr><td class="k">{{ labels.supplier }}</td><td>{{ supplier }}</td></tr>
+      <tr><td class="k">{{ labels.order }}</td><td>{{ order|default:labels.none }}</td></tr>
+      {% if project %}<tr><td class="k">{{ labels.project }}</td><td>{{ project }}</td></tr>{% endif %}
+      <tr><td class="k">{{ labels.period }}</td><td>{{ period|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.type }}</td><td>{{ type }}</td></tr>
+      {% if fnc_reference %}<tr><td class="k">{{ labels.fnc }}</td><td>{{ fnc_reference }}</td></tr>{% endif %}
+      <tr><td class="k">{{ labels.template }}</td><td>{{ template }}</td></tr>
+    </table>
+
+    <h2>{{ labels.result }}</h2>
+    <div class="result">
+      {% if score %}
+        <span class="score">{{ score }} / 100</span><span class="badge {{ rating_code }}">{{ rating }}</span>
+      {% else %}
+        <span class="muted">{{ labels.not_scored }}</span>
+      {% endif %}
+    </div>
+
+    <h2>{{ labels.sections }}</h2>
+    <table>
+      <thead><tr><th style="width:60%">{{ labels.section }}</th><th style="width:15%">{{ labels.weight }}</th><th>{{ labels.section_score }}</th></tr></thead>
+      <tbody>
+      {% for section in sections %}
+        <tr><td>{{ section.title }}</td><td>{{ section.weight|default:labels.none }}</td>
+            <td>{% if section.score %}{{ section.score }} / 100{% else %}{{ labels.not_scored }}{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    <h2>{{ labels.details }}</h2>
+    {% for section in sections %}
+      <h3>{{ section.title }}{% if section.weight %} ({{ section.weight }}){% endif %}</h3>
+      <table>
+        <thead><tr><th style="width:38%">{{ labels.criterion }}</th><th style="width:9%">{{ labels.weight }}</th>
+            <th style="width:13%">{{ labels.answer }}</th><th>{{ labels.comment }}</th></tr></thead>
+        <tbody>
+        {% for row in section.rows %}
+          <tr>
+            <td>{{ row.label }}
+              {% if row.required %}<span class="tag">[{{ labels.required }}]</span>{% endif %}
+              {% if row.critical %}<span class="tag crit">[{{ labels.critical }}]</span>{% endif %}</td>
+            <td>{{ row.weight|default:labels.none }}</td>
+            <td>{{ row.answer }}</td>
+            <td>{{ row.comment|default:labels.none|linebreaksbr }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% endfor %}
+
+    <h2>{{ labels.strengths }}</h2>
+    {% if strengths %}<ul class="items">{% for item in strengths %}<li>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</li>{% endfor %}</ul>{% else %}<div class="muted">{{ labels.no_items }}</div>{% endif %}
+    <h2>{{ labels.improvements }}</h2>
+    {% if improvements %}<ul class="items">{% for item in improvements %}<li>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</li>{% endfor %}</ul>{% else %}<div class="muted">{{ labels.no_items }}</div>{% endif %}
+    <h2>{{ labels.critical_points }}</h2>
+    {% if critical_points %}<ul class="items crit">{% for item in critical_points %}<li>{{ item.label }} ({{ item.section_title }}) - {{ item.score }} / 5{% if item.comment %} - {{ item.comment }}{% endif %}</li>{% endfor %}</ul>{% else %}<div class="muted">{{ labels.no_items }}</div>{% endif %}
+
+    <h2>{{ labels.conclusion }}</h2>
+    {% if conclusion %}<div>{{ conclusion }}</div>{% endif %}
+    <div>{{ counts }}</div>
+    {% if reviewer_comment %}<div><b>{{ labels.reviewer_comment }}:</b> {{ reviewer_comment|linebreaksbr }}</div>{% endif %}
+
+    <div class="keep">
+    <h2>{{ labels.workflow }}</h2>
+    <table class="meta">
+      <tr><td class="k">{{ labels.owner }}</td><td>{{ owner|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.reviewer }}</td><td>{{ reviewer|default:labels.none }}</td></tr>
+      <tr><td class="k">{{ labels.timezone }}</td><td>{{ timezone }}</td></tr>
+    </table>
+    <table style="margin-top:6px">
+      <thead><tr><th style="width:26%">{{ labels.step }}</th><th style="width:30%">{{ labels.actor }}</th><th>{{ labels.datetime }}</th></tr></thead>
+      <tbody>
+      {% for step in steps %}
+        <tr><td>{{ step.step }}</td><td>{{ step.actor|default:labels.none }}</td><td>{{ step.when }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <table class="meta" style="margin-top:6px">
+      <tr><td class="k">{{ labels.generated }}</td><td>{{ generated_at }}</td></tr>
+    </table>
+    </div>
+  </body>
+</html>

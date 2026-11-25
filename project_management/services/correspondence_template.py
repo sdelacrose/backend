@@ -25,6 +25,10 @@ VARIABLES = (
     "recipient_name",
     "recipient_company",
     "parent_correspondence_reference",
+    "invoice_reference",
+    "invoice_due_date",
+    "invoice_amount",
+    "invoice_amount_excl_vat",
 )
 
 MARKER_RE = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
@@ -232,3 +236,9 @@ def apply_template(template, values):
         "unresolved_variables": unresolved,
         "has_unresolved": bool(unresolved),
     }
+
+
+def is_document_distribution_template(name):
+    import unicodedata
+    value = ''.join(c for c in unicodedata.normalize('NFKD', name or '') if not unicodedata.combining(c)).strip().casefold()
+    return value in {'transmission documentaire', 'document transmittal', 'document transmission', 'dokumentenversand', 'transmittal template'}

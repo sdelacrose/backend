@@ -43,6 +43,8 @@ from project_management.models import (
     PurchaseOrder,
     PurchaseOrderLineItem,
 )
+from project_management.purchase_order_invoice_status import LINKED_BILLING_DOCUMENT_TYPES
+from project_management.purchase_order_summary import get_purchase_order_total_excl_vat, get_invoice_total_excl_vat
 from project_management.permissions import PurchaseOrderPermission
 from project_management.purchase_order_access import (
     filter_purchase_orders_to_owner_scope,
@@ -101,6 +103,7 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
         "reference",
         "customer_reference",
         "po_date",
+        "end_date",
         "status",
         "created_at",
         "updated_at",
@@ -504,6 +507,15 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                             type=openapi.TYPE_NUMBER,
                             description="Total amount incl. VAT in company currency",
                         ),
+                        "total_amount_excl_vat": openapi.Schema(type=openapi.TYPE_NUMBER, x_nullable=True, description="Amount excluding VAT, in company currency"),
+                        "invoiced_amount_excl_vat": openapi.Schema(type=openapi.TYPE_NUMBER, x_nullable=True, description="Amount excluding VAT, in company currency"),
+                        "paid_amount_excl_vat": openapi.Schema(type=openapi.TYPE_NUMBER, x_nullable=True, description="Amount excluding VAT, in company currency"),
+                        "remaining_amount_excl_vat": openapi.Schema(type=openapi.TYPE_NUMBER, x_nullable=True, description="Amount excluding VAT, in company currency"),
+                        "paid_amount": openapi.Schema(
+                            type=openapi.TYPE_NUMBER,
+                            x_nullable=True,
+                            description="Total of linked invoices marked paid, in company currency",
+                        ),
                         "company_currency": openapi.Schema(
                             type=openapi.TYPE_STRING,
                             description="Company currency code",
@@ -532,16 +544,21 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                 "company_profile",
                 "freelancer__freelancer_profile",
             )
-            purchase_order_count = queryset.count()
+            purchase_order_count = queryset.filter(
+                document_type=PurchaseOrder.DocumentType.PURCHASE_ORDER
+            ).count()
 
             company_currency_symbol = get_user_currency(user)
             company_currency_code = symbol_to_currency_code(company_currency_symbol)
             converter = ECBCurrencyConverter()
             total_amount = 0.0
+            total_amount_excl_vat = 0.0
+            summary_complete = True
 
             for po in queryset:
                 amount = float(get_purchase_order_display_total_incl_vat(po))
-                if amount == 0:
+                net_amount = float(get_purchase_order_total_excl_vat(po))
+                if amount == 0 and net_amount == 0:
                     continue
 
                 po_currency_symbol = po.currency or get_currency_from_record(po)
@@ -549,12 +566,15 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
 
                 if po_currency_code.upper() == company_currency_code.upper():
                     total_amount += amount
+                    total_amount_excl_vat += net_amount
                     continue
 
                 converted_amount = converter.convert_currency(
                     amount, po_currency_code, company_currency_code
                 )
-                if converted_amount is None:
+                converted_net = converter.convert_currency(net_amount, po_currency_code, company_currency_code)
+                if converted_amount is None or converted_net is None:
+                    summary_complete = False
                     logger.warning(
                         "Could not convert %s %s to %s for purchase order %s",
                         amount,
@@ -564,9 +584,43 @@ class PurchaseOrderViewSet(viewsets.ModelViewSet):
                     )
                     continue
                 total_amount += converted_amount
+                total_amount_excl_vat += converted_net
+
+            # Same billing documents as the existing PO invoicing-status rule; only
+            # invoices attached to the already permission-scoped and filtered POs.
+            invoices = Invoice.objects.filter(
+                purchase_order_id__in=filtered_ids,
+                document_type__in=LINKED_BILLING_DOCUMENT_TYPES,
+            ).select_related("project", "company_profile", "freelancer__freelancer_profile").prefetch_related("line_items")
+            invoiced_amount = 0.0
+            paid_amount = 0.0
+            invoiced_amount_excl_vat = 0.0
+            paid_amount_excl_vat = 0.0
+            for invoice in invoices:
+                amount = float(invoice.grand_total or 0)
+                net_amount = float(get_invoice_total_excl_vat(invoice))
+                currency_code = symbol_to_currency_code(get_currency_from_record(invoice))
+                converted = amount if currency_code.upper() == company_currency_code.upper() else converter.convert_currency(amount, currency_code, company_currency_code)
+                converted_net = net_amount if currency_code.upper() == company_currency_code.upper() else converter.convert_currency(net_amount, currency_code, company_currency_code)
+                if converted is None or converted_net is None:
+                    summary_complete = False
+                    continue
+                invoiced_amount += converted
+                invoiced_amount_excl_vat += converted_net
+                if str(invoice.status or "").strip().lower() == "paid":
+                    paid_amount += converted
+                    paid_amount_excl_vat += converted_net
 
             return Response(
                 {
+                    "invoiced_amount": round(invoiced_amount, 2) if summary_complete else None,
+                    "paid_amount": round(paid_amount, 2) if summary_complete else None,
+                    "remaining_amount": round(total_amount - invoiced_amount, 2) if summary_complete else None,
+                    "total_amount_excl_vat": round(total_amount_excl_vat, 2) if summary_complete else None,
+                    "invoiced_amount_excl_vat": round(invoiced_amount_excl_vat, 2) if summary_complete else None,
+                    "paid_amount_excl_vat": round(paid_amount_excl_vat, 2) if summary_complete else None,
+                    "remaining_amount_excl_vat": round(total_amount_excl_vat - invoiced_amount_excl_vat, 2) if summary_complete else None,
+                    "summary_complete": summary_complete,
                     "total_amount": round(total_amount, 2),
                     "company_currency": company_currency_code,
                     "company_currency_symbol": company_currency_symbol,

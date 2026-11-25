@@ -2,6 +2,8 @@ from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.core.exceptions import ValidationError
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 
 from django.utils import timezone
 
@@ -190,6 +192,8 @@ class Document(models.Model):
     # create()). client_reference is new: no prior field represented it at all.
     identification_number = models.CharField(max_length=255, null=True, blank=True)
     client_reference = models.CharField(max_length=255, null=True, blank=True)
+    # Planned outgoing customer index, frozen on a new ClientIssue at distribution.
+    planned_client_revision = models.CharField(max_length=20, null=True, blank=True)
     status = models.CharField(max_length=255, null=True, blank=True)
     # Legacy documents predate this distinction and keep the internal Document Control behaviour.
     document_origin = models.CharField(
@@ -214,6 +218,8 @@ class Document(models.Model):
     # creation time, enforced in the serializer (see services/validators), not at this model
     # layer -- INTERNAL/SUPPLIER documents and Company Documents never require it.
     received_date = models.DateField(null=True, blank=True)
+    # Planned document issue date; missing plans use the actual issue day for display only.
+    due_date = models.DateField(null=True, blank=True)
     internal_review_status = models.CharField(max_length=255, null=True, blank=True)
     external_review_status = models.CharField(max_length=255, null=True, blank=True)
     # L2A: "Client Transmittal Category" -- how this document is intended to be transmitted to
@@ -258,6 +264,15 @@ class Document(models.Model):
     revision = models.IntegerField(null=True, blank=True, default=0)
     full_document_number = models.CharField(max_length=255, null=True, blank=True)
 
+    # GED-L1.4: logical withdrawal. A withdrawn document is never deleted: reference, revisions,
+    # workflows and transmittal proofs stay as they are. Set once by the withdraw service
+    # (never through the serializer), with who/when/why; there is no restore.
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_by = models.ForeignKey(
+        User, related_name='withdrawn_documents', on_delete=models.SET_NULL, null=True, blank=True
+    )
+    withdrawal_reason = models.TextField(blank=True, default="")
+
     uploaded_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -288,10 +303,23 @@ class Document(models.Model):
 
         if document_has_evidence(self):
             raise ValidationError(DOCUMENT_EVIDENCE_MESSAGE)
+        # GED-L1.4: a withdrawn or transmitted document is kept (checked before the history is
+        # wiped); cascades from a folder/project are stopped by the pre_delete receiver below.
+        from project_management.services.document_withdrawal import assert_physically_deletable
+
+        assert_physically_deletable(self)
         # Delete associated historical records
         self.history.all().delete()
         # Call the parent class's delete method
         super().delete(*args, **kwargs)
+
+
+@receiver(pre_delete, sender=Document)
+def protect_withdrawn_or_transmitted_document(sender, instance, **kwargs):
+    """GED-L1.4: also stops queryset / folder / project cascades (Document.delete covers the rest)."""
+    from project_management.services.document_withdrawal import assert_physically_deletable
+
+    assert_physically_deletable(instance)
 
 
 class DocumentReferenceCounter(models.Model):

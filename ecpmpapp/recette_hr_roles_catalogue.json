@@ -1,0 +1,182 @@
+{
+  "version": "hr-recette-1",
+  "sources": {
+    "backend": "human_resource_management migrations 0011-0035 (permission seeds) and ecpmpapp/recette_bootstrap_catalogue.json (leave_request/staff_management base keys)"
+  },
+  "roles": {
+    "hr": {
+      "name": "Responsable RH — Recette",
+      "scope": "company",
+      "type": "solution",
+      "description": "Recette only. HR tester: leaves (incl. review), staff records, HR documents, compensation, onboarding/offboarding, leave reminders, workload. No SST, no full_access, no company configuration.",
+      "permissions": [
+        "leave_request.view",
+        "leave_request.view_created",
+        "leave_request.create",
+        "leave_request.update",
+        "leave_request.review",
+        "staff_management.view",
+        "staff_management.create",
+        "staff_management.update",
+        "staff_management.view_documents",
+        "staff_management.update_documents",
+        "staff_management.view_compensation",
+        "staff_management.update_compensation",
+        "staff_management.export_compensation",
+        "staff_management.manage_onboarding_templates",
+        "staff_management.onboarding_trigger",
+        "staff_management.onboarding_view_all",
+        "staff_management.manage_offboarding_templates",
+        "staff_management.offboarding_trigger",
+        "staff_management.offboarding_view_all",
+        "staff_management.manage_leave_reminders",
+        "staff_management.view_workload",
+        "staff_management.manage_workload_alerts"
+      ]
+    },
+    "sst": {
+      "name": "Référent SST — Recette",
+      "scope": "company",
+      "type": "solution",
+      "description": "Recette only. Explicit, separate SST scope (cases, dossier, payroll projection, payroll attestation). Never granted to the Company Owner.",
+      "permissions": [
+        "staff_management.manage_sst_cases",
+        "staff_management.view_sst_dossier",
+        "staff_management.view_sst_payroll_projection",
+        "staff_management.manage_sst_payroll_attestation"
+      ]
+    }
+  },
+  "permissions": {
+    "leave_request.view": {
+      "description": "Can view all leave requests",
+      "module": "leave_request",
+      "name": "View Leave Request"
+    },
+    "leave_request.view_created": {
+      "description": "Can view leave requests created by user",
+      "module": "leave_request",
+      "name": "View Created Leave Request"
+    },
+    "leave_request.create": {
+      "description": "Can create leave requests",
+      "module": "leave_request",
+      "name": "Create Leave Request"
+    },
+    "leave_request.update": {
+      "description": "Can modify a leave request's own content (dates, duration, type, reason, attachments) -- distinct from leave_request.review (approve/reject) and from leave_request.full_access (which also implies it). Never grants approval/rejection rights.",
+      "module": "leave_request",
+      "name": "Update Leave Request Content"
+    },
+    "leave_request.review": {
+      "description": "Can review and approve leave requests",
+      "module": "leave_request",
+      "name": "Review Leave Request"
+    },
+    "staff_management.view": {
+      "description": "Can view staff management",
+      "module": "staff_management",
+      "name": "View Staff Management"
+    },
+    "staff_management.create": {
+      "description": "Can create a Staff dossier for a User already attached to this company who does not yet have one -- a DELIBERATELY separate right from staff_management.view/update/full_access, which only ever govern an ALREADY-EXISTING dossier. Never implies compensation, role, license or company-assignment rights. Never assigned by default.",
+      "module": "staff_management",
+      "name": "Create Staff Dossier"
+    },
+    "staff_management.update": {
+      "description": "Can update staff management",
+      "module": "staff_management",
+      "name": "Update Staff Management"
+    },
+    "staff_management.view_documents": {
+      "description": "Can view a company's/collaborator's HR documents (shared or private) -- a DELIBERATELY separate right from staff_management.view/full_access AND from view_compensation. Never grants access to compensation figures or health/SST notes, which remain under their own dedicated rights. Never assigned by default.",
+      "module": "staff_management",
+      "name": "View Staff Documents"
+    },
+    "staff_management.update_documents": {
+      "description": "Can upload/rename/verify/accept a collaborator's HR documents and grant/revoke individual access to them. Separate from view_documents. The collaborator concerned may still upload their OWN requested pieces without this right, but can never verify/accept their own document (see can_transition_staff_document_file_status).",
+      "module": "staff_management",
+      "name": "Manage Staff Documents"
+    },
+    "staff_management.view_compensation": {
+      "description": "Can view salary/hourly_rate for staff of this company -- a DELIBERATELY separate right from staff_management.view/full_access, which no longer implies compensation visibility (DEC-02/06). Never assigned by default.",
+      "module": "staff_management",
+      "name": "View Staff Compensation"
+    },
+    "staff_management.update_compensation": {
+      "description": "Can modify salary/hourly_rate for OTHER staff of this company (never one's own -- see DEC-04, a self-edit of one's own compensation is always refused regardless of this permission). Separate from view_compensation.",
+      "module": "staff_management",
+      "name": "Update Staff Compensation"
+    },
+    "staff_management.export_compensation": {
+      "description": "Can include salary in a generated Staff export file (DEC-49: export is its own action, never implied by view/update compensation rights).",
+      "module": "staff_management",
+      "name": "Export Staff Compensation"
+    },
+    "staff_management.manage_onboarding_templates": {
+      "description": "Can create/edit a company's onboarding templates. Never implies the right to trigger one.",
+      "module": "staff_management",
+      "name": "Manage Onboarding Templates"
+    },
+    "staff_management.onboarding_trigger": {
+      "description": "Can launch an onboarding instance for an existing Staff dossier. Never implies managing templates.",
+      "module": "staff_management",
+      "name": "Trigger Onboarding"
+    },
+    "staff_management.onboarding_view_all": {
+      "description": "RH global tracking view across every onboarding instance of the company. Acting on one's OWN assigned steps never requires this right -- assignment itself is sufficient authorization for that narrower case.",
+      "module": "staff_management",
+      "name": "View All Onboarding Instances"
+    },
+    "staff_management.manage_offboarding_templates": {
+      "description": "Can create/edit a company's offboarding templates. Separate from staff_management.manage_onboarding_templates -- never cumulated by default. Never implies the right to trigger a departure.",
+      "module": "staff_management",
+      "name": "Manage Offboarding Templates"
+    },
+    "staff_management.offboarding_trigger": {
+      "description": "Can launch an offboarding instance for an existing Staff dossier (manual trigger). Separate from staff_management.onboarding_trigger -- never cumulated by default. Never implies managing templates.",
+      "module": "staff_management",
+      "name": "Trigger Offboarding"
+    },
+    "staff_management.offboarding_view_all": {
+      "description": "RH global tracking view across every offboarding instance of the company (the departures dashboard). Separate from staff_management.onboarding_view_all. Acting on one's OWN assigned steps never requires this right.",
+      "module": "staff_management",
+      "name": "View All Offboarding Instances"
+    },
+    "staff_management.manage_leave_reminders": {
+      "description": "Can configure leave-balance reminder rules, preview/manually trigger reminders for the company's staff, and view the administrative delivery history. Does not grant staff_management.update/full_access (contractual-field editing) and never exposes salary/hourly_rate.",
+      "module": "staff_management",
+      "name": "Manage Leave Balance Reminders"
+    },
+    "staff_management.view_workload": {
+      "description": "Can view the read-only cross-project staff occupancy view (capacity/charge/rate from Project Management action items, estimated and clearly flagged as such). Grants no assignment or budget-editing right anywhere -- Project Management permissions are unchanged and still govern that. Never exposes salary/hourly_rate or absence justification details.",
+      "module": "staff_management",
+      "name": "View Staff Workload"
+    },
+    "staff_management.manage_workload_alerts": {
+      "description": "Can configure which RH users receive the staff-workload overload alert for a company/solution, and trigger a manual recompute (shares the exact same anti-duplicate claim as the scheduled evaluation). Does not by itself grant staff_management.view_workload -- consulting the occupancy view still requires that separate, dedicated permission.",
+      "module": "staff_management",
+      "name": "Manage Staff Workload Alerts"
+    },
+    "staff_management.manage_sst_cases": {
+      "description": "RH/DRH habilitee: declare/record/correct/cancel/close an SST case (maladie/maladie longue duree/maternite/accident du travail/incident) for any staff of her own company. Deliberately separate from staff_management.view/update/full_access, view_documents, view_compensation, and every onboarding/offboarding permission -- never has a Company Admin fallback either.",
+      "module": "staff_management",
+      "name": "Manage SST Cases"
+    },
+    "staff_management.view_sst_dossier": {
+      "description": "Read-only consultation of an SST dossier/documents -- narrower than manage_sst_cases (can consult, never record/correct/close). manage_sst_cases implies this.",
+      "module": "staff_management",
+      "name": "View SST Dossier"
+    },
+    "staff_management.view_sst_payroll_projection": {
+      "description": "Paie: the narrow administrative projection (dates + nature only, never reason/notes/documents). Deliberately SEPARATE from manage_sst_payroll_attestation -- viewing the projection never implies the right to deposit an attestation, and vice versa.",
+      "module": "staff_management",
+      "name": "View SST Payroll Projection"
+    },
+    "staff_management.manage_sst_payroll_attestation": {
+      "description": "Paie: deposit the salary attestation document for an SST case only -- never implies view_sst_payroll_projection nor any dossier/document read access.",
+      "module": "staff_management",
+      "name": "Deposit SST Payroll Attestation"
+    }
+  }
+}

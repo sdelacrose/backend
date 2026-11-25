@@ -118,6 +118,8 @@ def remove_reviewer(*, assignment, actor):
             metadata={"reviewer_user_id": reviewer_id},
         )
         assignment.delete()
+        locked = SupplierSurveillance.objects.select_for_update().get(pk=surveillance.pk)
+        advance_when_all_completed(locked, actor)
 
 
 def assert_can_respond(assignment, user):
@@ -157,10 +159,13 @@ def _clean_answer(item, answer):
     raise ValidationError(f"Unsupported item type for item {item_snapshot_id}.")
 
 
+@transaction.atomic
 def save_responses(*, assignment, actor, answers):
     """`answers`: an iterable of {item_snapshot_id, check_value?, text_value?}. Every answer is
     validated against the snapshot before anything is written (L3D section 11/26); one call
     upserts every changed item in one transaction (section 33 -- no per-keystroke writes)."""
+    assignment.surveillance = SupplierSurveillance.objects.select_for_update().get(pk=assignment.surveillance_id)
+    assignment.refresh_from_db()
     assert_can_respond(assignment, actor)
     surveillance = assignment.surveillance
     items = snapshot_items(surveillance)
@@ -231,9 +236,12 @@ def missing_required_item_labels(assignment):
     return missing
 
 
+@transaction.atomic
 def complete_review(*, assignment, actor):
     """L3D section 15/16/24: explicit action, only by the assigned Reviewer themselves, blocked
     if any required Item is missing a valid answer."""
+    assignment.surveillance = SupplierSurveillance.objects.select_for_update().get(pk=assignment.surveillance_id)
+    assignment.refresh_from_db()
     if assignment.reviewer_id != actor.id:
         raise PermissionDenied("You can only complete your own Surveillance review.")
     assert_not_closed(assignment.surveillance)
@@ -250,15 +258,25 @@ def complete_review(*, assignment, actor):
         assignment.save(update_fields=["status", "completed_at", "updated_at"])
         record_event(surveillance, EventType.REVIEW_COMPLETED, actor, assignment=assignment)
 
-        # L3D section 17/36: READY_FOR_CLOSURE only once every CURRENT assignment is COMPLETED,
-        # and only when there is at least one -- never with zero reviewers.
-        assignments = list(surveillance.reviewer_assignments.all())
-        all_completed = bool(assignments) and all(a.status == Status.COMPLETED for a in assignments)
-        if all_completed and surveillance.status == SupplierSurveillance.Status.UNDER_REVIEW:
-            surveillance.status = SupplierSurveillance.Status.READY_FOR_CLOSURE
-            surveillance.save(update_fields=["status", "updated_at"])
-            record_event(surveillance, EventType.READY_FOR_CLOSURE, actor)
+        advance_when_all_completed(surveillance, actor)
     return assignment
+
+
+def advance_when_all_completed(surveillance, actor):
+    """L3D section 17/36: READY_FOR_CLOSURE only once every CURRENT assignment is COMPLETED, and only when
+    there is at least one -- never with zero reviewers. LOT 2: also applies from DRAFT (a review completed
+    without any saved answer, e.g. a template with optional items only) and after a not-started reviewer is
+    removed, so a review that is really finished is never left waiting for a manual step."""
+    assignments = list(surveillance.reviewer_assignments.all())
+    all_completed = bool(assignments) and all(a.status == Status.COMPLETED for a in assignments)
+    if all_completed and surveillance.status in (
+        SupplierSurveillance.Status.DRAFT, SupplierSurveillance.Status.UNDER_REVIEW,
+    ):
+        surveillance.status = SupplierSurveillance.Status.READY_FOR_CLOSURE
+        surveillance.save(update_fields=["status", "updated_at"])
+        record_event(surveillance, EventType.READY_FOR_CLOSURE, actor)
+        return True
+    return False
 
 
 def compute_progress(assignment):
@@ -297,12 +315,9 @@ def close_supplier_surveillance(*, surveillance, actor, result, closure_comment)
     if result not in Result.values:
         raise ValidationError({"result": "A valid final result is required."})
     comment = (closure_comment or "").strip()
-    if result in (Result.COMMENTED, Result.REJECTED) and not comment:
-        raise ValidationError(
-            {"closure_comment": "A closure comment is required for this result."}
-        )
-
     with transaction.atomic():
+        from project_management.models import Document
+        Document.objects.select_for_update().get(pk=surveillance.document_revision.document_id)
         locked = SupplierSurveillance.objects.select_for_update().get(pk=surveillance.pk)
         if locked.status == SupplierSurveillance.Status.CLOSED:
             raise ValidationError("This Surveillance is already closed.")
@@ -346,4 +361,6 @@ def close_supplier_surveillance(*, surveillance, actor, result, closure_comment)
                 "has_closure_comment": bool(comment),
             },
         )
+        from project_management.services.supplier_portal import publish_closed_feedback
+        publish_closed_feedback(surveillance=locked, actor=actor)
     return locked

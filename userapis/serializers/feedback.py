@@ -42,6 +42,17 @@ class FeedbackSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at', 'response_date', 'solution_name' ,'company_profile', 'user', 'freelancer']
 
+    def validate_attachments(self, value):
+        # GED-SEC.08.2-B0.3: an attachment is a historical one of this feedback, or the finalised upload of this user
+        # for a feedback attachment (see services/upload_reference.py); any other string is refused.
+        request = self.context.get("request")
+        if request is None or not getattr(request.user, "is_authenticated", False):
+            return value
+        from project_management.services.upload_reference import bind_private_references
+
+        existing = self.instance.attachments if self.instance is not None else ()
+        return bind_private_references(request.user, "feedback_attachment", value, existing=existing)
+
     def validate_project(self, value):
         """Validate that the project ID exists and user has access to it"""
         if value is not None:

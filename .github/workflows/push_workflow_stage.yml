@@ -42,7 +42,7 @@ jobs:
               env:
                   GH_USERNAME: ${{ secrets.GH_USERNAME }}
                   GH_TOKEN: ${{ secrets.GH_TOKEN }}
-                  MODELS_REF: f8ea5539f8208a1b17589b17159269275003e776
+                  MODELS_REF: 0841991f496e0f4805dd080cfbbf25e55179fa2c
               run: |
                   git clone "https://${GH_USERNAME}:${GH_TOKEN}@github.com/sdelacrose/admin-server-models.git" ../admin-server-models
                   git -C ../admin-server-models checkout --detach "${MODELS_REF}"

@@ -15,8 +15,30 @@ from userapis.serializers import CalendarEventSerializer
 from project_management.models import Milestone, ActionItem
 from human_resource_management.models import LeaveRequest
 from human_resource_management.serializers import LeaveRequestSerializer
+from human_resource_management.serializers.leave import serialize_leave_for_calendar
+from human_resource_management.permissions import (
+    has_cumulative_leave_review_permission,
+    has_leave_manager_opinion_permission,
+    has_sst_view_permission,
+)
+
+
+def _calendar_include_type(leave, user, base_include_type):
+    """LOT L04 (SST): the general full_access/view/review branches below pass
+    include_type=True for every row -- but an SST-managed LeaveRequest must
+    never show its `type` to a viewer who only holds those GENERAL leave
+    permissions (a leak this lot specifically guards against, see
+    CADRAGE_L04_SST.md section 4). Neutral label (type stripped, same as a
+    pure team manager) unless the viewer is the employee themself or holds
+    the dedicated SST view permission. Never widens visibility the other
+    way: base_include_type=False (pure team manager) is always preserved."""
+    if not base_include_type:
+        return False
+    if not (leave.leave_type_id and leave.leave_type.is_sst_managed):
+        return True
+    return user.id == leave.employee.user_id or has_sst_view_permission(user)
 from ecpmpapp.utils import reschedule_event
-from ecpmpapp.constants import UserType
+from ecpmpapp.constants import UserType, StatusType
 from userapis.permissions import CalendarEventPermission
 from userapis.views.calendar_room_warning import CalendarEventRoomWarningMixin
 from ecpmpapp.utils import require_any_permission_multiple_modules
@@ -219,63 +241,86 @@ class CalendarEventViewSet(CalendarEventRoomWarningMixin, viewsets.ModelViewSet)
 
         # Check Leave Request permissions
         has_leave_request_full_access = require_any_permission_multiple_modules(
-            user, 
-            {'leave_request': ['full_access']}, 
-            'company', 
+            user,
+            {'leave_request': ['full_access']},
+            'company',
             self.request.query_params
         )
         has_leave_request_view = require_any_permission_multiple_modules(
-            user, 
-            {'leave_request': ['view']}, 
-            'company', 
+            user,
+            {'leave_request': ['view']},
+            'company',
             self.request.query_params
         )
         has_leave_request_view_created = require_any_permission_multiple_modules(
-            user, 
-            {'leave_request': ['view_created']}, 
-            'company', 
+            user,
+            {'leave_request': ['view_created']},
+            'company',
             self.request.query_params
         )
-        
-        print(f'[DEBUG] Calendar: Leave Request permissions - full_access: {has_leave_request_full_access}, view: {has_leave_request_view}, view_created: {has_leave_request_view_created}')
+        # LOT RH 6: `review` (the real HR-distinction permission, see
+        # human_resource_management.permissions) was missing from this list
+        # entirely -- an HR reviewer holding ONLY `review` (no full_access/
+        # view/view_created) got zero leave requests from this aggregate.
+        # Resolved via the same union-across-roles helper the rest of the
+        # leave-request feature uses, so a cumulative HR+Company-Manager (or
+        # HR+manager-opinion) grant is honoured here too.
+        has_leave_request_review = has_cumulative_leave_review_permission(user)
+        # LOT RH 6: a pure team manager (holds ONLY `manager_opinion`) --
+        # strictly their own direct reports (`Staff.supervisor`), never
+        # company-wide, and APPROVED ONLY (a pending request is never shown
+        # to a team as a confirmed unavailability).
+        has_leave_request_manager_opinion = has_leave_manager_opinion_permission(user)
 
-        # Fetch Leave Requests based on permissions
-        leave_requests = LeaveRequest.objects.none()
-        if has_leave_request_full_access or has_leave_request_view or has_leave_request_view_created:
-            # Base filter for date range
-            date_filter = Q(start_date__lte=end_date) & Q(end_date__gte=start_date)
-            
-            if has_leave_request_full_access or has_leave_request_view:
-                if user.is_freelancer:
-                    # Freelancers see their own leave requests
-                    leave_requests = LeaveRequest.objects.filter(
-                        date_filter & Q(employee__user=user)
-                    )
-                else:
-                    # Company users see all company leave requests
-                    leave_requests = LeaveRequest.objects.filter(
-                        date_filter & Q(employee__user__company=user.company)
-                    )
-            elif has_leave_request_view_created:
-                if user.is_freelancer:
-                    # Freelancers see their own leave requests
-                    leave_requests = LeaveRequest.objects.filter(
-                        date_filter & Q(employee__user=user)
-                    )
-                else:
-                    # Company users see leave requests where they are the employee
-                    leave_requests = LeaveRequest.objects.filter(
-                        date_filter & Q(employee__user=user)
-                    )
+        print(f'[DEBUG] Calendar: Leave Request permissions - full_access: {has_leave_request_full_access}, view: {has_leave_request_view}, view_created: {has_leave_request_view_created}, review: {has_leave_request_review}, manager_opinion: {has_leave_request_manager_opinion}')
 
+        # Fetch Leave Requests based on permissions -- built as plain dicts
+        # via the shared serialize_leave_for_calendar (same shape
+        # LeaveRequestViewSet.calendar uses), NOT LeaveRequestSerializer:
+        # reason/attachments must never appear in a calendar payload, for
+        # ANY viewer, HR included -- only the secured leave-request detail
+        # carries those.
+        leave_requests_data = []
+        date_filter = Q(start_date__lte=end_date) & Q(end_date__gte=start_date)
+        if has_leave_request_full_access or has_leave_request_view or has_leave_request_review:
+            if user.is_freelancer:
+                leave_qs = LeaveRequest.objects.filter(date_filter & Q(employee__user=user))
+            else:
+                leave_qs = LeaveRequest.objects.filter(date_filter & Q(employee__user__company=user.company))
+            # A rejected request was never a real absence/unavailability;
+            # pending stays visible here (unchanged from before this lot)
+            # since this branch is HR/full-access, not a team view.
+            leave_qs = leave_qs.exclude(status__iexact="rejected").select_related("employee__user", "leave_type")
             if personal_only:
-                leave_requests = leave_requests.filter(employee__user=user)
+                leave_qs = leave_qs.filter(employee__user=user)
+            leave_requests_data = [
+                serialize_leave_for_calendar(lr, include_type=_calendar_include_type(lr, user, True))
+                for lr in leave_qs
+            ]
+        elif has_leave_request_view_created:
+            # Always just their own -- own data, any status.
+            leave_qs = LeaveRequest.objects.filter(date_filter & Q(employee__user=user)).select_related(
+                "employee__user", "leave_type"
+            )
+            leave_requests_data = [
+                serialize_leave_for_calendar(lr, include_type=_calendar_include_type(lr, user, True))
+                for lr in leave_qs
+            ]
+        elif has_leave_request_manager_opinion and not user.is_freelancer:
+            staff = getattr(user, "staff", None)
+            if staff is not None:
+                leave_qs = LeaveRequest.objects.filter(
+                    date_filter & Q(employee__supervisor=staff) & Q(status=StatusType.APPROVED.value)
+                ).select_related("employee__user")
+                if personal_only:
+                    leave_qs = leave_qs.none()
+                leave_requests_data = [serialize_leave_for_calendar(lr, include_type=False) for lr in leave_qs]
 
         return Response({
             "calendar_events": self.get_serializer(calendar_events, many=True).data,
             "action_items": ActionItemSerializer(action_items, many=True).data,
             "milestones": MilestoneSerializer(milestones, many=True).data,
-            "leave_requests": LeaveRequestSerializer(leave_requests, many=True, context={"request": request}).data,
+            "leave_requests": leave_requests_data,
         })
 
     def create(self, request, *args, **kwargs):

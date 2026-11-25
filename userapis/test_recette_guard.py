@@ -43,6 +43,7 @@ def _send(**overrides):
     check_send_allowed(**kwargs)
 
 
+@override_settings(RECETTE_MODE=False)
 class OutsideRecetteTests(SimpleTestCase):
     def test_guard_is_inert_outside_recette(self):
         _send(sender_address="anyone@real-company.com", to="client@real-company.com", provider="smtp")
@@ -219,3 +220,268 @@ class MicrosoftAppRegistrationTests(SimpleTestCase):
                      "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_TENANT_ID"):
             with override_settings(**{**WITH_APP, name: "  "}):
                 self.assertFalse(microsoft_app_configured(), msg=name)
+
+
+GUARD_LOGGER = "userapis.recette_guard"
+SECRET_TOKEN = "eyJ-secret-access-token-value"
+
+
+@override_settings(**RECETTE)
+class RecetteTenantRefusalLoggingTests(SimpleTestCase):
+    def _refusal(self, response=None, effect=None, token=SECRET_TOKEN):
+        patch_args = {"side_effect": effect} if effect is not None else {"return_value": response}
+        with patch("userapis.recette_guard.requests.get", **patch_args):
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as captured:
+                with self.assertRaises(RecetteMailBlocked) as raised:
+                    confirm_tenant_with_microsoft(token)
+        self.assertEqual(len(captured.output), 1)
+        # the user-facing refusal never changes with the reason
+        self.assertEqual(str(raised.exception), "This Microsoft account is not in the recette Microsoft 365 tenant.")
+        return captured.output[0]
+
+    def test_each_failure_is_logged_with_its_own_reason(self):
+        broken_json = Mock()
+        broken_json.status_code = 200
+        broken_json.json.side_effect = ValueError("not json")
+        cases = [
+            (dict(response=_organization(status=401)), "reason=graph_http_status status=401"),
+            (dict(response=_organization(status=403)), "reason=graph_http_status status=403"),
+            (dict(response=_organization(status=503)), "reason=graph_http_status status=503"),
+            (dict(effect=requests.Timeout("slow")), "reason=graph_timeout"),
+            (dict(effect=requests.ConnectionError("down")), "reason=graph_network_error error=ConnectionError"),
+            (dict(effect=requests.exceptions.ProxyError("proxy")), "reason=graph_network_error error=ProxyError"),
+            (dict(response=broken_json), "reason=graph_invalid_json"),
+            (dict(response=_organization(payload=[])), "reason=graph_unexpected_payload"),
+            (dict(response=_organization(payload={"value": []})), "reason=organization_absent"),
+            (dict(response=_organization(payload={})), "reason=organization_absent"),
+            (dict(response=_organization(payload={"value": [{"id": TENANT}, {"id": TENANT}]})),
+             "reason=organization_multiple count=2"),
+            (dict(response=_organization(payload={"value": [{}]})), "reason=organization_without_id"),
+            (dict(response=_organization("99999999-0000-0000-0000-000000000000")),
+             "reason=tenant_mismatch returned_is_guid=True expected_is_guid=True same_prefix=False"),
+        ]
+        for kwargs, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertIn(expected, self._refusal(**kwargs))
+
+    def test_missing_token_and_missing_tenant_are_logged_without_calling_microsoft(self):
+        with patch("userapis.recette_guard.requests.get") as get:
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as no_token:
+                with self.assertRaises(RecetteMailBlocked):
+                    confirm_tenant_with_microsoft("")
+            with override_settings(RECETTE_M365_TENANT_ID=" "), self.assertLogs(GUARD_LOGGER, level="WARNING") as no_tenant:
+                with self.assertRaises(RecetteMailBlocked):
+                    confirm_tenant_with_microsoft(SECRET_TOKEN)
+        get.assert_not_called()
+        self.assertIn("reason=no_token", no_token.output[0])
+        self.assertIn("reason=tenant_not_configured", no_tenant.output[0])
+
+    def test_a_decorated_tenant_setting_is_told_apart_from_a_foreign_tenant(self):
+        with override_settings(RECETTE_M365_TENANT_ID=f'"{TENANT}"'):
+            line = self._refusal(response=_organization(TENANT))
+        self.assertIn("reason=tenant_mismatch", line)
+        self.assertIn("expected_is_guid=False", line)
+        self.assertIn("returned_is_guid=True", line)
+        self.assertIn("same_prefix=False", line)  # the quote shifts the prefix: not a plain foreign tenant either
+
+    def test_graph_error_code_is_logged_only_when_it_is_a_short_code(self):
+        def failure(code):
+            return _organization(status=403, payload={"error": {"code": code, "message": "tester@example.com denied"}})
+        self.assertIn("graph_error=Authorization_RequestDenied", self._refusal(response=failure("Authorization_RequestDenied")))
+        for odd in ("has spaces and tester@example.com", "x" * 80, None, 12):
+            with self.subTest(code=odd):
+                self.assertIn("graph_error=none", self._refusal(response=failure(odd)))
+        self.assertIn("graph_error=none", self._refusal(response=_organization(status=500, payload={"error": "plain"})))
+
+    def test_logs_never_hold_the_token_the_identifiers_or_the_graph_message(self):
+        foreign = "99999999-0000-0000-0000-000000000000"
+        lines = [
+            self._refusal(response=_organization(foreign)),
+            self._refusal(response=_organization(status=403, payload={"error": {"code": "Authorization_RequestDenied",
+                                                                              "message": f"{SENDER} denied"}})),
+            self._refusal(response=_organization(payload={"value": [{"id": foreign}, {"id": TENANT}]})),
+        ]
+        for line in lines:
+            for forbidden in (SECRET_TOKEN, "Bearer", TENANT, foreign, SENDER, RECIPIENT, "denied"):
+                self.assertNotIn(forbidden, line)
+
+    def test_a_confirmed_tenant_logs_nothing(self):
+        with patch("userapis.recette_guard.requests.get", return_value=_organization()):
+            with self.assertNoLogs(GUARD_LOGGER, level="DEBUG"):
+                confirm_tenant_with_microsoft(SECRET_TOKEN)
+
+    @override_settings(RECETTE_MODE=False)
+    def test_outside_recette_nothing_is_called_or_logged(self):
+        with patch("userapis.recette_guard.requests.get") as get, self.assertNoLogs(GUARD_LOGGER, level="DEBUG"):
+            confirm_tenant_with_microsoft(SECRET_TOKEN)
+        get.assert_not_called()
+
+
+class GrantedScopeLoggingTests(SimpleTestCase):
+    def test_only_permission_names_are_kept(self):
+        from userapis.mailbox_oauth import _granted_scope_names
+        self.assertEqual(_granted_scope_names({"scope": "Mail.Send Mail.ReadWrite offline_access"}),
+                         "Mail.Send Mail.ReadWrite offline_access")
+        self.assertEqual(_granted_scope_names({"scope": "Mail.Send bad<script> " + "x" * 80}), "Mail.Send")
+        for tokens in ({}, {"scope": ""}, {"scope": None}, None, "oops"):
+            self.assertEqual(_granted_scope_names(tokens), "none")
+        self.assertNotIn(SECRET_TOKEN, _granted_scope_names({"access_token": SECRET_TOKEN, "scope": "User.Read"}))
+
+
+class MailScopesAndGraphRequestTests(SimpleTestCase):
+    """MAIL-RECETTE-01J: Graph answered 400 to GET /organization for a token that never asked for
+    User.Read (the least delegated permission Graph documents for that call)."""
+
+    PREVIOUS_SCOPES = ("Calendars.ReadWrite", "Contacts.Read", "offline_access", "Mail.Send",
+                       "Mail.ReadWrite", "Mail.Send.Shared", "Mail.ReadWrite.Shared")
+
+    def test_mail_scopes_keep_every_previous_scope_and_add_user_read(self):
+        from ecpmpapp.constants import MS_MAIL_SCOPES, MS_OUTLOOK_CALENDAR_SCOPES
+        requested = MS_MAIL_SCOPES.split()
+        for scope in self.PREVIOUS_SCOPES:
+            self.assertIn(scope, requested)
+        self.assertEqual(requested.count("User.Read"), 1)
+        self.assertEqual(len(requested), len(self.PREVIOUS_SCOPES) + 1)
+        # the calendar-only flow is left exactly as it was
+        self.assertNotIn("User.Read", MS_OUTLOOK_CALENDAR_SCOPES.split())
+
+    @override_settings(MS_CLIENT_ID="client", MS_CLIENT_SECRET="secret", MS_REDIRECT_URI="https://app.invalid/cb/")
+    def test_the_token_exchange_asks_for_the_same_scopes(self):
+        from ecpmpapp.constants import MS_MAIL_SCOPES
+        from userapis.mailbox_oauth import get_mail_access_token
+        with patch("userapis.mailbox_oauth.requests.post") as post:
+            post.return_value.json.return_value = {}
+            get_mail_access_token("code")
+        self.assertEqual(post.call_args.kwargs["data"]["scope"], MS_MAIL_SCOPES)
+        self.assertIn("User.Read", post.call_args.kwargs["data"]["scope"].split())
+
+    def test_the_organization_request_reaches_graph_exactly_as_documented(self):
+        # $select=id must survive URL preparation untouched (Graph documents $select for this call)
+        prepared = requests.Request("GET", MS_GRAPH_ORGANIZATION_URL).prepare()
+        self.assertEqual(prepared.url, "https://graph.microsoft.com/v1.0/organization?$select=id")
+        with override_settings(**RECETTE), patch("userapis.recette_guard.requests.get",
+                                                 return_value=_organization()) as get:
+            confirm_tenant_with_microsoft(SECRET_TOKEN)
+        self.assertEqual(get.call_args.args[0], MS_GRAPH_ORGANIZATION_URL)
+        self.assertEqual(get.call_args.kwargs["headers"], {"Authorization": f"Bearer {SECRET_TOKEN}",
+                                                            "Accept": "application/json"})
+
+    def test_a_graph_400_still_refuses_and_is_logged_with_its_error_code(self):
+        bad_request = _organization(status=400, payload={"error": {"code": "BadRequest", "message": "x"}})
+        with override_settings(**RECETTE), patch("userapis.recette_guard.requests.get", return_value=bad_request):
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as captured:
+                with self.assertRaises(RecetteMailBlocked):
+                    confirm_tenant_with_microsoft(SECRET_TOKEN)
+        self.assertIn("reason=graph_http_status status=400 graph_error=BadRequest", captured.output[0])
+        self.assertNotIn(SECRET_TOKEN, captured.output[0])
+
+
+def _jwt(claims):
+    """A JWT-shaped string: unsigned, for the diagnostic only (the guard never verifies it)."""
+    import base64, json
+    part = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).rstrip(b"=").decode()
+    return f"{part({'alg': 'none'})}.{part(claims)}.signature-part"
+
+
+CONSUMER_TENANT = "9188040d-6c67-4c5b-b112-36a304b66dad"
+OTHER_TENANT = "99999999-0000-0000-0000-000000000000"
+BAD_REQUEST = lambda: _organization(status=400, payload={"error": {"code": "BadRequest", "message": "x"}})
+
+
+@override_settings(**RECETTE)
+class BadRequestTokenDiagnosticTests(SimpleTestCase):
+    """MAIL-RECETTE-01N (temporary): what the log says about the token behind a Graph 400. The
+    diagnostic is a hint only -- every case below is refused whatever it reports."""
+
+    def _refused_log(self, token, response=None):
+        with patch("userapis.recette_guard.requests.get", return_value=response or BAD_REQUEST()):
+            with self.assertLogs(GUARD_LOGGER, level="WARNING") as captured:
+                with self.assertRaises(RecetteMailBlocked) as raised:
+                    confirm_tenant_with_microsoft(token)
+        self.assertEqual(len(captured.output), 1)
+        self.assertEqual(str(raised.exception), "This Microsoft account is not in the recette Microsoft 365 tenant.")
+        return captured.output[0]
+
+    def test_a_jwt_of_the_right_tenant_with_a_graph_400_is_still_refused(self):
+        line = self._refused_log(_jwt({"tid": TENANT.upper(), "scp": "Mail.Send User.Read"}))
+        self.assertIn("reason=graph_http_status status=400 graph_error=BadRequest", line)
+        for expected in ("tenant_match=true", "consumer_account=false", "token_type=delegated",
+                         "token_is_jwt=true", "graph_error_category=bad_request"):
+            self.assertIn(expected, line)
+
+    def test_a_jwt_of_another_tenant_is_refused_and_reported(self):
+        line = self._refused_log(_jwt({"tid": OTHER_TENANT, "scp": "User.Read"}))
+        self.assertIn("tenant_match=false consumer_account=false", line)
+
+    def test_the_personal_account_tenant_is_flagged(self):
+        line = self._refused_log(_jwt({"tid": CONSUMER_TENANT, "scp": "User.Read"}))
+        self.assertIn("tenant_match=false consumer_account=true", line)
+
+    def test_opaque_or_malformed_tokens_are_unknown_and_never_raise(self):
+        import base64
+        b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        JSON_STRING = b'"text"'
+        tokens = [
+            "EwBIA3-opaque-personal-account-token", "a.b", "a.b.c", "..", "!!!.@@@.###",
+            f"x.{b64(b'not json')}.y", f"x.{b64(b'[1, 2]')}.y", f"x.{b64(JSON_STRING)}.y",
+            f"x.{b64(b'[' * 5000 + b']' * 5000)}.y",            # deep nesting
+            "x.éè.y", f"x.{b64(bytes([0xff, 0xfe, 0xfd]))}.y",
+            "x." + "A" * 20000 + ".y",                           # beyond the size limit
+            _jwt({"tid": 123}),                                  # decodable, but no usable tenant
+        ]
+        for token in tokens:
+            with self.subTest(token=token[:25]):
+                line = self._refused_log(token)
+                self.assertIn("tenant_match=unknown consumer_account=unknown", line)
+                self.assertIn("token_type=unknown", line)
+        self.assertIn("token_is_jwt=false", self._refused_log("EwBIA3-opaque"))
+        self.assertIn("token_is_jwt=true", self._refused_log(_jwt({"tid": 123})))
+
+    def test_delegated_and_application_tokens_are_told_apart(self):
+        cases = [
+            ({"tid": TENANT, "scp": "Mail.Send"}, "token_type=delegated"),
+            ({"tid": TENANT, "roles": ["Mail.Send"]}, "token_type=application"),
+            ({"tid": TENANT, "idtyp": "app", "scp": "Mail.Send"}, "token_type=application"),
+            ({"tid": TENANT}, "token_type=unknown"),
+            ({"tid": TENANT, "scp": "  "}, "token_type=unknown"),
+        ]
+        for claims, expected in cases:
+            with self.subTest(claims=claims):
+                self.assertIn(expected, self._refused_log(_jwt(claims)))
+
+    def test_only_a_graph_400_gets_the_token_context(self):
+        token = _jwt({"tid": TENANT, "scp": "User.Read"})
+        for status in (401, 403, 500):
+            with self.subTest(status=status):
+                line = self._refused_log(token, _organization(status=status))
+                self.assertNotIn("tenant_match", line)
+                self.assertNotIn("token_is_jwt", line)
+
+    def test_a_confirmed_tenant_never_decodes_the_token(self):
+        with patch("userapis.recette_guard._unverified_jwt_claims") as decode, \
+                patch("userapis.recette_guard.requests.get", return_value=_organization()):
+            with self.assertNoLogs(GUARD_LOGGER, level="DEBUG"):
+                confirm_tenant_with_microsoft(_jwt({"tid": OTHER_TENANT}))   # claims say "foreign": ignored
+        decode.assert_not_called()
+
+    def test_a_token_claiming_the_right_tenant_does_not_authorize_a_failed_graph_check(self):
+        # the diagnostic reports tenant_match=true, yet the outcome stays a refusal (see the first test);
+        # and a Graph answer for ANOTHER tenant is refused even with a right-tenant token.
+        token = _jwt({"tid": TENANT, "scp": "User.Read"})
+        with patch("userapis.recette_guard.requests.get", return_value=_organization(OTHER_TENANT)):
+            with self.assertRaises(RecetteMailBlocked):
+                confirm_tenant_with_microsoft(token)
+
+    def test_a_failing_diagnostic_cannot_change_the_outcome(self):
+        with patch("userapis.recette_guard._unverified_jwt_claims", side_effect=RuntimeError("boom")):
+            line = self._refused_log(_jwt({"tid": TENANT}))
+        self.assertIn("tenant_match=unknown", line)
+        self.assertIn("token_is_jwt=false", line)
+
+    def test_the_log_holds_no_token_claim_identifier_or_address(self):
+        token = _jwt({"tid": TENANT, "oid": "aaaaaaaa-1111-2222-3333-444444444444", "scp": "User.Read",
+                      "upn": SENDER, "preferred_username": RECIPIENT, "name": "Some Person"})
+        line = self._refused_log(token)
+        for forbidden in (token, token.split(".")[1], TENANT, "aaaaaaaa-1111", SENDER, RECIPIENT,
+                          "Some Person", "Bearer", "signature-part"):
+            self.assertNotIn(forbidden, line)

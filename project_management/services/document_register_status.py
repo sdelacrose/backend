@@ -22,17 +22,14 @@ as reserved target vocabulary (L3F section 5's canonical list) and is NEVER prod
 compute_internal_control_status. Do not fabricate it from Document.status or any other
 unrelated field.
 
-KNOWN ARCHITECTURAL LIMIT (discovered during L3F, reported rather than silently worked around):
-services.transmittal_eligibility.validate_item_eligibility currently rejects any non-INTERNAL
-document from joining an OUT Transmittal ("Only internal-origin documents may be distributed
-through an outgoing transmittal."). compute_client_control_status below is written generically
-against the real TransmittalItem/Transmittal relationship (never a new boolean field) so it will
-correctly pick up a SUPPLIER-origin revision's actual OUT transmission the moment some future
-lot allows one to exist -- but under the CURRENT architecture a SUPPLIER-origin revision can
-never actually acquire that evidence through the existing Transmittal creation flow, so its
-Client Status can reach TO_ISSUE but never ISSUED/UNDER_REVIEW in practice today. This is a
-pre-existing Transmittal-architecture restriction, intentionally not broadened here (L3F section
-2/45 scope boundary).
+TRANSMITTAL ELIGIBILITY (GED-WF.1: this note used to say that non-INTERNAL documents were
+rejected from OUT Transmittals, which is no longer true):
+services.transmittal_eligibility.validate_item_eligibility accepts, for an OUT Transmittal, an
+INTERNAL document whose revision is internally approved and a SUPPLIER document whose own
+supplier surveillance is closed as Reviewed (or that is classified "For information"); a CLIENT
+document is rejected. compute_client_control_status below is written generically against the
+real TransmittalItem/Transmittal relationship (never a new boolean field), so a SUPPLIER-origin
+revision's actual OUT transmission is picked up like an INTERNAL one.
 """
 
 from django.db.models import Exists, OuterRef, Q, Subquery
@@ -40,7 +37,7 @@ from django.db.models import Exists, OuterRef, Q, Subquery
 from project_management.models.document import Document, DocumentOrigin
 from project_management.models.document_workflow import DocumentWorkflow
 from project_management.models.supplier_surveillance import SupplierSurveillance
-from project_management.models.transmittal import Transmittal, TransmittalItem
+from project_management.models.transmittal import Transmittal, TransmittalEvent, TransmittalItem
 from project_management.services.document_workflow import annotate_current_workflow
 from project_management.services.transmittal_eligibility import (
     document_transmittal_purpose,
@@ -63,8 +60,13 @@ class InternalControlStatus:
     APPROVED = "APPROVED"
     COMMENTED = "COMMENTED"
     REJECTED = "REJECTED"
+    # GED-WF.2.1: derived display value only -- the workflow was stopped (DocumentWorkflow.Status.
+    # CANCELLED). Nothing stored or transitioned; it used to fall through to IN_PROGRESS ("Draft").
+    CANCELLED = "CANCELLED"
 
-    values = (DRAFT, IN_PROGRESS, TO_REVIEW, TO_VERIFY, TO_APPROVE, APPROVED, COMMENTED, REJECTED)
+    values = (
+        DRAFT, IN_PROGRESS, TO_REVIEW, TO_VERIFY, TO_APPROVE, APPROVED, COMMENTED, REJECTED, CANCELLED
+    )
 
 
 class SupplierControlStatus:
@@ -94,8 +96,18 @@ class ClientControlStatus:
     REVIEWED = "REVIEWED"
     COMMENTED = "COMMENTED"
     REJECTED = "REJECTED"
+    # GED-WF.4.4-A: the distribution / surveillance CYCLE (never the A/B/C/D result, which is its own column).
+    # ISSUED_NOT_SENT: OUT Transmittal issued to the client, no successful send yet. SEND_FAILED: the send failed
+    # and none succeeded. ISSUED keeps its key and now means "sent for information" (no review to follow).
+    # TO_CLOSE: the client surveillance is READY_FOR_CLOSURE. CLOSED: it is closed (the result is shown apart).
+    ISSUED_NOT_SENT = "ISSUED_NOT_SENT"
+    SEND_FAILED = "SEND_FAILED"
+    TO_CLOSE = "TO_CLOSE"
+    CLOSED = "CLOSED"
 
-    values = (TO_ISSUE, ISSUED, UNDER_REVIEW, REVIEWED, COMMENTED, REJECTED)
+    values = (
+        TO_ISSUE, ISSUED_NOT_SENT, SEND_FAILED, ISSUED, UNDER_REVIEW, TO_CLOSE, CLOSED, REVIEWED, COMMENTED, REJECTED,
+    )
 
 
 # --- Annotation (N+1-safe: correlated subqueries only, L3F section 26) -------------------------
@@ -121,13 +133,70 @@ def annotate_register_control_status(queryset):
         ),
     )
 
-    out_transmitted = TransmittalItem.objects.filter(
-        document_revision_id=OuterRef("current_revision_id"),
+    # GED-WF.4.2: "sent" means a really successful send (SEND_SUCCEEDED), never the mere ISSUED status.
+    # GED-WF.4.4-A: ... toward the company that really acts as the client (never the supplier issuer alone).
+    # B1 / LOT 4: the CLIENT cycle belongs to the CURRENT LOGICAL version: the sends of its revision AND of its technical BPE
+    # files (a BPE sent for information must not hide the review of the PREL it completes, nor look like a new revision).
+    queryset = queryset.annotate(**{
+        name: Exists(items) for name, items in _client_cycle_item_sets(OuterRef("logical_revision_id")).items()
+    })
+    return queryset
+
+
+def _issued_client_items(revision_ref):
+    """OUT + ISSUED items of the LOGICAL revision `revision_ref` -- its own row or one of its technical BPE versions -- whose
+    recipient really acts as the client (same rule as the history). Each item keeps its exact physical revision."""
+    from project_management.services.client_distribution_history import actual_client_recipient_q
+
+    return TransmittalItem.objects.filter(
+        actual_client_recipient_q(),
+        Q(document_revision_id=revision_ref) | Q(document_revision__index_revision_id=revision_ref),
         transmittal__direction=Transmittal.Direction.OUT,
         transmittal__status=Transmittal.Status.ISSUED,
     )
-    queryset = queryset.annotate(current_revision_sent_out=Exists(out_transmitted))
-    return queryset
+
+
+def _transmittal_has_event(event_type):
+    return Exists(TransmittalEvent.objects.filter(transmittal_id=OuterRef("transmittal_id"), event_type=event_type))
+
+
+def _really_sent_items(revision_ref):
+    return _issued_client_items(revision_ref).filter(_transmittal_has_event(TransmittalEvent.EventType.SEND_SUCCEEDED))
+
+
+def _failed_send_items(revision_ref):
+    """Issued to the client, a send failed (certain or uncertain) and none has succeeded since."""
+    return _issued_client_items(revision_ref).filter(
+        _transmittal_has_event(TransmittalEvent.EventType.SEND_FAILED)
+    ).exclude(_transmittal_has_event(TransmittalEvent.EventType.SEND_SUCCEEDED))
+
+
+def _open_review_items(sent_items):
+    """Sent FOR_REVIEW items whose client surveillance is not closed (a surveillance row is not required:
+    an older send without one keeps the explicit legacy behaviour 'under review')."""
+    return _sent_review_items(sent_items).exclude(client_issue__surveillance__status="CLOSED")
+
+
+def _sent_review_items(sent_items):
+    return sent_items.filter(distribution_purpose=TransmittalItem.DistributionPurpose.FOR_REVIEW)
+
+
+def _client_cycle_item_sets(revision_ref):
+    """The item sets behind the client cycle flags of one revision (queryset annotation AND single-object
+    fallback read the very same definitions). pending: surveillance absent / DRAFT / UNDER_REVIEW."""
+    issued = _issued_client_items(revision_ref)
+    sent = _really_sent_items(revision_ref)
+    review = _sent_review_items(sent)
+    surveillance_status = "client_issue__surveillance__status"
+    return {
+        "current_revision_issued_to_client": issued,
+        "current_revision_send_failed": _failed_send_items(revision_ref),
+        "current_revision_sent_out": sent,
+        "current_revision_review_open": _open_review_items(sent),
+        "current_revision_review_pending": review.exclude(**{f"{surveillance_status}__in": ["CLOSED", "READY_FOR_CLOSURE"]}),
+        "current_revision_review_to_close": review.filter(**{surveillance_status: "READY_FOR_CLOSURE"}),
+        "current_revision_review_closed": review.filter(**{surveillance_status: "CLOSED"}),
+    }
 
 
 # --- Per-row computation (reads annotated attributes when present, L3F section 26) -------------
@@ -150,7 +219,10 @@ def _ensure_control_annotations(document):
     if not hasattr(document, "current_revision_id"):
         document.current_revision_id = current_revision.id if current_revision else None
     if not hasattr(document, "wf_status"):
-        workflow = get_workflow_for_revision(current_revision) if current_revision else None
+        # B1 / LOT 1: the approval status is the one of the CURRENT LOGICAL revision (see annotate_current_workflow)
+        from project_management.services.document_logical_version import get_current_logical_revision
+        logical = get_current_logical_revision(document) if current_revision else None
+        workflow = get_workflow_for_revision(logical) if logical else None
         document.wf_status = workflow.status if workflow else None
 
     surveillance = (
@@ -161,11 +233,13 @@ def _ensure_control_annotations(document):
     document.current_surveillance_status = surveillance.status if surveillance else None
     document.current_surveillance_result = surveillance.result if surveillance else None
 
-    document.current_revision_sent_out = bool(current_revision) and TransmittalItem.objects.filter(
-        document_revision=current_revision,
-        transmittal__direction=Transmittal.Direction.OUT,
-        transmittal__status=Transmittal.Status.ISSUED,
-    ).exists()
+    # B1 / LOT 4: the client cycle of the CURRENT LOGICAL version (its revision + its technical BPE files)
+    from project_management.services.document_logical_version import get_current_logical_revision as _logical
+    logical = _logical(document) if current_revision else None
+    if not hasattr(document, "logical_revision_id"):
+        document.logical_revision_id = logical.pk if logical else None
+    for name, items in _client_cycle_item_sets(logical.pk if logical else None).items():
+        setattr(document, name, bool(logical) and items.exists())
 
 
 def compute_internal_control_status(document):
@@ -184,6 +258,7 @@ def compute_internal_control_status(document):
         WFStatus.APPROVE: InternalControlStatus.TO_APPROVE,
         WFStatus.APPROVED: InternalControlStatus.APPROVED,
         WFStatus.REJECTED: InternalControlStatus.REJECTED,
+        WFStatus.CANCELLED: InternalControlStatus.CANCELLED,
     }.get(wf_status, InternalControlStatus.IN_PROGRESS)
 
 
@@ -258,14 +333,24 @@ def compute_client_control_status(document, internal_status=None, supplier_statu
     if not gate_ok:
         return None
 
-    sent_out = bool(getattr(document, "current_revision_sent_out", False))
-    if not sent_out:
+    flag = lambda name: bool(getattr(document, name, False))  # noqa: E731
+    if not flag("current_revision_sent_out"):
+        # GED-WF.4.4-A: not (really) sent to the client yet -- never an "under review" document.
+        if flag("current_revision_send_failed"):
+            return ClientControlStatus.SEND_FAILED
+        if flag("current_revision_issued_to_client"):
+            return ClientControlStatus.ISSUED_NOT_SENT
         return ClientControlStatus.TO_ISSUE
-    return (
-        ClientControlStatus.ISSUED
-        if purpose == "FOR_INFORMATION"
-        else ClientControlStatus.UNDER_REVIEW
-    )
+    # GED-WF.4.2: decided by the sent items' own purpose, not the document category. GED-WF.4.4-A: the most
+    # pending step wins (some surveillance still open > ready to be closed > all closed); a send with no
+    # review to follow is simply "sent for information" (ISSUED).
+    if flag("current_revision_review_pending"):
+        return ClientControlStatus.UNDER_REVIEW
+    if flag("current_revision_review_to_close"):
+        return ClientControlStatus.TO_CLOSE
+    if flag("current_revision_review_closed"):
+        return ClientControlStatus.CLOSED
+    return ClientControlStatus.ISSUED
 
 
 def register_control_statuses(document):
@@ -324,6 +409,7 @@ def _filter_by_one_internal_control_status(queryset, value):
         InternalControlStatus.TO_APPROVE: WFStatus.APPROVE,
         InternalControlStatus.APPROVED: WFStatus.APPROVED,
         InternalControlStatus.REJECTED: WFStatus.REJECTED,
+        InternalControlStatus.CANCELLED: WFStatus.CANCELLED,
     }.get(value)
     if wf_status is None:
         # COMMENTED (reserved, never emitted) or an unknown value: matches nothing.
@@ -399,15 +485,23 @@ def _filter_by_one_client_control_status(queryset, value):
     )
     queryset = queryset.filter(internal_gate | supplier_gate)
 
+    # GED-WF.4.4-A: the same precedence as compute_client_control_status, in SQL.
+    not_sent = Q(current_revision_sent_out=False)
+    sent = Q(current_revision_sent_out=True)
+    no_review = Q(current_revision_review_pending=False, current_revision_review_to_close=False)
     if value == ClientControlStatus.TO_ISSUE:
-        return queryset.filter(current_revision_sent_out=False)
-    if value == ClientControlStatus.ISSUED:
-        return queryset.filter(
-            current_revision_sent_out=True, transmittal_category__iexact="for information"
-        )
+        return queryset.filter(not_sent, current_revision_issued_to_client=False, current_revision_send_failed=False)
+    if value == ClientControlStatus.SEND_FAILED:
+        return queryset.filter(not_sent, current_revision_send_failed=True)
+    if value == ClientControlStatus.ISSUED_NOT_SENT:
+        return queryset.filter(not_sent, current_revision_issued_to_client=True, current_revision_send_failed=False)
     if value == ClientControlStatus.UNDER_REVIEW:
-        return queryset.filter(
-            current_revision_sent_out=True, transmittal_category__iexact="for review"
-        )
+        return queryset.filter(sent, current_revision_review_pending=True)
+    if value == ClientControlStatus.TO_CLOSE:
+        return queryset.filter(sent, current_revision_review_pending=False, current_revision_review_to_close=True)
+    if value == ClientControlStatus.CLOSED:
+        return queryset.filter(sent, no_review, current_revision_review_closed=True)
+    if value == ClientControlStatus.ISSUED:
+        return queryset.filter(sent, no_review, current_revision_review_closed=False)
     # REVIEWED/COMMENTED/REJECTED: reserved for the future Client Review process, never emitted.
     return queryset.none()

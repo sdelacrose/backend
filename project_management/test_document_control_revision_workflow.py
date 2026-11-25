@@ -36,7 +36,10 @@ class ProjectRevisionBase(ProjectFixtureMixin, WorkflowTestBase):
         self.doc = self.create_doc(self.folder)
         return self.doc
 
-    def new_version(self, content=b"x"):
+    def new_version(self, content=None):
+        # These tests exercise distinct working versions, not duplicate uploads.
+        if content is None:
+            content = f"test version {self.doc.revisions.count() + 1}".encode()
         return add_document_revision(
             self.doc, ContentFile(content, name="f.txt"), self.creator
         )

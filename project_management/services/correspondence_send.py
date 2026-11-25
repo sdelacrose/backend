@@ -246,7 +246,8 @@ def _deliver_via_provider(*, from_email, to, cc, bcc, subject, body, attachments
             content = handle.read()
         attachment.sent_sha256 = hashlib.sha256(content).hexdigest()    # MAIL-1.4-A: the bytes sent
         message.attach(attachment.file_name, content)
-    message.send(fail_silently=False)
+    if message.send(fail_silently=False) != 1:
+        raise RuntimeError("The mail backend did not confirm accepting the message.")
     return ""  # SMTP gives no message id; kept as its own return so a Graph adapter can supply one.
 
 

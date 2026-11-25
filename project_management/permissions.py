@@ -1,5 +1,7 @@
+from project_management.services.company_owner_document_access import DocumentaryOwnerPermissionMixin
 from ecpmpapp.constants import StatusType
 from ecpmpapp.permissions import BaseModulePermission
+from rest_framework.permissions import BasePermission
 from django.db.models import Q
 from project_management.models import Milestone, ActionItem
 from project_management.models import Project
@@ -483,6 +485,8 @@ class InvoicePermission(BaseModulePermission):
         super().__init__('invoice', action, scope)
 
     def has_permission(self, request, view):
+        if getattr(view, 'action', None) in ('summary', 'reminder_preview', 'prepare_reminder'):
+            return self._check_view_permission(request.user, None)
         context = self._get_context(request, view, self.scope, None)
         # For create operations, check create permission
         if request.method == 'POST':
@@ -500,7 +504,7 @@ class InvoicePermission(BaseModulePermission):
             return self._check_delete_permission(request.user, obj)
         elif request.method == 'GET':
             return self._check_view_permission(request.user, obj)
-        elif request.method == 'POST' and getattr(view, "action", None) == "export_package":
+        elif request.method == 'POST' and getattr(view, "action", None) in ("export_package", "reminder_preview", "prepare_reminder"):
             return self._check_view_permission(request.user, obj)
         return False
     
@@ -747,11 +751,27 @@ class ContactPermission(BaseModulePermission):
         # For other operations, allow to proceed to object-level check
         return True
     
+    @staticmethod
+    def _changes_deleted_state(request, obj):
+        """True only when the request actually flips the soft-delete flag (move to / restore
+        from the recycle bin). Having an `is_deleted` column is not a deletion request: an
+        ordinary edit never sends it, or sends the unchanged value."""
+        if not hasattr(obj, 'is_deleted'):
+            return False
+        data = getattr(request, 'data', None)
+        if not hasattr(data, 'get') or 'is_deleted' not in data:
+            return False
+        raw = data.get('is_deleted')
+        requested = raw if isinstance(raw, bool) else str(raw).strip().lower() in ('true', '1', 'yes', 'on')
+        return requested != bool(obj.is_deleted)
+
     def has_object_permission(self, request, view, obj):
-        if request.method in ['PUT', 'PATCH'] and not hasattr(obj, 'is_deleted'):
+        if request.method in ['PUT', 'PATCH']:
+            if self._changes_deleted_state(request, obj):
+                # Soft delete / restore keeps requiring the delete permission, exactly as before.
+                return self._check_delete_permission(request.user, obj)
+            # NETWORK-CONTACT-FIX-02: an ordinary modification needs only the update permission.
             return self._check_update_permission(request.user, obj)
-        elif request.method == 'PATCH' and hasattr(obj, 'is_deleted'):
-            return self._check_delete_permission(request.user, obj)
         elif request.method == 'DELETE':
             return self._check_delete_permission(request.user, obj)
         elif request.method == 'GET':
@@ -820,7 +840,7 @@ class ContactPermission(BaseModulePermission):
         return False
 
 
-class DocumentPermission(BaseModulePermission):
+class DocumentPermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     def __init__(self, action='view', scope='company'):
         super().__init__('documents', action, scope)
 
@@ -1169,7 +1189,24 @@ class DocumentPermission(BaseModulePermission):
         return False
 
 
-class CorrespondencePermission(BaseModulePermission):
+class DocumentWithdrawPermission(BasePermission):
+    """POST document/<id>/withdraw (GED-L1.4): the document's own DELETE rights -- Company or
+    Project library, delete / delete_assigned_created / full_access, exactly as for a deletion.
+    Object level only: DocumentPermission maps every POST to the creation rights."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated)
+
+    def has_object_permission(self, request, view, obj):
+        user = request.user
+        if DocumentPermission().is_company_document(obj):
+            return DocumentPermission("delete", "company")._check_delete_permission(user, obj)
+        permission = DocumentPermission("delete", "project")
+        context = permission._get_context(request=None, view=None, scope="project", obj=obj)
+        return permission._check_delete_permission_project(user, obj, context)
+
+
+class CorrespondencePermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     """documents.correspondence_<action>: same module ("documents") and scope mechanism as
     DocumentPermission, but Correspondence already carries its own project/company_profile
     fields directly, so scope is read straight from the object/payload -- no folder-style
@@ -1220,7 +1257,7 @@ class CorrespondencePermission(BaseModulePermission):
         return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
-class TransmittalPermission(BaseModulePermission):
+class TransmittalPermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     """documents.transmittal_<action>: same module ("documents") and scope mechanism as
     CorrespondencePermission -- Transmittal likewise carries its own project/company_profile
     fields directly, so scope is read straight from the object/payload (LOT 3C section 16).
@@ -1246,6 +1283,11 @@ class TransmittalPermission(BaseModulePermission):
         ) or self._check_permission(user, self.module, 'full_access', scope, context)
 
     def has_permission(self, request, view):
+        # SEC-07: TransmittalViewSet.get_permissions() replaces the default IsAuthenticated, so an
+        # anonymous request used to reach get_queryset() and fail with an AttributeError (HTTP 500).
+        # Refusing here yields the standard 401 (NotAuthenticated) for every Transmittal endpoint.
+        if not getattr(request.user, 'is_authenticated', False):
+            return False
         if request.method == 'POST' and getattr(view, 'action', None) == 'create':
             project = None
             project_id = request.data.get('project')
@@ -1269,7 +1311,7 @@ class TransmittalPermission(BaseModulePermission):
         return self._check_action_or_full_access(request.user, self.action, scope, context)
 
 
-class ECPMPConfigPermission(BaseModulePermission):
+class ECPMPConfigPermission(DocumentaryOwnerPermissionMixin, BaseModulePermission):
     def __init__(self, action='view', scope='project'):
         super().__init__('ecpmp_configurations', action, scope)
 
@@ -1879,7 +1921,13 @@ class ObjectAssessmentPermission(BaseModulePermission):
     def can_update_object(self, user, obj):
         context = {"project": obj.project}
         return self._check_update_permission_project(user, obj, context)
-    
+
+    def can_view_object(self, user, obj):
+        # GED-SEC.08.2-A2.3a: the exact object-level read rule of `has_object_permission`, but independent of the
+        # HTTP verb (HEAD included), so the file download can answer one uniform 404 to every refusal.
+        context = {"project": obj.project}
+        return self._check_view_permission_project(user, obj, context)
+
     def _get_context(self, request, view, scope, obj=None):
         """
         Get context for permission checking.

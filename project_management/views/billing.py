@@ -10,6 +10,7 @@ from django.core.exceptions import PermissionDenied
 from django.contrib.auth.models import AnonymousUser
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 import logging
 from django.db.models import Case, When, Value, CharField, F, FloatField, IntegerField, OuterRef, Subquery, Sum
@@ -45,6 +46,7 @@ from project_management.utils import (
     get_currency_from_record,
     get_user_currency,
 )
+from project_management.invoice_financial_actions import annual_invoice_summary, invoice_reminder_preview, prepare_invoice_reminder
 from project_management.filters import BillingInvoiceFilter
 from ecpmpapp.constants import UserType
 from project_management.currency_converter import ECBCurrencyConverter
@@ -101,6 +103,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
 
     def get_permissions(self):
+        if self.action in ('summary', 'reminder_preview', 'prepare_reminder'):
+            return [IsAuthenticated(), InvoicePermission('view', 'company')]
         if self.action == 'list':
             return [InvoicePermission('view', 'company')]
         elif self.action == 'retrieve':
@@ -115,6 +119,18 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             return [InvoicePermission('view', 'company')]
         return super().get_permissions()
     
+    @action(detail=False, methods=['get'], url_path='summary')
+    def summary(self, request):
+        return annual_invoice_summary(self, request)
+
+    @action(detail=True, methods=['post'], url_path='reminder-preview')
+    def reminder_preview(self, request, pk=None):
+        return invoice_reminder_preview(self, request)
+
+    @action(detail=True, methods=['post'], url_path='prepare-reminder')
+    def prepare_reminder(self, request, pk=None):
+        return prepare_invoice_reminder(self, request)
+
     # def get_queryset(self):
     #     user = self.request.user
     #     if isinstance(user, AnonymousUser):

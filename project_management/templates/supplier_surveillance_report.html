@@ -466,5 +466,13 @@
         Reviewed and completed by the Reviewer(s) listed above. Closed by the person named above as the responsible Project Document Control actor.
       </p>
     </section>
+    {% if external_annotation_count %}
+    <section style="break-before:page;page-break-before:always">
+      <h1>Comments to supplier</h1>
+      {% for section in sections %}{% for item in section.items %}{% for entry in item.reviewer_entries %}{% for annotation in entry.annotations %}
+      <article style="margin-bottom:16px;break-inside:avoid"><h3>{{ section.title }} · {{ item.label }}</h3><p>Page {{ annotation.page }} · {{ entry.reviewer_name }} · #{{ annotation.id }}</p><p style="white-space:pre-wrap;overflow-wrap:anywhere">{{ annotation.text }}</p></article>
+      {% endfor %}{% endfor %}{% endfor %}{% endfor %}
+    </section>
+    {% endif %}
   </body>
 </html>

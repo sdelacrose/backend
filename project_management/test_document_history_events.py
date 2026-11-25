@@ -208,7 +208,9 @@ class HistoricalNullClientIssueTests(HistoryEventsTestBase):
         # Simulate a pre-HISTORY-1 historical row (client_issue was never set).
         item.refresh_from_db()
         item.client_issue = None
-        item.save(update_fields=["client_issue"])
+        # Build a pre-ClientIssue historical fixture without weakening issued-item immutability.
+        with connection.cursor() as cursor:
+            cursor.execute('UPDATE ' + connection.ops.quote_name(item._meta.db_table) + ' SET client_issue_id = NULL WHERE id = %s', [item.pk])
 
         events = self.events(revision.document)
         distribution_events = [e for e in events if e["event_group"] == "CLIENT_DISTRIBUTION"]

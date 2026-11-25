@@ -1,0 +1,61 @@
+LINKS GED — ged-2026.11.04-rc.1
+
+Scope: previously validated documentary corrections, workflow identity and locks,
+withdrawal, version presentation/duplicates, configuration/status guardrails,
+transmittal recipient groups, exact frozen attachments and dedicated send archive.
+The document reference remains fixed when creating a new version.
+
+BASELINE AND STAGING INTEGRATION
+This release extends the already deployed recette integration baseline:
+backend 8cc16133de1c7c8a83e0989e3657be55560e9df3;
+frontend 266a45bb451910d7f23c5b920dc3f268961a4c90;
+shared models b3df54380e47a3a26d7bac3212a6cd3b860f176d.
+Do not replace the models package with an earlier main branch snapshot.
+Existing RH/CRM baseline is preserved; this lot adds no RH development or migration.
+These baseline branches were previously published separately from main. Review the
+integration baseline before merging into a Staging branch; do not trigger a legacy
+environment workflow simply by merging this tag into an unrelated deployment branch.
+Source and dependency repositories must remain under sdelacrose/*.
+
+MIGRATIONS AND SETTINGS
+Recette already has project_management0229/0230 and models0130–0141.
+New documentary migrations:0231,0232,0233,0234. Inspect the exact plan and back up the
+database first. Apply only the targeted project_management0234 chain. Do not run a
+global migration or alter RH tables in this delivery.
+Apply0234 before setting TRANSMITTAL_PROOF_ENABLED=True.
+documents.manage_cycle is catalogued but never granted to a role by default.
+Keep environment secrets, Auth0 tenant, private storage and proxy protection.
+The recette mail backend remains console: a successful SMTP test is a captured
+message, not external delivery. Graph and SMTP external delivery are not enabled by
+this release. Original Microsoft retrieval requires mailbox read access.
+
+REVISION AND IDENTITY RULES
+Author launch signs atomically through the API transaction. A controller launch
+waits for the assigned author's own signature. Author and verifier must differ;
+verifier/approver may coincide, and author/approver is allowed in two steps.
+An active workflow blocks version creation, withdrawal and deletion. Rejection needs
+a reason, positive decisions do not. A stopped/rejected workflow remains immutable;
+correction proceeds through a new version, never rewriting its historical signatures.
+
+ARCHIVE
+SMTP is a copy prepared by LINKS, not a Microsoft original or delivery receipt.
+Graph originals are matched by signed per-attempt marker and verified recipients,
+subject and attachment hashes. Archive failures never cause a resend. Earlier sends
+are not automatically backfilled. No transactional outbox/WORM claim is made.
+
+VALIDATION AND FOLLOW-UP
+Independent Claude static review: GO on code, conditioned on preservation of the
+installed models/migration baseline. Automated tests are recorded in the paired
+release manifest. User confirmed download of prepared message and archived document
+(A2) locally. Original Microsoft, remaining role/manual tests and external receipt
+remain explicitly pending; do not infer PASS from automated tests.
+Backlog remains open: Office preview/editing, client revision/review and future
+client/supplier portal, mass delegation, flexible external versioning and remaining
+presentation/configuration refinements. Email remains available for third parties
+without a portal. RH stays outside the documentary backlog.
+
+ROLLBACK
+Record old backend/frontend image IDs and Compose settings before replacement.
+Rollback the application images to those recorded versions. Keep the additive
+documentary tables/columns and archive files; no automatic destructive DB downgrade.
+Disable proof flag when rolling back the backend to a version without proof support.

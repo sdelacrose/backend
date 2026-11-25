@@ -33,6 +33,7 @@ from companyprofileapis.services.offer_validity import (
 )
 from companyprofileapis.services.document_type_defaults import (
     merge_missing_document_type_defaults,
+    required_document_type_defaults,
 )
 from companyprofileapis.models import Opportunity, NoticeBoard
 from ecpmpapp.constants import (
@@ -94,11 +95,25 @@ class UserSerializer(serializers.ModelSerializer):
             'main_area_of_expertise', 'sub_area_of_expertise',
         ]
 
+    def validate_user_image(self, value):
+        # GED-SEC.08.2-B0.3: a user's avatar is changed by that user only, to nothing, to what it already is, or to
+        # the finalised avatar upload of that user (see services/upload_reference.py).
+        request = self.context.get("request")
+        if request is None or not getattr(request.user, "is_authenticated", False):
+            return value  # internal use without a request (imports, seeds): not an upload from a browser
+        from project_management.services.upload_reference import INVALID, bind_public_url
+        from rest_framework import serializers as drf_serializers
+
+        current = self.instance.user_image if self.instance else None
+        if self.instance is not None and self.instance.pk != request.user.pk and value != current:
+            raise drf_serializers.ValidationError(INVALID)
+        return bind_public_url(request.user, "user_avatar", value, current=current)
+
     def get_availability(self, obj):
         return not Project.objects.filter(team_members__team_member=obj.id, project_status='In progress').exists()
 
     def get_staff_id(self, obj):
-        return obj.staff.id if obj.staff else None
+        return getattr(getattr(obj, "staff", None), "pk", None)
 
     def validate(self, attrs):
         attrs = super().validate(attrs)
@@ -199,7 +214,10 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyConfig
         fields = '__all__'
-        read_only_fields = ['company_profile']
+        # LOT RH 1: leave_types is derived from LeaveType rows (see models.leave_type_sync)
+        # -- read-only here so the generic update/Sync/Reset paths can no longer write it
+        # independently; LeaveType CRUD is the single source of truth.
+        read_only_fields = ['company_profile', 'leave_types']
 
     def validate_document_control_configuration(self, value):
         # Reference / revision / workflow settings: validated and stored in canonical form.
@@ -323,7 +341,9 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
 
     def validate_document_types(self, value):
         return self._validate_with_defaults(
-            value, constants.GC_COMPANY_DOCUMENT_TYPES, "document_types"
+            value, required_document_type_defaults(
+                constants.GC_COMPANY_DOCUMENT_TYPES, getattr(self.instance, "document_types", None)
+            ), "document_types"
         )
 
     def validate_document_categories(self, value):
@@ -530,8 +550,15 @@ class CompanyConfigSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("You do not have permission to update this company configuration.")
 
         if request_user.company:
-            if instance.company_profile != request_user.company or not request_user.groups.filter(
-                    name=UserType.ADMIN.value).exists():
+            from companyprofileapis.services.document_configuration_access import (
+                can_update_document_configuration,
+            )
+            same_company = instance.company_profile == request_user.company
+            legacy_admin = request_user.groups.filter(name=UserType.ADMIN.value).exists()
+            documentary_update = same_company and can_update_document_configuration(
+                request_user, validated_data
+            )
+            if not same_company or not (legacy_admin or documentary_update):
                 raise serializers.ValidationError("You do not have permission to update this company's configuration.")
 
         return super().update(instance, validated_data)

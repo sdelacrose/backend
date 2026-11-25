@@ -41,6 +41,9 @@ from ecpmpapp.recette_checks import collect_problems  # noqa: E402
 RECETTE_MODE = True
 ENV = "recette"
 
+# No back-office in recette: it owns the licence tables everywhere else (see ecpmpapp/recette_apps.py).
+INSTALLED_APPS = [*INSTALLED_APPS, "ecpmpapp.recette_apps.RecettePackageLicenseConfig"]
+
 SECRET_KEY = env("RECETTE_SECRET_KEY", default="")
 DEBUG = False
 ALLOWED_HOSTS = env.list("RECETTE_ALLOWED_HOSTS", default=[])
@@ -78,6 +81,9 @@ STATIC_URL = "/static/"
 STATIC_ROOT = _DATA_DIR / "static"
 MEDIA_URL = "/media/"
 MEDIA_ROOT = _DATA_DIR / "media"
+# Persist private supplier files in the existing data volume, outside public media.
+# The package default is under BASE_DIR, which is the disposable API container.
+SUPPLIER_SHARED_STORAGE_ROOT = _DATA_DIR / "private_supplier_shared"
 
 # No real e-mail, no external notification, no scheduler.
 EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
@@ -100,6 +106,7 @@ MS_TOKEN_ENCRYPTION_WRITE_ENABLED = env.bool("MS_TOKEN_ENCRYPTION_WRITE_ENABLED"
 
 # Mail send guard (userapis.recette_guard): off until explicitly enabled, full addresses only.
 RECETTE_MAIL_SEND_ENABLED = env.bool("RECETTE_MAIL_SEND_ENABLED", default=False)
+RECETTE_ALLOW_ANY_RECIPIENT = env.bool("RECETTE_ALLOW_ANY_RECIPIENT", default=False)
 RECETTE_M365_TENANT_ID = env("RECETTE_M365_TENANT_ID", default="")
 RECETTE_ALLOWED_SENDERS = [a.strip().lower() for a in env.list("RECETTE_ALLOWED_SENDERS", default=[])]
 RECETTE_ALLOWED_RECIPIENTS = [a.strip().lower() for a in env.list("RECETTE_ALLOWED_RECIPIENTS", default=[])]
